@@ -544,7 +544,7 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(uav.ma_dinh_danh, other_zone_uav._vung_tuan_tra_phu)
 
 
-class ScenarioDeploymentTests(unittest.IsolatedAsyncioTestCase):
+class ScenarioDeploymentTests(unittest.TestCase):
     @staticmethod
     def _point_in_ring(latitude, longitude, ring):
         inside = False

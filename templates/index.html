@@ -123,8 +123,29 @@
             border: 1px solid var(--border-color); border-radius: 4px;
             padding: 4px 6px; font-size: 11px;
         }
-        .chk-label { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); cursor: pointer; }
-        .chk-label input { accent-color: var(--accent-blue); }
+        .chk-label { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); cursor: pointer; user-select: none; }
+        .chk-label:hover { color: var(--text-main); }
+        .chk-label input { accent-color: var(--accent-blue); cursor: pointer; }
+        .layer-panel {
+            top: 10px; right: 10px;
+            flex-direction: column; align-items: stretch; gap: 6px;
+            min-width: 210px;
+        }
+        .layer-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px;
+            padding-top: 4px; border-top: 1px solid var(--border-color);
+        }
+        .zone-map-label {
+            background: rgba(9, 13, 22, 0.78);
+            border: 1px solid rgba(74, 222, 128, 0.55);
+            color: #bbf7d0;
+            font-weight: 800;
+            font-size: 10px;
+            padding: 1px 5px;
+            border-radius: 4px;
+            pointer-events: none;
+            white-space: nowrap;
+        }
 
         /* COMPACT 7-ZONE STRIP */
         .zone-strip { display: flex; gap: 5px; }
@@ -255,16 +276,30 @@
                 <button class="btn btn-ok" onclick="injectBattery(100)" title="Sạc đầy 100%">Sạc</button>
             </div>
 
-            <!-- Top-right: Base map & Layer toggles -->
-            <div class="map-float float-top-right">
-                <select id="baseMapSelect" class="select-sm" onchange="switchBaseMap(this.value)">
-                    <option value="satellite" selected>🛰️ Ảnh vệ tinh</option>
-                    <option value="osm">🗺️ Bản đồ chuẩn</option>
-                    <option value="dark">🌑 Nền tối</option>
-                </select>
-                <label class="chk-label"><input type="checkbox" id="chkZones" checked onchange="toggleLayers()"> 7 Vùng</label>
-                <label class="chk-label"><input type="checkbox" id="chkLinks" checked onchange="toggleLayers()"> Liên kết</label>
-                <label class="chk-label"><input type="checkbox" id="chkRoutes" checked onchange="toggleLayers()"> Quỹ đạo</label>
+            <!-- Top-right: Base map & Granular Layer toggles -->
+            <div class="map-float layer-panel">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                    <span style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;">🎛️ Lớp hiển thị</span>
+                    <select id="baseMapSelect" class="select-sm" onchange="switchBaseMap(this.value)">
+                        <option value="satellite" selected>🛰️ Ảnh vệ tinh</option>
+                        <option value="osm">🗺️ Bản đồ chuẩn</option>
+                        <option value="dark">🌑 Nền tối</option>
+                    </select>
+                </div>
+                <div class="layer-grid">
+                    <label class="chk-label"><input type="checkbox" id="chkZones" checked onchange="toggleLayers()"> 7 Vùng (Z1–Z7)</label>
+                    <label class="chk-label"><input type="checkbox" id="chkFanet" checked onchange="toggleLayers()"> Tia FANET</label>
+                    <label class="chk-label"><input type="checkbox" id="chkLeo" checked onchange="toggleLayers()"> Tia Vệ tinh</label>
+                    <label class="chk-label"><input type="checkbox" id="chkE2E" checked onchange="toggleLayers()"> Tuyến E2E</label>
+                    <label class="chk-label"><input type="checkbox" id="chkA2G" onchange="toggleLayers()"> Tia A2G</label>
+                    <label class="chk-label"><input type="checkbox" id="chkRoutes" onchange="toggleLayers()"> Quỹ đạo</label>
+                    <label class="chk-label"><input type="checkbox" id="chkLabels" checked onchange="toggleLabels()"> Nhãn tên</label>
+                    <button class="btn" style="padding:2px 6px;font-size:10px;" onclick="setAllLinkLayers(false)" title="Tắt hết các tia để nhìn rõ vùng">Tắt tia</button>
+                </div>
+                <div id="focusNodeBar" style="display:none;justify-content:space-between;align-items:center;background:rgba(56,189,248,0.14);border:1px solid var(--accent-blue);border-radius:4px;padding:3px 6px;font-size:10px;">
+                    <span id="focusNodeText">🎯 Lọc: UAV_01</span>
+                    <button class="btn" style="padding:1px 5px;font-size:9px;" onclick="selectNode(null)">Bỏ lọc ✕</button>
+                </div>
             </div>
 
             <!-- Bottom-left: Compact 7-zone badges -->
@@ -357,27 +392,73 @@
         setTimeout(() => map.invalidateSize(), 150);
 
         const zoneLayer = L.layerGroup().addTo(map);
-        const patrolLayer = L.layerGroup().addTo(map);
-        const linkLayer = L.layerGroup().addTo(map);
+        const patrolLayer = L.layerGroup(); // Mặc định ẩn quỹ đạo để tránh rối mắt
+        const a2gLinkLayer = L.layerGroup(); // Mặc định ẩn tia A2G (có thể bật bằng 1 click)
+        const fanetLinkLayer = L.layerGroup().addTo(map);
+        const leoLinkLayer = L.layerGroup().addTo(map);
         const e2eLayer = L.layerGroup().addTo(map);
+        const focusLayer = L.layerGroup().addTo(map);
         const fireLayer = L.layerGroup().addTo(map);
         const nodeLayer = L.layerGroup().addTo(map);
 
         const markersById = new Map();
         const zonePolygons = new Map();
         const zoneBounds = new Map();
+        let cachedWaypoints = {};
         let nodesCache = [];
         let fireMode = false;
         let isPaused = false;
         let currentFilter = 'ALL';
+        let selectedNodeId = null;
+
+        function syncLayer(chkId, layer) {
+            const el = document.getElementById(chkId);
+            if (!el) return;
+            if (el.checked) {
+                if (!map.hasLayer(layer)) map.addLayer(layer);
+            } else {
+                if (map.hasLayer(layer)) map.removeLayer(layer);
+            }
+        }
 
         function toggleLayers() {
-            const z = document.getElementById('chkZones').checked;
-            const l = document.getElementById('chkLinks').checked;
-            const r = document.getElementById('chkRoutes').checked;
-            if (z) map.addLayer(zoneLayer); else map.removeLayer(zoneLayer);
-            if (l) map.addLayer(linkLayer); else map.removeLayer(linkLayer);
-            if (r) map.addLayer(patrolLayer); else map.removeLayer(patrolLayer);
+            syncLayer('chkZones', zoneLayer);
+            syncLayer('chkA2G', a2gLinkLayer);
+            syncLayer('chkFanet', fanetLinkLayer);
+            syncLayer('chkLeo', leoLinkLayer);
+            syncLayer('chkE2E', e2eLayer);
+            syncLayer('chkRoutes', patrolLayer);
+        }
+
+        function setAllLinkLayers(enable) {
+            ['chkA2G', 'chkFanet', 'chkLeo', 'chkE2E', 'chkRoutes'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.checked = enable;
+            });
+            toggleLayers();
+        }
+
+        function toggleLabels() {
+            const show = document.getElementById('chkLabels').checked;
+            markersById.forEach(m => {
+                if (show) m.openTooltip();
+                else m.closeTooltip();
+            });
+        }
+
+        function selectNode(nodeId, pan = false) {
+            selectedNodeId = (selectedNodeId === nodeId) ? null : nodeId;
+            const bar = document.getElementById('focusNodeBar');
+            const txt = document.getElementById('focusNodeText');
+            if (selectedNodeId) {
+                bar.style.display = 'flex';
+                txt.textContent = `🎯 Đang chọn: ${selectedNodeId.replace('MÁY_BAY_', '')}`;
+                const n = nodesCache.find(x => x.id === selectedNodeId);
+                if (pan && n) map.flyTo([n.vi_do, n.kinh_do], 14);
+            } else {
+                bar.style.display = 'none';
+            }
+            updateNodesAndLinks(nodesCache);
         }
 
         function createNodeIcon(node) {
@@ -403,9 +484,11 @@
             if (node.state === 'OFFLINE') color = '#ef4444';
             else if (node.state === 'RELAYING') color = '#f59e0b';
             else if (node.state === 'RETURNING' || node.state === 'CHARGING') color = '#eab308';
+            const isSelected = selectedNodeId === node.id;
+            const ring = isSelected ? `0 0 0 3px rgba(56,189,248,0.45), 0 0 12px ${color}` : `0 0 7px ${color}`;
             return L.divIcon({
                 className: '',
-                html: `<div style="width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.88);border:1.8px solid ${color};border-radius:50%;box-shadow:0 0 8px ${color};">
+                html: `<div style="width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.9);border:1.8px solid ${color};border-radius:50%;box-shadow:${ring};">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><path d="M5 5l4 4M19 5l-4 4M5 19l4-4M19 19l-4-4"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/></svg>
                 </div>`,
                 iconSize: [22, 22], iconAnchor: [11, 11]
@@ -417,15 +500,29 @@
             patrolLayer.clearLayers();
             zonePolygons.clear();
             zoneBounds.clear();
+            cachedWaypoints = uavWaypoints || {};
 
             if (patrolZones && patrolZones.features) {
                 patrolZones.features.forEach(feat => {
                     const zId = feat.properties.zone_id;
+                    const shortName = zId.replace('ZONE_0', 'Z');
                     const geo = L.geoJSON(feat, {
-                        style: { color: '#4ade80', weight: 1.8, fillColor: '#22c55e', fillOpacity: 0.14 }
+                        style: { color: '#4ade80', weight: 2.0, fillColor: '#22c55e', fillOpacity: 0.14 }
                     }).addTo(zoneLayer);
+                    const b = geo.getBounds();
                     zonePolygons.set(zId, geo);
-                    zoneBounds.set(zId, geo.getBounds());
+                    zoneBounds.set(zId, b);
+
+                    const center = b.getCenter();
+                    L.marker(center, {
+                        interactive: false,
+                        icon: L.divIcon({
+                            className: '',
+                            html: `<div class="zone-map-label">${shortName}</div>`,
+                            iconSize: [28, 18],
+                            iconAnchor: [14, 9]
+                        })
+                    }).addTo(zoneLayer);
                 });
             }
             if (uavWaypoints) {
@@ -433,9 +530,10 @@
                     if (!pts || pts.length < 2) return;
                     const latlngs = pts.map(p => [p.vi_do, p.kinh_do]);
                     latlngs.push(latlngs[0]);
-                    L.polyline(latlngs, { color: '#93c5fd', weight: 1.1, dashArray: '4,5', opacity: 0.55 }).addTo(patrolLayer);
+                    L.polyline(latlngs, { color: '#93c5fd', weight: 1.2, dashArray: '4,5', opacity: 0.55 }).addTo(patrolLayer);
                 });
             }
+            toggleLayers();
         }
 
         function updateZoneStrip(zoneCoverage) {
@@ -453,7 +551,7 @@
                 const poly = zonePolygons.get(zId);
                 if (poly) {
                     const c = cls === 'gap' ? '#ef4444' : (cls === 'handover' ? '#f59e0b' : '#22c55e');
-                    poly.setStyle({ color: c, fillColor: c, fillOpacity: cls === 'gap' ? 0.2 : 0.07 });
+                    poly.setStyle({ color: c, fillColor: c, fillOpacity: cls === 'gap' ? 0.22 : 0.12 });
                 }
                 const shortName = zId.replace('ZONE_0', 'Z');
                 return `<div class="z-badge ${cls}" onclick="zoomZone('${zId}')" title="${zId}: ${z.uav_hoat_dong}/${z.tong_uav} UAV">${shortName} <span>${z.uav_hoat_dong}/${z.tong_uav}</span></div>`;
@@ -473,6 +571,7 @@
             const byId = new Map(nodesCache.map(n => [n.id, n]));
             const stations = nodesCache.filter(n => n.loai === 'TRẠM_MẶT_ĐẤT');
             const sats = nodesCache.filter(n => n.loai && n.loai.includes('VỆ_TINH'));
+            const showLabels = document.getElementById('chkLabels').checked;
 
             nodesCache.forEach(n => {
                 let m = markersById.get(n.id);
@@ -480,7 +579,9 @@
                 const label = n.id.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '').replace('VỆ_TINH_', '');
                 if (!m) {
                     m = L.marker(pos, { icon: createNodeIcon(n) }).addTo(nodeLayer);
-                    m.bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -7], className: 'node-label' });
+                    m.bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -8], className: 'node-label' });
+                    if (!showLabels) m.closeTooltip();
+                    m.on('click', () => selectNode(n.id, false));
                     markersById.set(n.id, m);
                 } else {
                     m.setLatLng(pos);
@@ -488,23 +589,45 @@
                 }
             });
 
-            linkLayer.clearLayers();
+            a2gLinkLayer.clearLayers();
+            fanetLinkLayer.clearLayers();
+            leoLinkLayer.clearLayers();
+            focusLayer.clearLayers();
+
+            if (selectedNodeId && cachedWaypoints[selectedNodeId]) {
+                const pts = cachedWaypoints[selectedNodeId];
+                if (pts.length >= 2) {
+                    const loop = pts.map(p => [p.vi_do, p.kinh_do]);
+                    loop.push(loop[0]);
+                    L.polyline(loop, { color: '#38bdf8', weight: 2.2, dashArray: '5,4', opacity: 0.9 }).addTo(focusLayer);
+                }
+            }
+
             nodesCache.forEach(n => {
                 if (n.state === 'OFFLINE') return;
+                if (selectedNodeId && n.id !== selectedNodeId && n.relay_target_id !== selectedNodeId) return;
+
                 if (n.loai === 'MÁY_BAY') {
                     if (n.current_link === 'GROUND_LINK') {
                         const st = byId.get(n.relay_target_id) || stations[0];
-                        if (st) L.polyline([[n.vi_do, n.kinh_do], [st.vi_do, st.kinh_do]], { color: '#22c55e', weight: 1.4, opacity: 0.65 }).addTo(linkLayer);
+                        if (st) L.polyline([[n.vi_do, n.kinh_do], [st.vi_do, st.kinh_do]], { color: '#22c55e', weight: 1.4, opacity: 0.65 }).addTo(a2gLinkLayer);
                     } else if (n.current_link === 'FANET_RELAY' && n.relay_target_id) {
                         const rl = byId.get(n.relay_target_id);
-                        if (rl) L.polyline([[n.vi_do, n.kinh_do], [rl.vi_do, rl.kinh_do]], { color: '#f59e0b', weight: 2, dashArray: '5,4', opacity: 0.85 }).addTo(linkLayer);
+                        if (rl) {
+                            L.polyline([[n.vi_do, n.kinh_do], [rl.vi_do, rl.kinh_do]], { color: '#f59e0b', weight: 2.0, dashArray: '5,4', opacity: 0.88 }).addTo(fanetLinkLayer);
+                            // Vẽ tiếp chặng từ Relay về Trạm để thấy trọn chuỗi chuyển tiếp
+                            const st = byId.get(rl.relay_target_id) || stations[0];
+                            if (st && rl.current_link === 'GROUND_LINK') {
+                                L.polyline([[rl.vi_do, rl.kinh_do], [st.vi_do, st.kinh_do]], { color: '#22c55e', weight: 1.5, dashArray: '2,4', opacity: 0.7 }).addTo(fanetLinkLayer);
+                            }
+                        }
                     } else if (n.current_link === 'LEO_SATELLITE') {
                         const sat = byId.get(n.relay_target_id) || sats[0];
-                        if (sat) L.polyline([[n.vi_do, n.kinh_do], [sat.vi_do, sat.kinh_do]], { color: '#a855f7', weight: 1.6, dashArray: '3,6', opacity: 0.8 }).addTo(linkLayer);
+                        if (sat) L.polyline([[n.vi_do, n.kinh_do], [sat.vi_do, sat.kinh_do]], { color: '#a855f7', weight: 1.6, dashArray: '3,6', opacity: 0.8 }).addTo(leoLinkLayer);
                     }
                 } else if (n.loai && n.loai.includes('VỆ_TINH') && n.relay_target_id) {
                     const tgt = byId.get(n.relay_target_id);
-                    if (tgt) L.polyline([[n.vi_do, n.kinh_do], [tgt.vi_do, tgt.kinh_do]], { color: '#06b6d4', weight: 1.6, dashArray: '4,4', opacity: 0.75 }).addTo(linkLayer);
+                    if (tgt) L.polyline([[n.vi_do, n.kinh_do], [tgt.vi_do, tgt.kinh_do]], { color: '#06b6d4', weight: 1.5, dashArray: '4,5', opacity: 0.65 }).addTo(leoLinkLayer);
                 }
             });
 
@@ -532,8 +655,9 @@
             box.innerHTML = filtered.map(n => {
                 const batColor = n.pin_pct < 25 ? '#ef4444' : (n.pin_pct < 50 ? '#f59e0b' : '#22c55e');
                 const linkTxt = n.current_link ? n.current_link.replace('_LINK', '').replace('_SATELLITE', '') : n.loai;
+                const activeBorder = selectedNodeId === n.id ? 'border-color:var(--accent-blue);background:rgba(56,189,248,0.1);' : '';
                 return `
-                    <div class="node-item ${n.state === 'OFFLINE' ? 'offline' : ''}" onclick="map.flyTo([${n.vi_do}, ${n.kinh_do}], 14)">
+                    <div class="node-item ${n.state === 'OFFLINE' ? 'offline' : ''}" style="${activeBorder}" onclick="selectNode('${n.id}', true)">
                         <div class="n-top">
                             <span class="n-id">${n.id.replace('MÁY_BAY_', '')}</span>
                             <span class="n-badge">${n.trang_thai}</span>
