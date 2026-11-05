@@ -1,6 +1,6 @@
-import time
 from typing import Optional, Tuple
 from core.base_agent import BaseAgent, AgentState
+
 
 class SatelliteAgent(BaseAgent):
     """
@@ -10,7 +10,6 @@ class SatelliteAgent(BaseAgent):
     - Tự động nạp năng lượng từ pin mặt trời (Solar Panel Harvesting) khi bay trên quỹ đạo.
     """
     def __init__(self, bo_dinh_tuyen, ten_quoc_te: str = "", **kwargs):
-        # Vệ tinh LEO có nguồn năng lượng lớn (Pin mặt trời + Ắc quy Lithium-Ion)
         kwargs.setdefault("loai_tac_nhan", "VỆ_TINH_LEO")
         kwargs.setdefault("pin_max_joule", 500000.0)
         kwargs.setdefault("vi_do", 0.0)
@@ -20,6 +19,9 @@ class SatelliteAgent(BaseAgent):
         super().__init__(bo_dinh_tuyen=bo_dinh_tuyen, **kwargs)
         self.ten_quoc_te = ten_quoc_te or self.ma_dinh_danh
         self.thoi_gian_mo_phong_tich_luy = 0.0
+        self._thoi_gian_beacon_tich_luy = 0.0
+        self.current_link = "S2G_LINK"
+        self.relay_target_id: Optional[str] = None
         self.chuyen_trang_thai(AgentState.IDLE)
 
         # Đồng bộ ngay tọa độ SGP4 ban đầu khi vừa khởi tạo
@@ -38,35 +40,64 @@ class SatelliteAgent(BaseAgent):
         except Exception as e:
             print(f"[SGP4 WARN - {self.ma_dinh_danh}] {e}")
 
+    def xuat_ho_so_trang_thai(self) -> dict:
+        ho_so = super().xuat_ho_so_trang_thai()
+        ho_so["ten_quoc_te"] = self.ten_quoc_te
+        ho_so["current_link"] = self.current_link
+        ho_so["relay_target_id"] = self.relay_target_id
+        return ho_so
+
     async def cap_nhat_vat_ly(self, dt_giay: float):
         """
-        Cập nhật vị trí quỹ đạo theo bước thời gian mô phỏng `dt_giay`.
-        Hệ số nhân thời gian (Time Scale = 10x) giúp quan sát vệ tinh chuyển động trên bản đồ.
+        Cập nhật vị trí quỹ đạo theo bước thời gian mô phỏng `dt_giay`,
+        đánh giá liên kết S2G / ISL và phát sóng HELLO_BEACON định kỳ.
         """
         if self.trang_thai == AgentState.OFFLINE:
             return
 
-        # Tăng tốc thời gian quỹ đạo x10 lần để thấy vệ tinh bay qua khu vực trong lúc mô phỏng.
-        self.thoi_gian_mo_phong_tich_luy += dt_giay * 10.0
+        # Tốc độ quỹ đạo vừa phải để duy trì thời gian phủ sóng trên vùng trời Đà Nẵng
+        self.thoi_gian_mo_phong_tich_luy += dt_giay * 2.0
         self._dong_bo_toa_do_sgp4(self.thoi_gian_mo_phong_tich_luy)
 
-        # Mô hình thu hoạch năng lượng mặt trời (Solar Array): Nạp bù +15 Joule/s, tiêu thụ nền -8 Joule/s
+        # Thu hoạch năng lượng mặt trời (Solar Array): Nạp ròng +7 Joule/s
         self.pin_hien_tai = min(self.pin_toi_da, self.pin_hien_tai + (7.0 * dt_giay))
+        self.don_dep_lang_gieng_het_han()
 
-    # =========================================================================
-    # THUẬT TOÁN TÌM TRẠM MẶT ĐẤT TỐI ƯU HOẶC VỆ TINH CHUYỂN TIẾP (S2G / ISL)
-    # =========================================================================
+        # Cập nhật liên kết S2G hoặc ISL xuống trạm mặt đất
+        dich_ke_tiep, thong_so, loai_ket_noi = self._tim_duong_xuong_tram_mat_dat()
+        self.relay_target_id = dich_ke_tiep
+        if dich_ke_tiep and thong_so:
+            self.current_link = "S2G_LINK" if loai_ket_noi == "S2G" else "ISL_LINK"
+            self.tuyen_ve_tram_cuc_bo = [self.ma_dinh_danh, dich_ke_tiep]
+            self.chi_phi_ve_tram_cuc_bo = round(float(thong_so.get("do_tre_ms", 20.0)) + 18.0, 2)
+        else:
+            self.current_link = "OUT_OF_LOS"
+            self.tuyen_ve_tram_cuc_bo = []
+            self.chi_phi_ve_tram_cuc_bo = float("inf")
+
+        self._thoi_gian_beacon_tich_luy += dt_giay
+        if self._thoi_gian_beacon_tich_luy >= 5.0 and dich_ke_tiep:
+            self._thoi_gian_beacon_tich_luy = 0.0
+            await self.bo_dinh_tuyen.phat_song_quang_ba(
+                self.ma_dinh_danh,
+                {
+                    "loai_tin": "HELLO_BEACON",
+                    "cost_to_sink": self.chi_phi_ve_tram_cuc_bo,
+                    "path_to_sink": self.tuyen_ve_tram_cuc_bo,
+                    "kich_thuoc_kb": 1.0
+                }
+            )
+
     def _tim_duong_xuong_tram_mat_dat(self) -> Tuple[Optional[str], Optional[dict], str]:
         """
-        Quét toàn bộ các Trạm Mặt đất để tìm liên kết S2G tốt nhất (SNR cao nhất).
-        Nếu không có Trạm Mặt đất nào trong tầm nhìn thẳng (LoS), tự động tìm Vệ tinh lân cận qua ISL.
-        Trả về: (Mã_Node_Đích_Kế_Tiếp, Thông_Số_Kênh, Loại_Liên_Kết: 'S2G' hoặc 'ISL')
+        Quét các Trạm Mặt đất để tìm liên kết S2G tốt nhất (SNR cao nhất).
+        Nếu khuất góc ngẩng với mặt đất, tự động tìm Vệ tinh LEO lân cận qua ISL.
         """
         tram_tot_nhat = None
         kenh_s2g_tot_nhat = None
         snr_max = -999.0
 
-        # 1. Ưu tiên tìm đường truyền thẳng xuống Trạm Mặt đất (Space-to-Ground - S2G)
+        # 1. Ưu tiên đường truyền thẳng xuống Trạm Mặt đất (Space-to-Ground - S2G)
         for ma_node, tac_nhan in self.bo_dinh_tuyen.danh_sach_tac_nhan.items():
             if tac_nhan.loai_tac_nhan == "TRẠM_MẶT_ĐẤT":
                 thong_so = self.bo_dinh_tuyen.physics.danh_gia_chat_luong_kenh_truyen(
@@ -105,12 +136,13 @@ class SatelliteAgent(BaseAgent):
 
         return ve_tinh_ke_tiep, kenh_isl_tot_nhat, "ISL"
 
-    # =========================================================================
-    # XỬ LÝ GIAO THỨC ĐẤU GIÁ CONTRACT NET PROTOCOL & ĐỊNH TUYẾN KHÔNG GIAN
-    # =========================================================================
     async def xu_ly_thong_diep(self, thong_diep: dict):
         loai_tin = thong_diep.get("loai_tin")
         nguoi_gui = thong_diep.get("nguoi_gui")
+
+        if loai_tin == "HELLO_BEACON":
+            return
+
         if loai_tin == "CFP_GOI_THAU":
             if self.trang_thai in (AgentState.LOW_BATTERY, AgentState.OFFLINE, AgentState.BIDDING):
                 return
@@ -147,7 +179,7 @@ class SatelliteAgent(BaseAgent):
                 if self.trang_thai == AgentState.BIDDING:
                     self.chuyen_trang_thai(AgentState.IDLE)
 
-        elif loai_tin == "GIAO_NHIEM_VU_DU_LIEU":
+        elif loai_tin in ("GIAO_NHIEM_VU_DU_LIEU", "PROPOSE", "REFUSE"):
             self.chuyen_trang_thai(AgentState.RELAYING)
             try:
                 await self._chuyen_tiep_du_lieu(thong_diep)
@@ -176,13 +208,20 @@ class SatelliteAgent(BaseAgent):
         lo_trinh = list(thong_diep.get("lo_trinh_di_qua", []))
         if self.ma_dinh_danh not in lo_trinh:
             lo_trinh.append(self.ma_dinh_danh)
+
+        # Nếu chưa có tuyến dự kiến hoặc tuyến bị đứt, ưu tiên dùng liên kết S2G / ISL trực tiếp
         if self.ma_dinh_danh not in tuyen or tuyen.index(self.ma_dinh_danh) + 1 >= len(tuyen):
-            tuyen_moi = self.bo_dinh_tuyen.tim_tuyen_den_tram_mat_dat(
-                self.ma_dinh_danh,
-                float(thong_diep.get("kich_thuoc_kb", 250.0)),
-                loai_tru=set(lo_trinh[:-1])
-            )
-            tuyen = tuyen_moi["nodes"] if tuyen_moi else []
+            dich_s2g, _, _ = self._tim_duong_xuong_tram_mat_dat()
+            if dich_s2g and dich_s2g not in lo_trinh:
+                tuyen = [self.ma_dinh_danh, dich_s2g]
+            else:
+                tuyen_moi = self.bo_dinh_tuyen.tim_tuyen_den_tram_mat_dat(
+                    self.ma_dinh_danh,
+                    float(thong_diep.get("kich_thuoc_kb", 250.0)),
+                    loai_tru=set(lo_trinh[:-1])
+                )
+                tuyen = tuyen_moi["nodes"] if tuyen_moi else []
+
         for _ in range(2):
             if self.ma_dinh_danh not in tuyen or tuyen.index(self.ma_dinh_danh) + 1 >= len(tuyen):
                 break
@@ -192,7 +231,7 @@ class SatelliteAgent(BaseAgent):
                 ma_ke_tiep,
                 {
                     **thong_diep,
-                    "loai_tin": "GIAO_NHIEM_VU_DU_LIEU",
+                    "loai_tin": thong_diep.get("loai_tin", "GIAO_NHIEM_VU_DU_LIEU"),
                     "lo_trinh_di_qua": lo_trinh,
                     "tuyen_du_kien": tuyen
                 }
@@ -200,7 +239,7 @@ class SatelliteAgent(BaseAgent):
             if da_gui:
                 self.thong_ke["goi_tin_chuyen_tiep"] += 1
                 await self.bo_dinh_tuyen.gui_log_ra_web(
-                    "RELAY", f"[{self.ma_dinh_danh}] Chuyển tiếp dữ liệu tới {ma_ke_tiep}."
+                    "RELAY", f"🛰️ [{self.ma_dinh_danh}] Chuyển tiếp không gian ({self.current_link}) tới {ma_ke_tiep}."
                 )
                 return
             tuyen_moi = self.bo_dinh_tuyen.tim_tuyen_den_tram_mat_dat(
@@ -210,5 +249,5 @@ class SatelliteAgent(BaseAgent):
             )
             tuyen = tuyen_moi["nodes"] if tuyen_moi else []
         await self.bo_dinh_tuyen.gui_log_ra_web(
-            "WARN", f"[{self.ma_dinh_danh}] Không còn tuyến relay khả dụng tới trạm mặt đất."
+            "WARN", f"[{self.ma_dinh_danh}] Không còn tuyến S2G/ISL khả dụng tới trạm mặt đất."
         )

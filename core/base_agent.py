@@ -2,8 +2,10 @@ import asyncio
 import time
 from enum import Enum
 from abc import ABC, abstractmethod
+from typing import Dict, Optional
 
-class AgentState( str, Enum ):
+
+class AgentState(str, Enum):
     """Máy trạng thái hữu hạn (FSM) chuẩn hóa cho các tác nhân trong mạng SAGSINS"""
     IDLE = "NHÀN_RỖI"                 # Sẵn sàng chờ lệnh (Trạm mặt đất / Vệ tinh)
     PATROLLING = "ĐANG_TUẦN_TRA"      # Đang bay theo quỹ đạo quét sự cố (UAV)
@@ -15,11 +17,15 @@ class AgentState( str, Enum ):
     LOW_BATTERY = "PIN_YẾU_RTB"       # Bí danh tương thích với trạng thái cũ
     OFFLINE = "NGẮT_KẾT_NỐI"          # Sập nguồn hoặc hỏng hóc phần cứng
 
+
 class BaseAgent(ABC):
     """
     Lớp trừu tượng cơ sở (Abstract Base Class) định nghĩa kiến trúc chuẩn cho mọi Node mạng.
-    Tuân thủ nguyên lý Đóng/Mở (Open/Closed Principle) và Đa hình trong SOLID.
+    Mỗi tác nhân duy trì bảng láng giềng cục bộ (Local Neighbor Belief) được cập nhật
+    qua các bản tin vô tuyến nhận được, đảm bảo tính tự trị độc lập của hệ thống MAS.
     """
+    NEIGHBOR_TIMEOUT_SEC = 15.0
+
     def __init__(
         self,
         ma_dinh_danh: str,
@@ -33,7 +39,7 @@ class BaseAgent(ABC):
         cong_suat_dbm: float = 33.0,
         tan_so_hz: float = 2.4e9,
         bang_thong_hz: float = 20e6,
-        **kwargs  # BẮT BUỘC PHẢI CÓ DÒNG NÀY để hấp thụ dữ liệu thừa từ CSV
+        **kwargs
     ):
         self.ma_dinh_danh = ma_dinh_danh
         self.loai_tac_nhan = loai_tac_nhan
@@ -58,8 +64,17 @@ class BaseAgent(ABC):
         self.nguong_pin_yeu_pct = 20.0
 
         self.trang_thai = AgentState.IDLE
-        self.hang_doi_thong_diep = asyncio.Queue(maxsize=100)
+        self._hang_doi_thong_diep: Optional[asyncio.Queue] = None
         self.dang_hoat_dong = True
+
+        # Tri thức cục bộ (Local Belief): Bảng láng giềng 1-hop và tuyến đường hiện tại về Sink
+        self.bang_lang_gieng: Dict[str, dict] = {}
+        self.tuyen_ve_tram_cuc_bo: list[str] = (
+            [self.ma_dinh_danh] if self.loai_tac_nhan == "TRẠM_MẶT_ĐẤT" else []
+        )
+        self.chi_phi_ve_tram_cuc_bo: float = (
+            0.0 if self.loai_tac_nhan == "TRẠM_MẶT_ĐẤT" else float("inf")
+        )
 
         self.thong_ke = {
             "goi_tin_da_gui": 0,
@@ -72,6 +87,17 @@ class BaseAgent(ABC):
         self.bo_dinh_tuyen.dang_ky_tac_nhan(self)
 
     @property
+    def hang_doi_thong_diep(self) -> asyncio.Queue:
+        """Khởi tạo hàng đợi asyncio lười (lazy) để tránh tạo socketpair trước khi có event loop."""
+        if self._hang_doi_thong_diep is None:
+            self._hang_doi_thong_diep = asyncio.Queue(maxsize=100)
+        return self._hang_doi_thong_diep
+
+    @hang_doi_thong_diep.setter
+    def hang_doi_thong_diep(self, value: asyncio.Queue):
+        self._hang_doi_thong_diep = value
+
+    @property
     def phan_tram_pin(self) -> float:
         """Tính tỷ lệ phần trăm năng lượng còn lại (0.0 -> 100.0%)"""
         if self.pin_toi_da <= 0:
@@ -81,9 +107,48 @@ class BaseAgent(ABC):
     @property
     def tai_hang_doi_pct(self) -> float:
         """Đánh giá mức độ tắc nghẽn bộ đệm (Buffer Congestion Level %) của Node"""
-        if self.hang_doi_thong_diep.maxsize <= 0:
+        if self._hang_doi_thong_diep is None or self._hang_doi_thong_diep.maxsize <= 0:
             return 0.0
-        return round((self.hang_doi_thong_diep.qsize() / self.hang_doi_thong_diep.maxsize) * 100.0, 2)
+        return round((self._hang_doi_thong_diep.qsize() / self._hang_doi_thong_diep.maxsize) * 100.0, 2)
+
+    def cap_nhat_lang_gieng_tu_goi_tin(self, thong_diep: dict):
+        """
+        Cập nhật Bảng láng giềng cục bộ (Local Neighbor Belief) từ siêu dữ liệu lớp vật lý
+        và thông tin trạng thái đính kèm trong gói tin vô tuyến nhận được.
+        """
+        nguoi_gui = thong_diep.get("nguoi_gui")
+        if not nguoi_gui or nguoi_gui == self.ma_dinh_danh:
+            return
+
+        thong_so_kenh = thong_diep.get("thong_so_kenh", {})
+        hien_co = self.bang_lang_gieng.get(nguoi_gui, {})
+
+        self.bang_lang_gieng[nguoi_gui] = {
+            "ma_dinh_danh": nguoi_gui,
+            "loai_tac_nhan": thong_diep.get("loai_nguoi_gui", hien_co.get("loai_tac_nhan", "UNKNOWN")),
+            "toa_do": thong_diep.get("toa_do_nguoi_gui", hien_co.get("toa_do", {})),
+            "pin_pct": float(thong_diep.get("pin_pct", hien_co.get("pin_pct", 100.0))),
+            "tai_hang_doi_pct": float(thong_diep.get("tai_hang_doi_pct", hien_co.get("tai_hang_doi_pct", 0.0))),
+            "trang_thai": thong_diep.get("trang_thai_nguoi_gui", hien_co.get("trang_thai", "NHÀN_RỖI")),
+            "zone_id": thong_diep.get("zone_id", hien_co.get("zone_id")),
+            "cost_to_sink": float(thong_diep.get("cost_to_sink", hien_co.get("cost_to_sink", float("inf")))),
+            "path_to_sink": list(thong_diep.get("path_to_sink", hien_co.get("path_to_sink", []))),
+            "snr_db": float(thong_so_kenh.get("snr_db", hien_co.get("snr_db", 20.0))),
+            "do_tre_ms": float(thong_so_kenh.get("do_tre_ms", hien_co.get("do_tre_ms", 5.0))),
+            "dung_luong_mbps": float(thong_so_kenh.get("dung_luong_mbps", hien_co.get("dung_luong_mbps", 20.0))),
+            "per": float(thong_so_kenh.get("per", hien_co.get("per", 0.001))),
+            "thoi_diem_cap_nhat": time.time()
+        }
+
+    def don_dep_lang_gieng_het_han(self, thoi_diem_hien_tai: Optional[float] = None):
+        """Loại bỏ các láng giềng đã mất liên lạc quá thời gian timeout."""
+        now = thoi_diem_hien_tai or time.time()
+        het_han = [
+            ma_node for ma_node, info in self.bang_lang_gieng.items()
+            if now - info.get("thoi_diem_cap_nhat", 0.0) > self.NEIGHBOR_TIMEOUT_SEC
+        ]
+        for ma_node in het_han:
+            del self.bang_lang_gieng[ma_node]
 
     def tieu_hao_nang_luong(self, luong_joule: float) -> bool:
         """
@@ -116,18 +181,15 @@ class BaseAgent(ABC):
     def tieu_hao_nang_luong_truyen_tin(self, kich_thuoc_goi_kb: float = 10.0, la_phat_song: bool = True) -> float:
         """
         Mô hình hóa năng lượng tiêu thụ cho giao tiếp vô tuyến:
-        - Khi phát sóng (Tx): Phụ thuộc vào công suất phát P_tx (Watts) và thời gian truyền gói tin.
-        - Khi thu sóng (Rx): Tiêu tốn năng lượng xử lý mạch thu cố định nhỏ hơn.
+        - Khi phát sóng (Tx): Phụ thuộc vào công suất phát P_tx (Watts) và kích thước gói tin.
+        - Khi thu sóng (Rx): Tiêu tốn năng lượng xử lý mạch thu LNA + DSP.
         """
-        # Đổi dBm sang Watts: P(W) = 10^((P_dbm - 30) / 10)
         p_tx_watts = 10.0 ** ((self.radio_config["cong_suat_phat_dbm"] - 30.0) / 10.0)
-        
+
         if la_phat_song:
-            # Giả định thời gian phát trung bình tỷ lệ với kích thước gói tin + mạch khuếch đại công suất
             nang_luong_rf = p_tx_watts * 0.05 * (kich_thuoc_goi_kb / 10.0)
             self.thong_ke["goi_tin_da_gui"] += 1
         else:
-            # Mạch thu (LNA + DSP) tiêu tốn khoảng 1.5W trong thời gian ngắn
             nang_luong_rf = 0.02 * (kich_thuoc_goi_kb / 10.0)
             self.thong_ke["goi_tin_da_nhan"] += 1
 
@@ -163,6 +225,8 @@ class BaseAgent(ABC):
             "pin_joule": round(self.pin_hien_tai, 1),
             "tai_hang_doi_pct": self.tai_hang_doi_pct,
             "cong_suat_dbm": self.radio_config["cong_suat_phat_dbm"],
+            "so_lang_gieng": len(self.bang_lang_gieng),
+            "route_to_sink": list(self.tuyen_ve_tram_cuc_bo),
             "thong_ke": self.thong_ke
         }
 
@@ -172,15 +236,21 @@ class BaseAgent(ABC):
             try:
                 thong_diep = await self.hang_doi_thong_diep.get()
                 if self.trang_thai == AgentState.OFFLINE:
+                    self.hang_doi_thong_diep.task_done()
                     continue
 
                 # Khấu trừ năng lượng mạch thu (Rx) khi nhận gói tin
                 kich_thuoc_kb = thong_diep.get("kich_thuoc_kb", 5.0)
                 self.tieu_hao_nang_luong_truyen_tin(kich_thuoc_kb, la_phat_song=False)
 
+                # Cập nhật tri thức cục bộ về láng giềng từ gói tin vừa nhận
+                self.cap_nhat_lang_gieng_tu_goi_tin(thong_diep)
+
                 # Gọi hàm xử lý chuyên biệt của từng loại Tác nhân (Đa hình)
                 await self.xu_ly_thong_diep(thong_diep)
                 self.hang_doi_thong_diep.task_done()
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 print(f"[LỖI TÁC NHÂN {self.ma_dinh_danh}] {e}")
 

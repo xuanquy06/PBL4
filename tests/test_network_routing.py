@@ -1,10 +1,17 @@
 import asyncio
 import csv
 import os
+import sys
 import unittest
 import tempfile
+from io import TextIOWrapper
 from unittest.mock import AsyncMock, patch
 from fastapi import WebSocketDisconnect
+
+if sys.platform == "win32":
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
 from core.base_agent import AgentState
 from core.ground_station_server import GroundStationServer
@@ -737,20 +744,45 @@ class MissionDispatchTests(unittest.IsolatedAsyncioTestCase):
         simulation.physics = FakePhysics({})
         uav = FakeAgent("MÁY_BAY_UAV_01", "MÁY_BAY", battery=100.0)
         uav.chuyen_trang_thai(AgentState.PATROLLING)
+        uav.pin_toi_da = 100000.0
+        uav.pin_hien_tai = uav.pin_toi_da
         uav.toa_do.update({
             "vi_do": 16.1,
             "kinh_do": 108.2,
             "do_cao": 1200.0,
             "van_toc_m_s": 45.0
         })
+        broker = MessageBroker(simulation.physics, scenario_manager=object())
+        broker.dang_ky_tac_nhan(uav)
+        simulation.broker = broker
+        simulation.ground_station_server = GroundStationServer(broker)
+        broker.ground_station_server = simulation.ground_station_server
 
-        class FakeBroker:
-            danh_sach_tac_nhan = {uav.ma_dinh_danh: uav}
+        bid_messages = []
 
-            async def gui_log_ra_web(self, level, message):
-                return None
+        async def submit_bid(message):
+            bid_messages.append(message)
+            if message.get("loai_tin") != "CFP_FIRE_EVENT":
+                return
+            target = {
+                "vi_do": message["vi_do"],
+                "kinh_do": message["kinh_do"],
+                "do_cao": 0.0
+            }
+            distance_m = simulation.physics.tinh_khoang_cach_3d(uav.toa_do, target)
+            energy_j = 2.0 * distance_m / 45.0 * uav.cong_suat_bay_w
+            battery_after_mission_pct = (
+                (uav.pin_hien_tai - energy_j) / uav.pin_toi_da * 100.0
+            )
+            if battery_after_mission_pct > 25.0:
+                simulation.ground_station_server.nhan_propose({
+                    "ma_phien_dau_gia": message["ma_phien_dau_gia"],
+                    "uav_id": uav.ma_dinh_danh,
+                    "chi_phi": distance_m,
+                    "khoang_cach_m": distance_m
+                })
 
-        simulation.broker = FakeBroker()
+        uav.xu_ly_thong_diep = submit_bid
         simulation._so_nhiem_vu_dieu_phoi = 0
         simulation._chi_so_lien_lac = {"nhiem_vu_da_dieu_phoi": 0}
         target_latitude = 16.24
@@ -763,8 +795,12 @@ class MissionDispatchTests(unittest.IsolatedAsyncioTestCase):
             "CHÁY_RỪNG", target_latitude, 108.2
         )
 
+        self.assertEqual(
+            [message["loai_tin"] for message in bid_messages],
+            ["CFP_FIRE_EVENT", "ACCEPT_PROPOSAL"]
+        )
         self.assertGreater(distance_km, 15.5)
-        self.assertTrue(result["thanh_cong"])
+        self.assertTrue(result["thanh_cong"], result)
         self.assertEqual(result["uav_dieu_dong"], uav.ma_dinh_danh)
 
     async def test_low_energy_mission_reports_nearest_uav_and_required_reserve(self):
@@ -781,7 +817,10 @@ class MissionDispatchTests(unittest.IsolatedAsyncioTestCase):
         simulation.broker = type(
             "FakeBroker",
             (),
-            {"danh_sach_tac_nhan": {nearest_uav.ma_dinh_danh: nearest_uav}}
+            {
+                "danh_sach_tac_nhan": {nearest_uav.ma_dinh_danh: nearest_uav},
+                "gui_log_ra_web": AsyncMock()
+            }
         )()
 
         result = await simulation.kich_hoat_su_co_khan_cap(

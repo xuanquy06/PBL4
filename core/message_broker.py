@@ -6,24 +6,28 @@ import time
 from typing import Dict, List, TYPE_CHECKING, Optional
 from fastapi import WebSocket
 
-# Chỉ import BaseAgent cho Pylance kiểm tra kiểu & gợi ý code (Autocomplete)
 if TYPE_CHECKING:
     from core.base_agent import BaseAgent
+
+RouteChannel = dict[str, bool | float]
+RouteState = tuple[float, str, tuple[str, ...], tuple[RouteChannel, ...]]
+
 
 class MessageBroker:
     """
     Môi trường truyền dẫn vô tuyến trung tâm (Wireless Channel & Event Broker):
     - Kiểm tra điều kiện vật lý (LoS, SNR, PER, Delay) trước khi chuyển phát gói tin.
-    - Đồng bộ trạng thái mạng, liên kết và số liệu QoS ra giao diện Web qua WebSocket.
+    - Cập nhật tri thức láng giềng cục bộ cho nút nhận khi gói tin truyền qua kênh vật lý.
+    - Đồng bộ trạng thái mạng, liên kết, độ phủ 7 phân khu và số liệu QoS ra giao diện Web.
     """
     def __init__(self, physics_engine, scenario_manager):
         self.physics = physics_engine
         self.scenario = scenario_manager
-        # Khai báo rõ kiểu BaseAgent thay vì object để Pylance nhận diện đầy đủ thuộc tính
         self.danh_sach_tac_nhan: Dict[str, "BaseAgent"] = {}
         self.danh_sach_client_ws: List[WebSocket] = []
+        self.phien_dau_gia_gan_nhat: Optional[dict] = None
+        self.tuyen_e2e_gan_nhat: Optional[dict] = None
 
-        # Thống kê toàn mạng phục vụ vẽ biểu đồ Real-time trên giao diện
         self.thong_ke_toan_mang = {
             "tong_goi_tin_phat": 0,
             "tong_goi_tin_thanh_cong": 0,
@@ -43,7 +47,10 @@ class MessageBroker:
 
     def cap_nhat_nang_luong_tong(self):
         self.thong_ke_toan_mang["nang_luong_tieu_hao_joule"] = round(
-            sum(agent.thong_ke["nang_luong_tieu_hao_joule"] for agent in self.danh_sach_tac_nhan.values()),
+            sum(
+                getattr(agent, "thong_ke", {}).get("nang_luong_tieu_hao_joule", 0.0)
+                for agent in self.danh_sach_tac_nhan.values()
+            ),
             3
         )
 
@@ -53,7 +60,11 @@ class MessageBroker:
         kich_thuoc_kb: float = 250.0,
         loai_tru: Optional[set[str]] = None
     ) -> Optional[dict]:
-        """Tìm tuyến khả dụng có chi phí thấp nhất từ một node tới trạm mặt đất."""
+        """
+        Tìm tuyến khả dụng có chi phí QoS + Năng lượng thấp nhất từ một node tới trạm mặt đất.
+        Đã khắc phục lỗi tự khóa trạng thái RELAYING: cho phép nhiều UAV cùng định tuyến
+        qua một UAV trung chuyển và cân bằng tải dựa trên số luồng relay + mức pin + bộ đệm.
+        """
         bat_dau = self.danh_sach_tac_nhan.get(ma_bat_dau)
         if not bat_dau:
             return None
@@ -61,7 +72,7 @@ class MessageBroker:
         if bat_dau.loai_tac_nhan == "TRẠM_MẶT_ĐẤT":
             return {"nodes": [ma_bat_dau], "channels": [], "cost": 0.0, "energy_j": 0.0, "delay_ms": 0.0}
 
-        hang_doi = [(0.0, ma_bat_dau, (ma_bat_dau,), ())]
+        hang_doi: List[RouteState] = [(0.0, ma_bat_dau, (ma_bat_dau,), ())]
         chi_phi_tot_nhat = {ma_bat_dau: 0.0}
         while hang_doi:
             chi_phi, ma_hien_tai, nodes, channels = heapq.heappop(hang_doi)
@@ -69,22 +80,27 @@ class MessageBroker:
                 continue
             hien_tai = self.danh_sach_tac_nhan[ma_hien_tai]
             if hien_tai.loai_tac_nhan == "TRẠM_MẶT_ĐẤT":
-                return {
+                ket_qua = {
                     "nodes": list(nodes),
                     "channels": list(channels),
                     "cost": round(chi_phi, 3),
                     "energy_j": round(sum(ch["energy_j"] for ch in channels), 3),
                     "delay_ms": round(sum(ch["do_tre_ms"] for ch in channels), 3)
                 }
+                if hasattr(bat_dau, "tuyen_ve_tram_cuc_bo"):
+                    bat_dau.tuyen_ve_tram_cuc_bo = list(nodes)
+                    bat_dau.chi_phi_ve_tram_cuc_bo = round(chi_phi, 3)
+                return ket_qua
 
             for ma_ke_tiep, ke_tiep in self.danh_sach_tac_nhan.items():
+                kenh: RouteChannel
                 if (
                     ma_ke_tiep in nodes
                     or ma_ke_tiep in cac_node_loai_tru
                     or ke_tiep.trang_thai.value == "NGẮT_KẾT_NỐI"
                     or (
                         ke_tiep.loai_tac_nhan == "MÁY_BAY"
-                        and ke_tiep.trang_thai.value in ("ĐANG_ĐẤU_GIÁ", "ĐANG_TRUYỀN_TẢI")
+                        and ke_tiep.trang_thai.value == "ĐANG_ĐẤU_GIÁ"
                     )
                 ):
                     continue
@@ -118,12 +134,25 @@ class MessageBroker:
                     continue
 
                 energy_j = self._uoc_tinh_nang_luong_truyen(hien_tai, kich_thuoc_kb)
-                kenh_co_nang_luong = {**kenh, "energy_j": energy_j}
+                kenh_co_nang_luong: RouteChannel = {**kenh, "energy_j": energy_j}
+
+                # Trọng số cân bằng tải khi đi qua UAV Relay hoặc Vệ tinh LEO Backhaul
+                so_luong_relay = len(getattr(ke_tiep, "_relay_requesters", ()))
+                relay_load_penalty = so_luong_relay * 2.0 if ke_tiep.loai_tac_nhan == "MÁY_BAY" else 0.0
+                battery_penalty = (
+                    (100.0 - ke_tiep.phan_tram_pin) * 0.08
+                    if ke_tiep.loai_tac_nhan == "MÁY_BAY" else 0.0
+                )
+                space_backhaul_cost = 18.0 if ke_tiep.loai_tac_nhan == "VỆ_TINH_LEO" else 0.0
+
                 weight = (
                     kenh["do_tre_ms"]
                     + 40.0 / max(0.5, kenh["dung_luong_mbps"])
                     + energy_j
                     + ke_tiep.tai_hang_doi_pct * 0.05
+                    + relay_load_penalty
+                    + battery_penalty
+                    + space_backhaul_cost
                 )
                 next_cost = chi_phi + weight
                 if next_cost < chi_phi_tot_nhat.get(ma_ke_tiep, float("inf")):
@@ -132,6 +161,10 @@ class MessageBroker:
                         hang_doi,
                         (next_cost, ma_ke_tiep, (*nodes, ma_ke_tiep), (*channels, kenh_co_nang_luong))
                     )
+
+        if hasattr(bat_dau, "tuyen_ve_tram_cuc_bo"):
+            bat_dau.tuyen_ve_tram_cuc_bo = []
+            bat_dau.chi_phi_ve_tram_cuc_bo = float("inf")
         return None
 
     @staticmethod
@@ -178,7 +211,7 @@ class MessageBroker:
     # =========================================================================
     async def gui_don_huong(self, ma_nguoi_gui: str, ma_nguoi_nhan: str, thong_diep: dict) -> bool:
         """
-        Truyền gói tin điểm-nối-điểm (Unicast) có kiểm tra suy hao vật lý, 
+        Truyền gói tin điểm-nối-điểm (Unicast) có kiểm tra suy hao vật lý,
         độ trễ lan truyền sóng và xác suất rớt gói PER.
         """
         nguoi_gui = self.danh_sach_tac_nhan.get(ma_nguoi_gui)
@@ -189,9 +222,12 @@ class MessageBroker:
 
         # Khấu trừ năng lượng phát sóng (Tx) của người gửi
         kich_thuoc_kb = float(thong_diep.get("kich_thuoc_kb", 10.0))
-        nang_luong_tx = nguoi_gui.tieu_hao_nang_luong_truyen_tin(
-            kich_thuoc_kb, la_phat_song=True
-        )
+        if hasattr(nguoi_gui, "tieu_hao_nang_luong_truyen_tin"):
+            nang_luong_tx = nguoi_gui.tieu_hao_nang_luong_truyen_tin(
+                kich_thuoc_kb, la_phat_song=True
+            )
+        else:
+            nang_luong_tx = 0.0
         self.cap_nhat_nang_luong_tong()
         self.thong_ke_toan_mang["tong_goi_tin_phat"] += 1
 
@@ -208,20 +244,22 @@ class MessageBroker:
 
         loai_tin = thong_diep.get("loai_tin", "UNKNOWN")
 
-        # Kiểm tra 1: Mất tầm nhìn thẳng (Khuất bóng Trái Đất hoặc quá cự ly A2A)
+        # Kiểm tra 1: Mất tầm nhìn thẳng (Khuất núi Sơn Trà / Khuất bóng Trái Đất / Quá cự ly)
         if not thong_so_kenh["kha_dung"]:
             self.thong_ke_toan_mang["tong_goi_tin_mat_los"] += 1
-            self.scenario.ghi_log_thuc_nghiem_qos(
-                ma_nguoi_gui, ma_nguoi_nhan, loai_tin, thong_so_kenh, "MAT_KET_NOI_LOS"
-            )
+            if hasattr(self.scenario, "ghi_log_thuc_nghiem_qos"):
+                self.scenario.ghi_log_thuc_nghiem_qos(
+                    ma_nguoi_gui, ma_nguoi_nhan, loai_tin, thong_so_kenh, "MAT_KET_NOI_LOS"
+                )
             return False
 
         # Kiểm tra 2: Xét xác suất lỗi gói tin (Packet Error Rate - PER) do nhiễu nhiệt
         if random.random() < thong_so_kenh["per"]:
             self.thong_ke_toan_mang["tong_goi_tin_rot_per"] += 1
-            self.scenario.ghi_log_thuc_nghiem_qos(
-                ma_nguoi_gui, ma_nguoi_nhan, loai_tin, thong_so_kenh, "ROT_GOI_DO_NHIEU_PER"
-            )
+            if hasattr(self.scenario, "ghi_log_thuc_nghiem_qos"):
+                self.scenario.ghi_log_thuc_nghiem_qos(
+                    ma_nguoi_gui, ma_nguoi_nhan, loai_tin, thong_so_kenh, "ROT_GOI_DO_NHIEU_PER"
+                )
             await self.phat_su_kien_ra_web("LOG", {
                 "cap_do": "WARN",
                 "noi_dung": f"[RỚT GÓI - PER] {ma_nguoi_gui} -> {ma_nguoi_nhan} ({loai_tin}) | SNR: {thong_so_kenh['snr_db']} dB"
@@ -234,29 +272,40 @@ class MessageBroker:
         tong_do_tre_ms = round(thong_so_kenh["do_tre_ms"] + do_tre_truyen_tai_ms, 3)
         thong_so_kenh["do_tre_ms"] = tong_do_tre_ms
 
-        # Gửi dữ liệu liên kết vô tuyến để hiển thị tuyến trên bản đồ.
-        await self.phat_su_kien_ra_web("RF_LINK", {
-            "tu_node": ma_nguoi_gui,
-            "den_node": ma_nguoi_nhan,
-            "loai_tin": loai_tin,
-            "toa_do_dau": nguoi_gui.toa_do,
-            "toa_do_cuoi": nguoi_nhan.toa_do,
-            "snr_db": thong_so_kenh["snr_db"],
-            "do_tre_ms": tong_do_tre_ms,
-            "dung_luong_mbps": thong_so_kenh["dung_luong_mbps"]
-        })
+        # Gửi dữ liệu liên kết vô tuyến để hiển thị tia sóng trên bản đồ
+        if loai_tin != "HELLO_BEACON":
+            await self.phat_su_kien_ra_web("RF_LINK", {
+                "tu_node": ma_nguoi_gui,
+                "den_node": ma_nguoi_nhan,
+                "loai_tin": loai_tin,
+                "toa_do_dau": nguoi_gui.toa_do,
+                "toa_do_cuoi": nguoi_nhan.toa_do,
+                "snr_db": thong_so_kenh["snr_db"],
+                "do_tre_ms": tong_do_tre_ms,
+                "dung_luong_mbps": thong_so_kenh["dung_luong_mbps"]
+            })
 
-        # Mô phỏng thời gian sóng bay trong không gian (Scale nhẹ để hiệu ứng thị giác mượt mà)
-        await asyncio.sleep(min(0.5, max(0.02, tong_do_tre_ms / 100.0)))
+        await asyncio.sleep(min(0.25, max(0.01, tong_do_tre_ms / 150.0)))
 
-        # Đính kèm Metadata lớp Vật lý vào gói tin để người nhận sử dụng tính toán
+        # Đính kèm Metadata lớp Vật lý và thông tin Beacon người gửi để người nhận cập nhật Bảng láng giềng cục bộ
         goi_tin_hoan_chinh = {
             **thong_diep,
             "nguoi_gui": ma_nguoi_gui,
             "nguoi_nhan": ma_nguoi_nhan,
+            "loai_nguoi_gui": nguoi_gui.loai_tac_nhan,
+            "toa_do_nguoi_gui": dict(nguoi_gui.toa_do),
+            "pin_pct": getattr(nguoi_gui, "phan_tram_pin", 100.0),
+            "tai_hang_doi_pct": getattr(nguoi_gui, "tai_hang_doi_pct", 0.0),
+            "trang_thai_nguoi_gui": getattr(nguoi_gui.trang_thai, "value", str(nguoi_gui.trang_thai)),
+            "zone_id": getattr(nguoi_gui, "zone_id", None),
+            "cost_to_sink": getattr(nguoi_gui, "chi_phi_ve_tram_cuc_bo", float("inf")),
+            "path_to_sink": list(getattr(nguoi_gui, "tuyen_ve_tram_cuc_bo", [])),
             "thoi_diem_gui": thong_diep.get("thoi_diem_gui", time.time()),
             "thong_so_kenh": thong_so_kenh
         }
+
+        if hasattr(nguoi_nhan, "cap_nhat_lang_gieng_tu_goi_tin"):
+            nguoi_nhan.cap_nhat_lang_gieng_tu_goi_tin(goi_tin_hoan_chinh)
 
         await nguoi_nhan.hang_doi_thong_diep.put(goi_tin_hoan_chinh)
 
@@ -265,14 +314,12 @@ class MessageBroker:
         n_ok = self.thong_ke_toan_mang["tong_goi_tin_thanh_cong"]
         cur_avg = self.thong_ke_toan_mang["do_tre_trung_binh_ms"]
         self.thong_ke_toan_mang["do_tre_trung_binh_ms"] = round(((cur_avg * (n_ok - 1)) + tong_do_tre_ms) / n_ok, 3)
-        self.thong_ke_toan_mang["nang_luong_tieu_hao_joule"] = round(
-            sum(agent.thong_ke["nang_luong_tieu_hao_joule"] for agent in self.danh_sach_tac_nhan.values()),
-            3
-        )
+        self.cap_nhat_nang_luong_tong()
 
-        self.scenario.ghi_log_thuc_nghiem_qos(
-            ma_nguoi_gui, ma_nguoi_nhan, loai_tin, thong_so_kenh, "THANH_CONG"
-        )
+        if hasattr(self.scenario, "ghi_log_thuc_nghiem_qos"):
+            self.scenario.ghi_log_thuc_nghiem_qos(
+                ma_nguoi_gui, ma_nguoi_nhan, loai_tin, thong_so_kenh, "THANH_CONG"
+            )
         return True
 
     async def phat_song_quang_ba(
@@ -283,8 +330,6 @@ class MessageBroker:
     ):
         """
         Phát sóng quảng bá (Broadcast) đến tất cả các Node lân cận nằm trong tầm nhìn thẳng (LoS).
-        Các tác vụ gửi tới từng đích được thực thi song song bằng `asyncio.gather`.
-        Khi cung cấp danh sách người nhận, giới hạn broadcast trong nhóm tác nhân đó.
         """
         cac_tac_vu = []
         for ma_dich in self.danh_sach_tac_nhan:
@@ -306,6 +351,11 @@ class MessageBroker:
     # =========================================================================
     async def phat_su_kien_ra_web(self, loai_su_kien: str, du_lieu):
         """Đẩy gói tin JSON thời gian thực xuống tất cả trình duyệt đang mở"""
+        if loai_su_kien == "CNP_AUCTION_RESULT":
+            self.phien_dau_gia_gan_nhat = du_lieu
+        elif loai_su_kien == "E2E_ROUTE_COMPLETED":
+            self.tuyen_e2e_gan_nhat = du_lieu
+
         if not self.danh_sach_client_ws:
             return
 
@@ -327,15 +377,53 @@ class MessageBroker:
                 self.danh_sach_client_ws.remove(ws)
 
     async def gui_log_ra_web(self, loai_log: str, noi_dung: str):
-        """Hàm tiện ích tương thích nhanh để in nhật ký sự kiện lên bảng điều khiển Web"""
+        """Hàm tiện ích in nhật ký sự kiện lên bảng điều khiển Web"""
         await self.phat_su_kien_ra_web("LOG", {
             "cap_do": loai_log,
             "noi_dung": noi_dung
         })
 
+    def tinh_thong_ke_phu_song_vung(self) -> Dict[str, dict]:
+        """Tính trạng thái độ phủ sóng thực tế của 7 phân khu rừng Sơn Trà."""
+        vung_stats: Dict[str, dict] = {}
+        for idx in range(1, 8):
+            zone_id = f"ZONE_{idx:02d}"
+            vung_stats[zone_id] = {
+                "zone_id": zone_id,
+                "tong_uav": 0,
+                "uav_hoat_dong": 0,
+                "uav_dang_sac_hoac_rtb": 0,
+                "uav_nhan_ban_giao": 0,
+                "trang_thai": "DU_PHU_SONG"
+            }
+
+        for agent in self.danh_sach_tac_nhan.values():
+            if agent.loai_tac_nhan != "MÁY_BAY":
+                continue
+            z_id = getattr(agent, "zone_id", None)
+            if not z_id or z_id not in vung_stats:
+                continue
+            entry = vung_stats[z_id]
+            entry["tong_uav"] += 1
+            if agent.trang_thai.value in ("NGẮT_KẾT_NỐI", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC", "ĐANG_SẠC"):
+                entry["uav_dang_sac_hoac_rtb"] += 1
+            else:
+                entry["uav_hoat_dong"] += 1
+            if getattr(agent, "_vung_tuan_tra_phu", None):
+                entry["uav_nhan_ban_giao"] += len(agent._vung_tuan_tra_phu)
+
+        for z_id, entry in vung_stats.items():
+            if entry["uav_hoat_dong"] == 0:
+                entry["trang_thai"] = "MAT_PHU_SONG"
+            elif entry["uav_hoat_dong"] < entry["tong_uav"]:
+                entry["trang_thai"] = "BAN_GIAO_TAM_THOI"
+            else:
+                entry["trang_thai"] = "DU_PHU_SONG"
+        return vung_stats
+
     async def dong_bo_trang_thai_toan_mang(self):
         """
-        Thu thập tọa độ, pin và trạng thái của toàn bộ tác tử cùng thống kê QoS.
+        Thu thập tọa độ, pin, tuyến truyền, độ phủ 7 phân khu và thống kê QoS đẩy ra giao diện.
         """
         danh_sach_nodes = [
             agent.xuat_ho_so_trang_thai()
@@ -343,6 +431,9 @@ class MessageBroker:
         ]
         await self.phat_su_kien_ra_web("WORLD_STATE", {
             "nodes": danh_sach_nodes,
+            "zone_coverage": self.tinh_thong_ke_phu_song_vung(),
             "network_metrics": self.thong_ke_toan_mang,
-            "connectivity_metrics": getattr(self, "thong_ke_lien_tuc", {})
+            "connectivity_metrics": getattr(self, "thong_ke_lien_tuc", {}),
+            "last_auction": self.phien_dau_gia_gan_nhat,
+            "last_e2e_route": self.tuyen_e2e_gan_nhat
         })

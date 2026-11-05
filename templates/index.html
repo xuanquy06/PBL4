@@ -4,546 +4,473 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#07111c">
-    <title>SAGSINS | Giám sát cháy rừng bằng MAS</title>
+    <title>SAGSINS | Điều phối Đa tác nhân (MAS) Giám sát Cháy rừng</title>
     <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
     <script src="/static/vendor/leaflet/leaflet.js"></script>
     <style>
         :root {
             color-scheme: dark;
             --bg: #07111c;
-            --panel: rgba(9, 21, 34, .94);
-            --panel-soft: rgba(13, 29, 44, .92);
-            --line: rgba(126, 166, 190, .2);
+            --panel: rgba(9, 21, 34, 0.94);
+            --panel-soft: rgba(14, 31, 48, 0.9);
+            --line: rgba(126, 166, 190, 0.22);
             --text: #e5eef5;
             --muted: #8ca2b3;
             --cyan: #45d5e8;
             --green: #69e3a3;
             --yellow: #f4c96b;
+            --purple: #b68cff;
             --red: #ff7b7b;
         }
         * { box-sizing: border-box; }
         html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
-        body { background: var(--bg); color: var(--text); font: 13px/1.45 "Segoe UI", Arial, sans-serif; }
-        button, input, select { font: inherit; }
-        button { color: inherit; }
-        .stage { position: fixed; inset: 0; z-index: 0; }
-        #map-2d-container { display: block; background: #0a1825; }
+        body { background: var(--bg); color: var(--text); font: 12.5px/1.45 "Segoe UI", system-ui, sans-serif; }
+        button, input, select { font: inherit; color: inherit; }
+
+        .stage { position: fixed; inset: 0; z-index: 0; background: #0a1825; }
+
+        /* Topbar + KPI Strip */
         .topbar {
-            position: absolute; z-index: 5; top: 14px; left: 50%; transform: translateX(-50%);
-            width: min(970px, calc(100% - 32px)); min-height: 66px; display: flex;
-            align-items: center; justify-content: space-between; gap: 20px; padding: 11px 18px;
-            background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
-            box-shadow: 0 12px 40px #0005; backdrop-filter: blur(14px);
+            position: absolute; z-index: 5; top: 10px; left: 14px; right: 14px;
+            display: flex; align-items: center; justify-content: space-between; gap: 14px;
+            padding: 8px 14px; background: var(--panel); border: 1px solid var(--line);
+            border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,0.45); backdrop-filter: blur(12px);
         }
-        .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+        .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
         .brand-mark {
-            width: 38px; height: 38px; display: grid; place-items: center; flex: none;
-            border: 1px solid #45d5e866; border-radius: 11px; color: var(--cyan);
-            background: #45d5e812; font-size: 20px;
+            width: 32px; height: 32px; display: grid; place-items: center; flex: none;
+            border: 1px solid rgba(69,213,232,0.45); border-radius: 8px;
+            color: var(--cyan); background: rgba(69,213,232,0.1); font-size: 16px; font-weight: 700;
         }
-        .brand h1 { margin: 0; font-size: 15px; letter-spacing: .06em; }
-        .brand p { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
-        .connection { display: flex; align-items: center; gap: 8px; color: var(--muted); white-space: nowrap; }
-        .connection-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); box-shadow: 0 0 12px currentColor; }
+        .brand h1 { margin: 0; font-size: 13.5px; letter-spacing: 0.04em; white-space: nowrap; }
+        .brand p { margin: 1px 0 0; color: var(--muted); font-size: 11px; white-space: nowrap; }
+
+        .kpi-strip {
+            display: flex; align-items: center; gap: 2px; flex: 1; justify-content: center;
+            overflow-x: auto;
+        }
+        .kpi-item {
+            padding: 3px 11px; border-right: 1px solid var(--line); min-width: max-content;
+        }
+        .kpi-item:last-child { border-right: 0; }
+        .kpi-label { color: var(--muted); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+        .kpi-val { font-size: 13.5px; font-weight: 700; color: var(--text); margin-top: 1px; }
+        .kpi-sub { font-size: 9.5px; color: var(--muted); }
+        .kpi-val.cyan { color: var(--cyan); }
+        .kpi-val.green { color: var(--green); }
+        .kpi-val.yellow { color: var(--yellow); }
+
+        .status-box { display: flex; align-items: center; gap: 10px; flex: none; }
+        .sim-badge {
+            padding: 3px 8px; border-radius: 5px; font-size: 10.5px; font-weight: 600;
+            border: 1px solid var(--line); background: rgba(255,255,255,0.04); color: var(--cyan);
+        }
+        .connection { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+        .connection-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--yellow); }
         .connection.online { color: var(--green); }
-        .connection.online .connection-dot { background: var(--green); }
+        .connection.online .connection-dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
         .connection.offline { color: var(--red); }
         .connection.offline .connection-dot { background: var(--red); }
-        .metrics {
-            position: absolute; z-index: 4; top: 100px; left: 50%; transform: translateX(-50%);
-            width: min(1040px, calc(100% - 36px)); display: grid; grid-template-columns: repeat(8, 1fr);
-            overflow: hidden; border: 1px solid var(--line); border-radius: 10px;
-            background: var(--panel); backdrop-filter: blur(12px);
-        }
-        .metric { padding: 10px 15px; border-right: 1px solid var(--line); }
-        .metric:last-child { border: 0; }
-        .metric-label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
-        .metric-value { margin-top: 3px; font-size: 17px; font-weight: 700; color: var(--text); }
-        .metric-value.cyan { color: var(--cyan); }
-        .metric-value.green { color: var(--green); }
-        .metric-value.yellow { color: var(--yellow); }
+
+        /* Side Panels */
         .panel {
-            position: absolute; z-index: 4; width: 290px; padding: 14px;
-            border: 1px solid var(--line); border-radius: 11px; background: var(--panel);
-            box-shadow: 0 10px 34px #0005; backdrop-filter: blur(12px);
+            position: absolute; z-index: 4; top: 68px; width: 325px; padding: 12px;
+            border: 1px solid var(--line); border-radius: 10px; background: var(--panel);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.45); backdrop-filter: blur(12px);
+            display: flex; flex-direction: column; gap: 10px;
         }
-        #control-panel { top: 205px; left: 16px; max-height: calc(100vh - 390px); overflow-y: auto; }
-        #node-panel { top: 205px; right: 16px; max-height: calc(100vh - 280px); overflow-y: auto; }
-        .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
-        .panel-heading h2 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
-        .eyebrow { color: var(--cyan); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
-        .section { padding-top: 11px; margin-top: 11px; border-top: 1px solid var(--line); }
-        .section-title { margin: 0 0 8px; color: #c7d6e0; font-size: 11px; font-weight: 650; }
-        .field { display: flex; flex-direction: column; gap: 5px; margin: 8px 0; }
+        #control-panel { left: 14px; max-height: calc(100vh - 230px); overflow-y: auto; }
+        #node-panel { right: 14px; bottom: 14px; max-height: calc(100vh - 82px); }
+
+        .section-block {
+            padding-top: 9px; border-top: 1px solid var(--line);
+        }
+        .section-block:first-child { padding-top: 0; border-top: 0; }
+        .section-head {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 6px;
+        }
+        .section-title {
+            margin: 0; font-size: 11px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.06em; color: var(--cyan);
+        }
+        .muted { color: var(--muted); font-size: 11px; margin: 0; }
+
+        .coords-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 6px 0; }
+        .field { display: flex; flex-direction: column; gap: 3px; }
         .field label { color: var(--muted); font-size: 10px; }
         .field input, .field select {
-            width: 100%; min-height: 34px; padding: 7px 9px; color: var(--text);
-            border: 1px solid #56708366; border-radius: 6px; outline: none; background: #07111c;
+            width: 100%; height: 30px; padding: 4px 8px; border: 1px solid rgba(126,166,190,0.35);
+            border-radius: 5px; background: #06101a; color: var(--text); font-size: 11.5px; outline: none;
         }
         .field input:focus, .field select:focus { border-color: var(--cyan); }
-        .coordinates { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-        .button {
-            width: 100%; min-height: 34px; padding: 7px 9px; border: 1px solid #45d5e866;
-            border-radius: 6px; color: var(--cyan); background: #45d5e812;
-            cursor: pointer; text-align: center; font-weight: 650; transition: .15s ease;
+
+        .btn {
+            height: 31px; padding: 0 10px; border: 1px solid rgba(69,213,232,0.45);
+            border-radius: 6px; background: rgba(69,213,232,0.12); color: var(--cyan);
+            font-size: 11.5px; font-weight: 600; cursor: pointer; transition: 0.15s ease;
+            display: inline-flex; align-items: center; justify-content: center; gap: 5px;
         }
-        .button:hover { background: #45d5e82a; border-color: var(--cyan); }
-        .button.primary { margin-top: 4px; color: #07111c; background: var(--cyan); }
-        .button.primary:hover { background: #79e5f0; }
-        .button:disabled { cursor: wait; opacity: .65; }
-        .mission-feedback { min-height: 18px; margin: 6px 0 0; color: var(--muted); font-size: 10px; }
-        .mission-feedback.error { color: var(--red); }
-        .mission-feedback.success { color: var(--green); }
-        .button.secondary { color: #c9d7e0; border-color: var(--line); background: #ffffff08; }
-        .button-row { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
-        .method-card {
-            padding: 10px; border: 1px solid #45d5e826; border-radius: 7px;
-            color: #b9cbd6; background: #45d5e809; font-size: 11px;
+        .btn:hover { background: rgba(69,213,232,0.24); border-color: var(--cyan); }
+        .btn.primary { width: 100%; background: var(--cyan); color: #06101a; font-weight: 700; }
+        .btn.primary:hover { background: #74e3f2; }
+        .btn.secondary { border-color: var(--line); background: rgba(255,255,255,0.05); color: #d0dde6; }
+        .btn.secondary:hover { border-color: var(--cyan); color: var(--cyan); }
+        .btn.warn { border-color: rgba(244,201,107,0.45); background: rgba(244,201,107,0.12); color: var(--yellow); }
+        .btn.active { border-color: var(--cyan); background: rgba(69,213,232,0.25); color: #fff; }
+        .btn:disabled { opacity: 0.55; cursor: wait; }
+
+        .btn-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .btn-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+
+        .feedback-line { margin: 4px 0 0; font-size: 10.5px; color: var(--muted); min-height: 15px; }
+        .feedback-line.ok { color: var(--green); font-weight: 600; }
+        .feedback-line.err { color: var(--red); font-weight: 600; }
+
+        /* CNP Auction Table & E2E Route Box */
+        .info-box {
+            padding: 8px; border: 1px solid var(--line); border-radius: 6px;
+            background: rgba(5, 13, 22, 0.75); font-size: 11px;
         }
-        .method-card strong { display: block; margin-bottom: 4px; color: var(--cyan); }
-        .method-card.warning { border-color: #f4c96b35; background: #f4c96b09; }
-        .method-card.warning strong { color: var(--yellow); }
-        .muted { color: var(--muted); }
-        .node-count { color: var(--muted); font-size: 10px; white-space: nowrap; }
-        #node-list-container { display: flex; flex-direction: column; gap: 7px; }
+        .auction-table {
+            width: 100%; border-collapse: collapse; margin-top: 5px; font-size: 10.5px;
+        }
+        .auction-table th, .auction-table td {
+            padding: 3px 4px; text-align: left; border-bottom: 1px solid rgba(126,166,190,0.12);
+        }
+        .auction-table th { color: var(--muted); font-weight: 600; font-size: 9.5px; }
+        .badge-win {
+            padding: 1px 5px; border-radius: 3px; background: rgba(105,227,163,0.2);
+            color: var(--green); font-weight: 700; font-size: 9.5px;
+        }
+        .badge-bid {
+            padding: 1px 5px; border-radius: 3px; background: rgba(69,213,232,0.15);
+            color: var(--cyan); font-size: 9.5px;
+        }
+        .badge-refuse {
+            padding: 1px 5px; border-radius: 3px; background: rgba(255,123,123,0.15);
+            color: var(--red); font-size: 9.5px;
+        }
+        .route-chain {
+            margin-top: 4px; padding: 5px 7px; border-radius: 4px;
+            background: rgba(69,213,232,0.08); border-left: 3px solid var(--cyan);
+            font-family: Consolas, monospace; font-size: 10.5px; color: var(--text);
+            word-break: break-word;
+        }
+
+        /* Right Node Panel */
+        .filter-tabs {
+            display: flex; flex-wrap: wrap; gap: 4px;
+        }
+        .filter-tab {
+            padding: 3px 7px; border-radius: 4px; border: 1px solid var(--line);
+            background: rgba(255,255,255,0.03); color: var(--muted);
+            font-size: 10px; cursor: pointer;
+        }
+        .filter-tab.active {
+            border-color: var(--cyan); background: rgba(69,213,232,0.18); color: var(--text); font-weight: 600;
+        }
+        #node-list-container {
+            flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+            padding-right: 2px;
+        }
         .node-card {
-            padding: 8px 10px; border: 1px solid var(--line); border-left: 3px solid var(--cyan);
-            border-radius: 8px; background: #ffffff06; cursor: pointer; transition: all .15s ease;
+            padding: 7px 9px; border: 1px solid var(--line); border-left: 3px solid var(--cyan);
+            border-radius: 6px; background: rgba(255,255,255,0.03); cursor: pointer;
+            text-align: left; width: 100%; transition: background 0.12s ease;
         }
-        .node-card:hover { background: #45d5e812; border-color: var(--cyan); transform: translateX(2px); }
-        .node-card-inner { display: flex; align-items: center; gap: 10px; }
-        .node-avatar-box {
-            width: 36px; height: 36px; border-radius: 8px; background: #07111cf0;
-            border: 1px solid var(--line); display: grid; place-items: center; flex: none;
+        .node-card:hover { background: rgba(69,213,232,0.1); }
+        .node-card-top { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-weight: 600; font-size: 11.5px; }
+        .node-card-sub { display: flex; justify-content: space-between; gap: 6px; margin-top: 2px; color: var(--muted); font-size: 10px; }
+        .battery-bar {
+            height: 3px; width: 100%; background: rgba(255,255,255,0.1);
+            border-radius: 2px; margin-top: 4px; overflow: hidden;
         }
-        .node-avatar-box.avatar-uav { border-color: #45d5e866; box-shadow: 0 0 8px #45d5e822; }
-        .node-avatar-box.avatar-station { border-color: #69e3a366; box-shadow: 0 0 8px #69e3a322; }
-        .node-avatar-box.avatar-sat { border-color: #f4c96b66; box-shadow: 0 0 8px #f4c96b22; }
-        .node-card-avatar { width: 26px; height: 26px; object-fit: contain; }
-        .node-card-body { flex: 1; min-width: 0; }
-        .node-card-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 650; }
-        .node-card-meta { margin-top: 3px; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .status-ok { color: var(--green); }
-        .status-warn { color: var(--yellow); }
-        .status-err { color: var(--red); }
-        .uav-status-popup .leaflet-popup-content-wrapper {
-            padding: 0; color: var(--text); background: #091522;
-            border: 1px solid #45d5e866; border-radius: 10px;
-            box-shadow: 0 12px 38px #000b; overflow: hidden;
-        }
-        .uav-status-popup .leaflet-popup-content { margin: 0; }
-        .uav-status-popup .leaflet-popup-tip { background: #091522; }
-        .uav-status-popup .leaflet-popup-close-button {
-            color: #fff !important; z-index: 10; padding: 6px 8px 0 0;
-            text-shadow: 0 0 8px rgba(0,0,0,0.9);
-        }
-        .uav-popup-card { min-width: 240px; }
-        .popup-banner {
-            width: 100%; height: 110px; background-size: cover; background-position: center;
-            position: relative; border-bottom: 1px solid var(--line);
-        }
-        .popup-badge {
-            position: absolute; bottom: 8px; left: 8px;
-            padding: 3px 8px; font-size: 9px; font-weight: 700;
-            letter-spacing: .08em; border-radius: 4px; box-shadow: 0 2px 8px #0009;
-        }
-        .popup-badge.uav { background: #45d5e8; color: #07111c; }
-        .popup-badge.station { background: #69e3a3; color: #07111c; }
-        .popup-badge.sat { background: #f4c96b; color: #07111c; }
-        .uav-popup-body { padding: 11px 13px 13px; }
-        .uav-popup-title {
-            margin-bottom: 8px; color: var(--cyan); font-weight: 700;
-            letter-spacing: .04em; overflow-wrap: anywhere; font-size: 13px;
-        }
-        .uav-popup-row {
-            display: flex; justify-content: space-between; gap: 12px;
-            padding: 4px 0; border-top: 1px solid var(--line);
-        }
-        .uav-popup-label { color: var(--muted); }
-        .uav-popup-value { color: var(--text); text-align: right; }
-        .uav-popup-value.state { color: var(--cyan); }
-        .uav-popup-value.battery-low { color: #ff646e; font-weight: 700; }
-        
-        /* Custom map markers */
-        .custom-node-marker {
-            display: inline-flex; align-items: center; gap: 6px;
-            cursor: pointer; user-select: none; transition: transform .15s ease;
-        }
-        .custom-node-marker:hover { transform: scale(1.1); z-index: 9999 !important; }
-        .marker-icon-bubble {
-            width: 32px; height: 32px; border-radius: 50%;
-            background: #07111cf5; border: 2px solid var(--node-color, var(--cyan));
-            box-shadow: 0 0 10px var(--node-color, var(--cyan)), inset 0 0 6px rgba(0,0,0,0.8);
-            display: grid; place-items: center; flex: none;
-        }
-        .marker-img { width: 20px; height: 20px; object-fit: contain; display: block; }
-        .marker-text-tag {
-            padding: 3px 8px; border-radius: 6px; background: #07111cf0;
-            border: 1px solid var(--node-color, var(--line)); color: var(--text);
-            font: 11px/1.2 Consolas, monospace; white-space: nowrap; box-shadow: 0 2px 10px #0008;
-        }
-        .marker-station .marker-icon-bubble { animation: station-pulse 3s infinite; }
-        @keyframes station-pulse {
-            0%, 100% { box-shadow: 0 0 8px #69e3a388; }
-            50% { box-shadow: 0 0 16px #69e3a3ee; }
-        }
+        .battery-fill { height: 100%; transition: width 0.25s ease; }
 
-        /* Map agent legend */
-        .map-agent-legend {
-            position: absolute; z-index: 4; bottom: 15px; right: 260px;
-            display: flex; align-items: center; gap: 12px; padding: 7px 12px;
-            background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-            box-shadow: 0 6px 20px #0006; backdrop-filter: blur(10px); cursor: pointer;
-            transition: all .2s ease;
-        }
-        .map-agent-legend:hover { background: rgba(13, 29, 44, .98); border-color: var(--cyan); transform: translateY(-1px); }
-        .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text); }
-        .legend-item img { width: 18px; height: 18px; object-fit: contain; }
-        .legend-badge {
-            padding: 2px 6px; border-radius: 4px; background: #45d5e822;
-            border: 1px solid #45d5e866; color: var(--cyan); font-size: 10px; font-weight: 600;
-        }
-
-        /* Agents Showcase Modal */
-        .modal-overlay {
-            position: fixed; inset: 0; z-index: 9999; background: rgba(4, 10, 18, .82);
-            backdrop-filter: blur(8px); display: none; align-items: center; justify-content: center; padding: 20px;
-        }
-        .modal-overlay.active { display: flex; }
-        .modal-card {
-            background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-            width: min(940px, 95vw); max-height: 90vh; overflow-y: auto;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, .8); display: flex; flex-direction: column;
-        }
-        .modal-header {
-            display: flex; justify-content: space-between; align-items: center;
-            padding: 16px 20px; border-bottom: 1px solid var(--line);
-        }
-        .modal-header h3 { margin: 0; font-size: 15px; letter-spacing: .05em; color: var(--cyan); }
-        .modal-close-btn {
-            background: transparent; border: none; color: var(--muted); font-size: 22px;
-            cursor: pointer; line-height: 1; padding: 4px 8px; border-radius: 4px;
-        }
-        .modal-close-btn:hover { color: var(--text); background: rgba(255, 255, 255, .1); }
-        .modal-body { padding: 20px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-        @media (max-width: 768px) { .modal-body { grid-template-columns: 1fr; } }
-        .agent-item-card {
-            background: #0d1e2f; border: 1px solid var(--line); border-radius: 10px;
-            overflow: hidden; display: flex; flex-direction: column; transition: all .2s ease;
-        }
-        .agent-item-card:hover { transform: translateY(-3px); border-color: var(--cyan); box-shadow: 0 8px 24px #0008; }
-        .agent-item-img { width: 100%; height: 160px; object-fit: cover; border-bottom: 1px solid var(--line); }
-        .agent-item-content { padding: 14px; display: flex; flex-direction: column; flex: 1; }
-        .agent-item-title { font-size: 13px; font-weight: 700; margin-bottom: 5px; display: flex; align-items: center; gap: 7px; }
-        .agent-item-role { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
-        .agent-item-desc { font-size: 11px; color: #c7d6e0; line-height: 1.5; flex: 1; margin-bottom: 10px; }
-        .agent-item-spec {
-            padding-top: 8px; border-top: 1px solid var(--line); font-size: 10px; color: var(--muted);
-            display: flex; flex-direction: column; gap: 4px;
-        }
-        .agent-item-spec span strong { color: var(--text); }
+        /* Bottom Terminal Log */
         #terminal-panel {
-            position: absolute; z-index: 4; left: 16px; bottom: 15px; width: min(590px, calc(100% - 32px));
-            height: 155px; padding: 11px 13px; border: 1px solid var(--line);
-            border-radius: 10px; background: var(--panel); box-shadow: 0 10px 34px #0005;
+            position: absolute; z-index: 4; left: 14px; bottom: 14px;
+            width: min(620px, calc(100vw - 365px)); height: 148px;
+            padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px;
+            background: var(--panel); box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+            display: flex; flex-direction: column;
         }
-        .terminal-heading { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 7px; color: #c7d6e0; font-size: 10px; font-weight: 700; }
-        #terminal-output { height: 112px; overflow-y: auto; color: #c5d3dc; font: 10px/1.55 Consolas, monospace; }
-        .log-entry { padding: 1px 0; overflow-wrap: anywhere; }
-        .log-time { margin-right: 7px; color: #718898; }
+        .terminal-head {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 5px; font-size: 10.5px; font-weight: 700; color: var(--cyan);
+        }
+        .log-filters { display: flex; gap: 4px; }
+        .log-filter-btn {
+            padding: 1px 6px; font-size: 9.5px; border-radius: 3px;
+            border: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer;
+        }
+        .log-filter-btn.active { border-color: var(--cyan); color: var(--cyan); background: rgba(69,213,232,0.12); }
+        #terminal-output {
+            flex: 1; overflow-y: auto; font: 10.5px/1.5 Consolas, monospace; color: #c5d3dc;
+        }
+        .log-entry { padding: 1px 0; word-break: break-word; }
+        .log-time { margin-right: 6px; color: #6e8797; }
         .log-WARN, .log-EVENT { color: var(--yellow); }
         .log-SUCCESS, .log-WIN { color: var(--green); }
         .log-BID, .log-RELAY { color: var(--cyan); }
-        .toolbar {
-            position: absolute; z-index: 4; right: 16px; bottom: 15px;
-            display: flex; gap: 7px; align-items: center;
+
+        /* Compact Map Legend */
+        .map-legend {
+            position: absolute; z-index: 4; bottom: 14px; right: 350px;
+            display: flex; align-items: center; gap: 10px; padding: 6px 11px;
+            background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+            font-size: 10.5px; color: var(--muted); pointer-events: none;
         }
-        .toolbar .button { width: auto; min-width: 94px; padding-inline: 10px; background: var(--panel); backdrop-filter: blur(10px); }
-        .marker-label-2d {
-            padding: 3px 6px; border: 1px solid var(--cyan); border-radius: 5px;
-            color: var(--text); background: #07111cf0; box-shadow: 0 2px 10px #0008;
-            font: 10px Consolas, monospace; white-space: nowrap;
+        .legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+
+        /* Map Custom Markers & Labels */
+        .custom-node-marker {
+            display: inline-flex; align-items: center; gap: 5px;
+            cursor: pointer; user-select: none;
         }
-        #map-imagery-notice {
-            position: absolute; z-index: 500; top: 12px; left: 50%;
-            transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px);
-            padding: 7px 10px; border: 1px solid #247c8a66; border-radius: 6px;
-            color: #234d56; background: #f4f8f2ee; font-size: 10px; text-align: center;
+        .marker-icon-bubble {
+            width: 28px; height: 28px; border-radius: 50%;
+            background: rgba(7, 17, 28, 0.94); border: 2px solid var(--node-color, var(--cyan));
+            box-shadow: 0 0 8px var(--node-color, var(--cyan));
+            display: grid; place-items: center; flex: none;
         }
+        .marker-img { width: 17px; height: 17px; object-fit: contain; display: block; }
+        .marker-text-tag {
+            padding: 2px 6px; border-radius: 4px; background: rgba(7, 17, 28, 0.92);
+            border: 1px solid var(--node-color, var(--line)); color: var(--text);
+            font: 10px/1.2 Consolas, monospace; white-space: nowrap;
+        }
+        .zone-label-tag {
+            padding: 2px 6px; border-radius: 4px; background: rgba(7, 17, 28, 0.82);
+            border: 1px solid rgba(126, 166, 190, 0.4); color: #dce8f0;
+            font: 700 10px/1.2 Consolas, monospace; white-space: nowrap; pointer-events: none;
+        }
+
+        .uav-status-popup .leaflet-popup-content-wrapper {
+            padding: 0; color: var(--text); background: #091522;
+            border: 1px solid rgba(69,213,232,0.45); border-radius: 8px;
+        }
+        .uav-status-popup .leaflet-popup-content { margin: 0; }
+        .uav-status-popup .leaflet-popup-tip { background: #091522; }
+        .popup-card { min-width: 225px; padding: 10px 12px; }
+        .popup-title { color: var(--cyan); font-weight: 700; font-size: 12.5px; margin-bottom: 6px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+        .popup-row { display: flex; justify-content: space-between; gap: 10px; padding: 2.5px 0; font-size: 11px; }
+        .popup-row span:first-child { color: var(--muted); }
+
         ::-webkit-scrollbar { width: 5px; height: 5px; }
-        ::-webkit-scrollbar-thumb { border-radius: 5px; background: #38556a; }
-        @media (max-width: 900px) {
-            .panel { width: 255px; padding: 11px; }
-            #control-panel { left: 10px; }
-            #node-panel { right: 10px; }
-            .metrics { width: min(820px, calc(100% - 24px)); grid-template-columns: repeat(4, 1fr); }
-            .metric { padding: 8px 10px; }
-            #control-panel, #node-panel { top: 210px; max-height: calc(100vh - 390px); }
-        }
-        @media (max-width: 650px) {
-            .topbar { top: 8px; width: calc(100% - 16px); min-height: 54px; padding: 8px 10px; }
-            .brand-mark { width: 32px; height: 32px; }
-            .brand h1 { font-size: 12px; }
-            .brand p { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
-            .connection { font-size: 10px; }
-            .metrics { top: 88px; grid-template-columns: repeat(3, 1fr); }
-            .metric { padding: 7px 5px; text-align: center; }
-            .metric-label { min-height: 25px; font-size: 8px; }
-            .metric-value { font-size: 14px; }
-            .panel { width: calc(50% - 15px); padding: 9px; }
-            #control-panel { top: 240px; left: 8px; max-height: calc(100dvh - 380px); }
-            #node-panel { top: 240px; right: 8px; max-height: calc(100dvh - 380px); }
-            .panel-heading h2 { font-size: 10px; }
-            .field { margin: 6px 0; }
-            .field input, .field select { min-height: 31px; padding: 5px; font-size: 10px; }
-            .button { min-height: 31px; padding: 5px; font-size: 9px; }
-            .button-row { grid-template-columns: 1fr; }
-            .method-card { padding: 7px; font-size: 9px; }
-            #terminal-panel { left: 8px; bottom: 8px; width: calc(100% - 16px); height: 118px; padding: 8px; }
-            #terminal-output { height: 80px; font-size: 9px; }
-            .toolbar { right: 14px; bottom: 133px; }
-            .toolbar .button { min-width: auto; }
-        }
-        @media (max-width: 650px) and (max-height: 620px) {
-            #control-panel, #node-panel { top: 205px; max-height: calc(100dvh - 335px); }
-        }
-        @media (max-height: 620px) {
-            .metrics, #terminal-panel { display: none; }
-            #control-panel, #node-panel { top: 124px; max-height: calc(100dvh - 140px); }
-        }
+        ::-webkit-scrollbar-thumb { border-radius: 4px; background: #355063; }
     </style>
 </head>
 <body>
     <header class="topbar">
         <div class="brand">
-            <div class="brand-mark" aria-hidden="true">⌁</div>
+            <div class="brand-mark">MAS</div>
             <div>
-                    <h1>SAGSINS · GIÁM SÁT CHÁY RỪNG</h1>
-                    <p>Hệ đa tác nhân UAV phối hợp vệ tinh LEO</p>
+                <h1>SAGSINS · ĐIỀU PHỐI ĐA TÁC NHÂN GIÁM SÁT CHÁY RỪNG</h1>
+                <p>Hợp tác Vệ tinh LEO – FANET UAV – Trạm Mặt Đất (Bán đảo Sơn Trà)</p>
             </div>
         </div>
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <button class="button secondary" type="button" style="padding: 5px 12px; font-size: 11px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;" onclick="toggleAgentsShowcaseModal()">
-                <span>📷</span> Mô hình tác nhân
-            </button>
+
+        <div class="kpi-strip" aria-label="Chỉ số mạng SAGSINS thời gian thực">
+            <div class="kpi-item">
+                <div class="kpi-label">Cấu hình mạng</div>
+                <div class="kpi-val cyan" id="kpi-total-nodes">25 nút</div>
+                <div class="kpi-sub" id="kpi-node-breakdown">21 UAV · 3 LEO · 1 Trạm</div>
+            </div>
+            <div class="kpi-item">
+                <div class="kpi-label">Liên kết SAGSINS</div>
+                <div class="kpi-val green" id="kpi-connected-uavs">21/21 UAV</div>
+                <div class="kpi-sub" id="kpi-link-breakdown">A2G: 0 · FANET: 0 · LEO: 0</div>
+            </div>
+            <div class="kpi-item">
+                <div class="kpi-label">Phủ sóng 7 vùng</div>
+                <div class="kpi-val green" id="kpi-zone-coverage">7/7 vùng</div>
+                <div class="kpi-sub" id="kpi-handover-count">Bàn giao: 0</div>
+            </div>
+            <div class="kpi-item">
+                <div class="kpi-label">Độ khả dụng</div>
+                <div class="kpi-val green" id="kpi-availability">100%</div>
+                <div class="kpi-sub" id="kpi-outage">Gián đoạn max: 0s</div>
+            </div>
+            <div class="kpi-item">
+                <div class="kpi-label">Gói tin (OK / Lỗi)</div>
+                <div class="kpi-val" id="kpi-packets">0 / 0</div>
+                <div class="kpi-sub" id="kpi-delay">Trễ TB: 0 ms</div>
+            </div>
+            <div class="kpi-item">
+                <div class="kpi-label">Năng lượng mạng</div>
+                <div class="kpi-val yellow" id="kpi-energy">0 J</div>
+                <div class="kpi-sub" id="kpi-missions">Nhiệm vụ CNP: 0</div>
+            </div>
+        </div>
+
+        <div class="status-box">
+            <span id="sim-speed-badge" class="sim-badge">1.0× · ĐANG CHẠY</span>
             <div id="conn-status" class="connection"><span class="connection-dot"></span><span>Đang kết nối</span></div>
         </div>
     </header>
 
-    <section class="metrics" aria-label="Chỉ số mạng thời gian thực">
-        <div class="metric"><div class="metric-label" id="kpi-node-breakdown">UAV · vệ tinh LEO · trạm</div><div class="metric-value cyan" id="kpi-total-nodes">0 nút</div></div>
-        <div class="metric"><div class="metric-label">UAV có tuyến tới trạm</div><div class="metric-value green" id="kpi-connected-uavs">—</div></div>
-        <div class="metric"><div class="metric-label">Mức sẵn sàng tuyến</div><div class="metric-value green" id="kpi-availability">—</div></div>
-        <div class="metric"><div class="metric-label">Gói tin thành công</div><div class="metric-value green" id="kpi-success">0</div></div>
-        <div class="metric"><div class="metric-label">Trễ truyền trung bình</div><div class="metric-value" id="kpi-delay">0 ms</div></div>
-        <div class="metric"><div class="metric-label">Gói tin lỗi / mất kết nối</div><div class="metric-value yellow" id="kpi-drop">0</div></div>
-        <div class="metric"><div class="metric-label">Năng lượng tiêu thụ</div><div class="metric-value yellow" id="kpi-energy">0 J</div></div>
-        <div class="metric"><div class="metric-label">Mất liên lạc liên tục tối đa</div><div class="metric-value yellow" id="kpi-outage">0 s</div></div>
-    </section>
-
+    <!-- Bảng điều khiển bên trái: Chỉ tập trung vào tác vụ MAS & SAGSINS -->
     <aside id="control-panel" class="panel">
-        <div class="panel-heading"><div><div class="eyebrow">Điều hành nhiệm vụ</div><h2>Vùng giám sát & sự cố</h2></div></div>
-        <div class="field">
-            <p class="muted">Nhấp trong ranh giới Bán đảo Sơn Trà để mô phỏng điểm nghi cháy và điều phối UAV.</p>
-        </div>
-        <input type="hidden" id="sim-type" value="CHÁY_RỪNG">
-        <button class="button primary" type="button" onclick="triggerEvent()">Mô phỏng phát hiện cháy & điều phối UAV</button>
-        <p id="mission-feedback" class="mission-feedback" role="status" aria-live="polite"></p>
-        <p id="mission-location-hint" class="mission-feedback" aria-live="polite"></p>
-        <div class="coordinates">
-            <div class="field"><label for="sim-lat">Vĩ độ điểm nghi cháy</label><input type="number" id="sim-lat" value="16.1200" min="-90" max="90" step="0.0001"></div>
-            <div class="field"><label for="sim-lon">Kinh độ điểm nghi cháy</label><input type="number" id="sim-lon" value="108.2800" min="-180" max="180" step="0.0001"></div>
+        <div class="section-block">
+            <div class="section-head">
+                <h2 class="section-title">1. Phát hiện cháy & Đấu giá CNP</h2>
+                <span class="muted">Click bản đồ Sơn Trà</span>
+            </div>
+            <input type="hidden" id="sim-type" value="CHÁY_RỪNG">
+            <div class="coords-grid">
+                <div class="field">
+                    <label for="sim-lat">Vĩ độ (WGS84)</label>
+                    <input type="number" id="sim-lat" value="16.1260" step="0.0005" min="-90" max="90">
+                </div>
+                <div class="field">
+                    <label for="sim-lon">Kinh độ (WGS84)</label>
+                    <input type="number" id="sim-lon" value="108.2950" step="0.0005" min="-180" max="180">
+                </div>
+            </div>
+            <button class="btn primary" id="btn-trigger-cnp" type="button" onclick="triggerEvent()">
+                🔥 Phát lệnh gọi thầu CNP (CFP_FIRE_EVENT)
+            </button>
+            <p id="mission-location-hint" class="feedback-line"></p>
+            <p id="mission-feedback" class="feedback-line"></p>
         </div>
 
-        <div class="section">
-            <p class="section-title">Quy trình MAS trong mô phỏng</p>
-            <div class="method-card">
-                <strong>0 · Bố trí tuần tra Sơn Trà</strong>
-                21 UAV chia đều thành bảy cụm tuần tra theo vùng rừng.
-                <div id="deployment-summary" class="muted">Đang tính phương án triển khai…</div>
+        <div class="section-block">
+            <div class="section-head">
+                <h2 class="section-title">2. Kết quả phiên đấu giá FIPA-CNP</h2>
+                <span id="auction-session-tag" class="muted">Chưa có phiên</span>
             </div>
-            <div class="method-card" style="margin-top:7px">
-                <strong>1 · Chọn UAV phản ứng</strong>
-                Chọn UAV đủ pin dự trữ; cân nhắc khoảng cách, pin còn lại và số nhiệm vụ đã nhận.
-            </div>
-            <div class="method-card" style="margin-top:7px">
-                <strong>2 · CNP đa tác tử</strong>
-                UAV đề xuất nhận nhiệm vụ; hệ thống chọn phương án theo khoảng cách, pin, độ trễ và năng lượng.
-            </div>
-            <div class="method-card" style="margin-top:7px">
-                <strong>3 · Truyền đa chặng & xác nhận</strong>
-                Dữ liệu chuyển theo tuyến đã chọn qua UAV / LEO tới trạm; theo dõi ACK và tìm tuyến khác khi chặng bị gián đoạn.
-            </div>
-            <div class="method-card" style="margin-top:7px">
-                <strong>4 · Tuần tra và duy trì liên lạc</strong>
-                UAV tiếp tục giám sát khu vực; tuyến dữ liệu có thể chuyển tiếp qua vệ tinh LEO tới trạm mặt đất.
-            </div>
-            <div class="method-card" style="margin-top:7px">
-                <strong>5 · Đánh giá mạng và năng lượng</strong>
-                Theo dõi khả năng duy trì tuyến, độ trễ, mất gói và năng lượng mô phỏng.
+            <div id="auction-inspector" class="info-box">
+                <div class="muted">Nhấp trên một phân khu rừng Sơn Trà hoặc bấm nút gọi thầu để xem các UAV chấm điểm chi phí & nộp giá thầu (PROPOSE / REFUSE).</div>
             </div>
         </div>
-        <div class="section">
-            <p class="section-title">Điều khiển mô phỏng</p>
-            <div class="button-row">
-                <button class="button secondary" type="button" onclick="togglePatrolRoutes()">Ẩn / hiện tuyến tuần tra</button>
-                <button class="button secondary" type="button" onclick="drainBattery()">Mô phỏng pin yếu UAV 01</button>
-                <button class="button secondary" type="button" onclick="setSpeed(1)">Tốc độ 1×</button>
-                <button class="button secondary" type="button" onclick="setSpeed(8)">Tốc độ 8×</button>
+
+        <div class="section-block">
+            <div class="section-head">
+                <h2 class="section-title">3. Tuyến truyền dữ liệu SAGSINS (E2E)</h2>
+                <span id="e2e-metrics-tag" class="muted">—</span>
             </div>
-            <button class="button secondary" style="margin-top:7px" type="button" onclick="window.open('/api/xuat-csv', '_blank')">Tải nhật ký QoS (CSV)</button>
+            <div id="e2e-route-inspector" class="info-box">
+                <div class="muted">Chưa có luồng dữ liệu sự cố truyền về trạm.</div>
+            </div>
         </div>
-        <div class="section">
-            <div class="method-card warning">
-                <strong>Lưu ý khi diễn giải kết quả</strong>
-                Đây là mô phỏng điều phối và chất lượng liên lạc, không phải hệ thống phát hiện cháy thực địa. Ảnh nền vệ tinh là ảnh tham khảo, không phải ảnh thời gian thực.
+
+        <div class="section-block">
+            <div class="section-head">
+                <h2 class="section-title">4. Giả lập sự cố Node (Bàn giao & Tự chữa lành)</h2>
+            </div>
+            <div class="coords-grid">
+                <div class="field">
+                    <label for="target-uav-select">Chọn tác nhân UAV</label>
+                    <select id="target-uav-select"></select>
+                </div>
+                <div class="field">
+                    <label for="target-battery-select">Mức pin áp đặt</label>
+                    <select id="target-battery-select">
+                        <option value="15">15% (Pin yếu RTB & Bàn giao vùng)</option>
+                        <option value="0">0% (Sập nguồn Offline)</option>
+                        <option value="100">100% (Sạc đầy khôi phục)</option>
+                    </select>
+                </div>
+            </div>
+            <button class="btn warn" style="width:100%" type="button" onclick="applyNodeBatteryFault()">
+                ⚡ Áp dụng trạng thái Pin cho UAV đã chọn
+            </button>
+        </div>
+
+        <div class="section-block">
+            <div class="section-head">
+                <h2 class="section-title">5. Điều khiển đồng hồ & Lớp bản đồ</h2>
+            </div>
+            <div class="btn-grid-4" style="margin-bottom:6px">
+                <button class="btn secondary" id="btn-pause" type="button" onclick="togglePause()">Tạm dừng</button>
+                <button class="btn secondary active" id="btn-spd-1" type="button" onclick="setSpeed(1)">1×</button>
+                <button class="btn secondary" id="btn-spd-4" type="button" onclick="setSpeed(4)">4×</button>
+                <button class="btn secondary" id="btn-spd-8" type="button" onclick="setSpeed(8)">8×</button>
+            </div>
+            <div class="btn-grid-2">
+                <button class="btn secondary" type="button" onclick="togglePatrolRoutes()">Ẩn/Hiện Vùng & Quỹ đạo</button>
+                <button class="btn secondary" type="button" onclick="window.open('/api/xuat-csv', '_blank')">Tải CSV QoS</button>
             </div>
         </div>
     </aside>
 
+    <!-- Bảng danh sách tác nhân bên phải -->
     <aside id="node-panel" class="panel">
-        <div class="panel-heading">
-            <div><div class="eyebrow">Telemetry trực tiếp</div><h2>Tác nhân trong mạng</h2></div>
-            <span id="node-filter-label" class="node-count">0 nút</span>
+        <div class="section-head" style="margin-bottom:2px">
+            <h2 class="section-title">Trạng thái Tác nhân & Liên kết</h2>
+            <span id="node-filter-label" class="muted">0 nút</span>
         </div>
-        <div id="node-list-container"><div class="muted">Đang chờ dữ liệu mô phỏng…</div></div>
+        <div class="filter-tabs">
+            <button class="filter-tab active" type="button" onclick="setNodeFilter('ALL', this)">Tất cả</button>
+            <button class="filter-tab" type="button" onclick="setNodeFilter('A2G', this)">A2G Trực tiếp</button>
+            <button class="filter-tab" type="button" onclick="setNodeFilter('FANET', this)">FANET Relay</button>
+            <button class="filter-tab" type="button" onclick="setNodeFilter('LEO', this)">Vệ tinh LEO</button>
+            <button class="filter-tab" type="button" onclick="setNodeFilter('LOW', this)">Sạc / RTB</button>
+        </div>
+        <div id="node-list-container"></div>
     </aside>
 
+    <!-- Nhật ký giao thức MAS dưới đáy -->
     <div id="terminal-panel">
-        <div class="terminal-heading"><span>NHẬT KÝ PHÁT HIỆN & ĐIỀU PHỐI SAGSINS</span><span>GIÁM SÁT CHÁY RỪNG</span></div>
+        <div class="terminal-head">
+            <span>NHẬT KÝ GIAO THỨC MAS (FIPA-CNP · ROUTING · HANDOVER)</span>
+            <div class="log-filters">
+                <button class="log-filter-btn active" type="button" onclick="setLogFilter('ALL', this)">Tất cả</button>
+                <button class="log-filter-btn" type="button" onclick="setLogFilter('CNP', this)">Đấu giá CNP</button>
+                <button class="log-filter-btn" type="button" onclick="setLogFilter('RELAY', this)">Định tuyến</button>
+                <button class="log-filter-btn" type="button" onclick="setLogFilter('WARN', this)">Cảnh báo</button>
+            </div>
+        </div>
         <div id="terminal-output" aria-live="polite"></div>
     </div>
-    <div class="map-agent-legend" onclick="toggleAgentsShowcaseModal()" title="Nhấp để xem chi tiết mô phỏng 3 tác nhân SAGSINS">
-        <div class="legend-item"><img src="/static/assets/uav.svg" alt="UAV"><span>UAV tuần tra</span></div>
-        <div class="legend-item"><img src="/static/assets/ground_station.svg" alt="Trạm"><span>Trạm mặt đất</span></div>
-        <div class="legend-item"><img src="/static/assets/satellite.svg" alt="Vệ tinh"><span>Vệ tinh LEO</span></div>
-        <div class="legend-badge">🔍 Mô hình tác nhân</div>
+
+    <!-- Chú thích màu sắc liên kết gọn nhẹ -->
+    <div class="map-legend">
+        <span><i class="legend-dot" style="background:#69e3a3"></i>A2G Trực tiếp (≤ 4.2km)</span>
+        <span><i class="legend-dot" style="background:#45d5e8"></i>FANET Relay (UAV↔UAV)</span>
+        <span><i class="legend-dot" style="background:#b68cff"></i>LEO Satellite Backhaul</span>
+        <span><i class="legend-dot" style="background:#f4c96b"></i>Tuyến E2E Sự cố</span>
     </div>
 
-    <div class="toolbar">
-        <button class="button secondary" type="button" onclick="toggleAgentsShowcaseModal()">📷 Mô hình 3D</button>
-        <button class="button secondary" type="button" onclick="togglePatrolRoutes()">Tuyến tuần tra</button>
-    </div>
-
-    <!-- Modal: Mô hình 3D & Thông số Tác nhân SAGSINS -->
-    <div id="agents-showcase-modal" class="modal-overlay" onclick="handleModalBackdropClick(event)">
-        <div class="modal-card">
-            <div class="modal-header">
-                <div>
-                    <h3>MÔ HÌNH MÔ PHỎNG CÁC TÁC NHÂN SAGSINS</h3>
-                    <p style="margin: 2px 0 0; color: var(--muted); font-size: 11px;">Mạng tích hợp Không gian - Trên không - Mặt đất phục vụ giám sát cháy rừng Bán đảo Sơn Trà</p>
-                </div>
-                <button class="modal-close-btn" type="button" onclick="toggleAgentsShowcaseModal()">✕</button>
-            </div>
-            <div class="modal-body">
-                <!-- Ground Station Card -->
-                <div class="agent-item-card">
-                    <img src="/static/assets/ground_station_sim.png" class="agent-item-img" alt="Trạm mặt đất" />
-                    <div class="agent-item-content">
-                        <div class="agent-item-title"><span style="color:#69e3a3">▣</span> Trạm Kiểm Lâm Mặt Đất</div>
-                        <div class="agent-item-role">Ground Segment · Command Outpost</div>
-                        <div class="agent-item-desc">
-                            Trạm kiểm lâm điều hành tại bán đảo Sơn Trà, đóng vai trò trạm gốc (Sink Node). Tiếp nhận cảnh báo cháy rừng từ bầy UAV, chỉ huy phân bổ lực lượng và làm cổng thu nhận dữ liệu viễn thông.
-                        </div>
-                        <div class="agent-item-spec">
-                            <span>Vùng phủ sóng trực xạ (LoS): <strong>4.0 km (Ưu tiên) / 8.0 km (Tối đa)</strong></span>
-                            <span>Trang bị: <strong>Chảo Parabol bám bắt búp sóng & Trạm viễn thông</strong></span>
-                            <span>Giao tiếp: <strong>Direct Ground Link & Thu nhận tín hiệu vệ tinh LEO</strong></span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- UAV Card -->
-                <div class="agent-item-card">
-                    <img src="/static/assets/uav_sim.png" class="agent-item-img" alt="UAV Tuần tra" />
-                    <div class="agent-item-content">
-                        <div class="agent-item-title"><span style="color:#45d5e8">▲</span> Hệ Bầy UAV Tuần Tra Rừng</div>
-                        <div class="agent-item-role">Air Segment · Autonomous Drone Swarm</div>
-                        <div class="agent-item-desc">
-                            Đội 21 UAV tự hành chia đều thành 7 cụm tuần tra 7 phân khu rừng Sơn Trà. Khi phát hiện đám cháy, thuật toán Contract Net Protocol (CNP) đấu giá phân tán để chọn UAV phản ứng tối ưu và tự động định tuyến mạng chuyển tiếp FANET.
-                        </div>
-                        <div class="agent-item-spec">
-                            <span>Cảm biến: <strong>Camera quang học, cảm biến hồng ngoại tầm nhiệt phát hiện lửa</strong></span>
-                            <span>Mạng bầy đàn: <strong>FANET (Flying Ad-hoc Network) đa chặng</strong></span>
-                            <span>Quản lý năng lượng: <strong>Tự động tính toán dung lượng pin & quay về sạc</strong></span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Satellite Card -->
-                <div class="agent-item-card">
-                    <img src="/static/assets/satellite_sim.png" class="agent-item-img" alt="Vệ tinh LEO" />
-                    <div class="agent-item-content">
-                        <div class="agent-item-title"><span style="color:#f4c96b">◆</span> Vệ Tinh Viễn Thông LEO</div>
-                        <div class="agent-item-role">Space Segment · LEO Constellation</div>
-                        <div class="agent-item-desc">
-                            Chùm vệ tinh quỹ đạo tầm thấp (LEO) chuyển động thời gian thực theo mô hình toán học SGP4 từ dữ liệu TLE (CelesTrak). Đảm bảo kết nối không gián đoạn (Zero Outage) khi địa hình rừng núi che khuất sóng trạm mặt đất.
-                        </div>
-                        <div class="agent-item-spec">
-                            <span>Độ cao quỹ đạo: <strong>500 – 800 km (Quỹ đạo cực / nghiêng)</strong></span>
-                            <span>Mô hình quỹ đạo: <strong>Skyfield SGP4 vi phân thời gian thực</strong></span>
-                            <span>Vai trò: <strong>Đường truyền chuyển tiếp khẩn cấp (LEO Backhaul Relay)</strong></span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div id="map-2d-container" class="stage">
-        <div id="map-imagery-notice">ĐANG TẢI ẢNH VỆ TINH…</div>
-    </div>
+    <div id="map-2d-container" class="stage"></div>
 
     <script>
         const map2d = L.map('map-2d-container', {
-            center: [16.12, 108.28],
+            center: [16.122, 108.275],
             zoom: 13,
             zoomControl: false
         });
-        const imageryNotice = document.getElementById('map-imagery-notice');
-        const satelliteImagery = L.tileLayer(
+
+        L.tileLayer(
             'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-            {
-                attribution: 'Tiles &copy; <a href="https://www.esri.com/" target="_blank" rel="noreferrer">Esri</a>, Vantor, Earthstar Geographics, and the GIS User Community',
-                maxZoom: 19
-            }
-        );
-        let imageryTileErrors = 0;
-        let imageryHasLoaded = false;
-        satelliteImagery.on('loading', () => {
-            if (!imageryHasLoaded) imageryNotice.textContent = 'ĐANG TẢI ẢNH VỆ TINH…';
-        });
-        satelliteImagery.on('tileload', () => {
-            imageryHasLoaded = true;
-            imageryTileErrors = 0;
-            imageryNotice.textContent = 'ẢNH VỆ TINH · KHÔNG HIỂN THỊ TÊN ĐỊA ĐIỂM';
-        });
-        satelliteImagery.on('tileerror', () => {
-            imageryTileErrors += 1;
-            if (imageryTileErrors >= 3 && !imageryHasLoaded) {
-                imageryNotice.textContent = 'KHÔNG TẢI ĐƯỢC ẢNH VỆ TINH · KIỂM TRA KẾT NỐI INTERNET';
-                appendLog('WARN', 'Không tải được ảnh vệ tinh. Bản đồ ảnh cần kết nối Internet.');
-            }
-        });
-        satelliteImagery.addTo(map2d);
-        map2d.setView([16.12, 108.28], 13);
+            { maxZoom: 19, attribution: 'Esri World Imagery' }
+        ).addTo(map2d);
+
+        const layerZones2D = L.layerGroup().addTo(map2d);
         const layerWaypoints2D = L.layerGroup().addTo(map2d);
         const layerCoverage2D = L.layerGroup().addTo(map2d);
-        const layerBeams2D = L.layerGroup().addTo(map2d);
         const layerCommunicationLinks2D = L.layerGroup().addTo(map2d);
+        const layerBeams2D = L.layerGroup().addTo(map2d);
+        const layerE2ERoute2D = L.layerGroup().addTo(map2d);
+
         const markers2D = {};
+        const zonePolygonsById = {};
         const allZones = [];
         let targetIncidentMarker2D = null;
         let showPatrolRoutes = true;
         let dashboardNodes = [];
         let patrolZonesLoaded = false;
+        let currentPaused = false;
+        let currentSpeed = 1.0;
+        let activeNodeFilter = 'ALL';
+        let activeLogFilter = 'ALL';
 
-        function isPointInPolygon(point, polygon) {
-            const rings = polygon.getLatLngs();
-            const outerRing = Array.isArray(rings[0]) ? rings[0] : rings;
-            if (!isPointInRing(point, outerRing)) return false;
-            const holes = Array.isArray(rings[0]) ? rings.slice(1) : [];
-            return !holes.some((ring) => isPointInRing(point, ring));
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            })[char]);
         }
 
         function isPointInRing(point, ring) {
@@ -567,46 +494,107 @@
             return inside;
         }
 
+        function isPointInPolygon(point, polygon) {
+            const rings = polygon.getLatLngs();
+            const outerRing = Array.isArray(rings[0]) ? rings[0] : rings;
+            if (!isPointInRing(point, outerRing)) return false;
+            const holes = Array.isArray(rings[0]) ? rings.slice(1) : [];
+            return !holes.some((ring) => isPointInRing(point, ring));
+        }
+
+        function isPointInSonTra(latitude, longitude) {
+            if (!patrolZonesLoaded) return false;
+            const point = L.latLng(latitude, longitude);
+            return allZones.some((zone) => isPointInPolygon(point, zone));
+        }
+
         function renderPatrolZones(zoneData) {
-            if (!zoneData || !Array.isArray(zoneData.features) || zoneData.features.length !== 7) {
-                throw new Error('Dữ liệu geofence không có đủ 7 vùng Sơn Trà.');
-            }
+            if (!zoneData || !Array.isArray(zoneData.features)) return;
+            layerZones2D.clearLayers();
             allZones.length = 0;
-            zoneData.features.forEach((feature, zoneIndex) => {
-                if (feature.geometry?.type !== 'MultiPolygon') {
-                    throw new Error(`Hình học ${feature.properties?.zone_id || zoneIndex + 1} không hợp lệ.`);
-                }
+
+            zoneData.features.forEach((feature) => {
+                const zoneId = feature.properties?.zone_id || 'ZONE';
+                const center = feature.properties?.patrol_center;
+                const groupPolygons = [];
+
                 feature.geometry.coordinates.forEach((polygonCoordinates) => {
                     const rings = polygonCoordinates.map((ring) =>
                         ring.map(([longitude, latitude]) => L.latLng(latitude, longitude))
                     );
-                    allZones.push(L.polygon(rings));
+                    const poly = L.polygon(rings, {
+                        color: '#69e3a3',
+                        weight: 1.4,
+                        opacity: 0.65,
+                        fillColor: '#69e3a3',
+                        fillOpacity: 0.06,
+                        dashArray: '3, 5'
+                    }).addTo(layerZones2D);
+                    allZones.push(poly);
+                    groupPolygons.push(poly);
                 });
+
+                let labelMarker = null;
+                if (Array.isArray(center) && center.length >= 2) {
+                    labelMarker = L.marker([center[1], center[0]], {
+                        interactive: false,
+                        icon: L.divIcon({
+                            className: '',
+                            html: `<div class="zone-label-tag" id="zone-tag-${zoneId}">${zoneId} · 3/3 UAV</div>`,
+                            iconSize: [110, 20],
+                            iconAnchor: [55, 10]
+                        })
+                    }).addTo(layerZones2D);
+                }
+                zonePolygonsById[zoneId] = { polygons: groupPolygons, labelMarker };
             });
-            if (allZones.length === 0) {
-                throw new Error('Dữ liệu geofence không chứa đa giác rừng để hiển thị.');
-            }
-            patrolZonesLoaded = true;
+
+            patrolZonesLoaded = allZones.length > 0;
+        }
+
+        function updateZoneCoverageVisuals(zoneCoverage) {
+            if (!zoneCoverage) return;
+            Object.entries(zoneCoverage).forEach(([zoneId, info]) => {
+                const item = zonePolygonsById[zoneId];
+                if (!item) return;
+                const color = info.trang_thai === 'MAT_PHU_SONG' ? '#ff7b7b'
+                    : info.trang_thai === 'BAN_GIAO_TAM_THOI' ? '#f4c96b' : '#69e3a3';
+                item.polygons.forEach((poly) => {
+                    poly.setStyle({ color, fillColor: color, fillOpacity: info.trang_thai === 'MAT_PHU_SONG' ? 0.16 : 0.06 });
+                });
+                const tagEl = document.getElementById(`zone-tag-${zoneId}`);
+                if (tagEl) {
+                    const extra = info.uav_nhan_ban_giao > 0 ? ` (Bàn giao)` : '';
+                    tagEl.textContent = `${zoneId} · ${info.uav_hoat_dong}/${info.tong_uav} UAV${extra}`;
+                    tagEl.style.borderColor = color;
+                    tagEl.style.color = color;
+                }
+            });
         }
 
         map2d.on('click', async (event) => {
-            if (!patrolZonesLoaded) {
-                alert("Đang tải dữ liệu ranh giới rừng Sơn Trà, vui lòng thử lại.");
+            if (!patrolZonesLoaded) return;
+            const lat = event.latlng.lat;
+            const lon = event.latlng.lng;
+            if (!isPointInSonTra(lat, lon)) {
+                const fb = document.getElementById('mission-feedback');
+                fb.className = 'feedback-line err';
+                fb.textContent = 'Vị trí click nằm ngoài ranh giới 7 phân khu bảo tồn Sơn Trà.';
                 return;
             }
-            if (!isPointInSonTra(event.latlng.lat, event.latlng.lng)) {
-                alert("Tọa độ nằm ngoài toàn bộ 7 vùng rừng Sơn Trà!");
-                return;
-            }
-            const lat = event.latlng.lat.toFixed(4);
-            const lon = event.latlng.lng.toFixed(4);
-            document.getElementById('sim-lat').value = lat;
-            document.getElementById('sim-lon').value = lon;
-            xoa_ket_qua_nhiem_vu();
-            placeIncidentMarker(lat, lon, 'Điểm nghi cháy');
-            cap_nhat_goi_y_nhiem_vu();
+            document.getElementById('sim-lat').value = lat.toFixed(4);
+            document.getElementById('sim-lon').value = lon.toFixed(4);
+            placeIncidentMarker(lat.toFixed(4), lon.toFixed(4), 'Điểm cháy rừng');
+            capNhatGoiYSuCo();
             await triggerEvent();
         });
+
+        function placeIncidentMarker(lat, lon, label = 'Điểm cháy rừng') {
+            if (targetIncidentMarker2D) map2d.removeLayer(targetIncidentMarker2D);
+            targetIncidentMarker2D = L.circleMarker([lat, lon], {
+                radius: 9, color: '#ff7b7b', weight: 2, fillColor: '#ff4d4d', fillOpacity: 0.85
+            }).addTo(map2d).bindPopup(`<b>${escapeHtml(label)}</b><br>(${lat}, ${lon})`);
+        }
 
         function createCustomIcon2D(node) {
             const isStation = node.loai === 'TRẠM_MẶT_ĐẤT';
@@ -615,327 +603,380 @@
                 GROUND_LINK: '#69e3a3',
                 FANET_RELAY: '#45d5e8',
                 LEO_SATELLITE: '#b68cff',
-                LEO_SATELLITE_LINK: '#b68cff'
+                S2G_LINK: '#f4c96b',
+                ISL_LINK: '#b68cff'
             };
+            const battery = Number(node.pin_pct ?? node.battery ?? 100);
             const color = isStation ? '#69e3a3' : isSatellite ? '#f4c96b' :
-                node.battery < 25 ? '#ff7b7b' : linkColors[node.current_link] || '#45d5e8';
+                (battery < 25 || node.trang_thai === 'NGẮT_KẾT_NỐI') ? '#ff7b7b' : (linkColors[node.current_link] || '#45d5e8');
 
             const iconSrc = isStation ? '/static/assets/ground_station.svg' :
                             isSatellite ? '/static/assets/satellite.svg' : '/static/assets/uav.svg';
 
             let labelText = '';
             if (isStation) {
-                labelText = node.id.replace('TRẠM_KIỂM_LÂM_', 'TKL_');
+                labelText = 'TRẠM_SƠN_TRÀ';
             } else if (isSatellite) {
-                labelText = node.id.replace('VỆ_TINH_', 'SAT_');
+                const satShort = node.id.replace('VỆ_TINH_', '');
+                labelText = `${satShort} (${node.current_link === 'S2G_LINK' ? 'S2G' : node.current_link === 'ISL_LINK' ? 'ISL' : 'NO-LOS'})`;
             } else {
                 const shortId = node.id.replace('MÁY_BAY_', '');
-                labelText = `${shortId} · ${node.pin_pct}%`;
+                const linkShort = node.current_link === 'GROUND_LINK' ? 'A2G' : node.current_link === 'FANET_RELAY' ? 'FANET' : 'LEO';
+                labelText = `${shortId}·${Math.round(battery)}%·${linkShort}`;
             }
 
             return L.divIcon({
                 className: '',
                 html: `
-                    <div class="custom-node-marker ${isStation ? 'marker-station' : isSatellite ? 'marker-sat' : 'marker-uav'}" style="--node-color:${color}">
+                    <div class="custom-node-marker" style="--node-color:${color}">
                         <div class="marker-icon-bubble">
-                            <img src="${iconSrc}" class="marker-img" alt="" />
+                            <img src="${iconSrc}" class="marker-img" alt="">
                         </div>
                         <div class="marker-text-tag">${escapeHtml(labelText)}</div>
                     </div>
                 `,
-                iconSize: [160, 34],
-                iconAnchor: [16, 17]
+                iconSize: [155, 30],
+                iconAnchor: [14, 15]
             });
         }
 
-        function createUavStatusPopup(node) {
-            const battery = Number(node.battery ?? node.pin_pct ?? 0);
-            const latitude = Number(node.lat ?? node.vi_do);
-            const longitude = Number(node.lng ?? node.kinh_do);
-            const speed = Number(node.speed ?? node.van_toc_m_s ?? 0);
-            const state = node.state ?? node.trang_thai ?? 'UNKNOWN';
-            const currentLink = node.current_link ?? 'UNKNOWN';
-            const row = (label, value, className = '') =>
-                `<div class="uav-popup-row"><span class="uav-popup-label">${label}</span><span class="uav-popup-value ${className}">${value}</span></div>`;
-            const relayTarget = node.relay_target_id
-                ? row('UAV chuyển tiếp', escapeHtml(node.relay_target_id))
-                : '';
-            const target = Number.isFinite(Number(node.target_lat)) && Number.isFinite(Number(node.target_lng))
-                ? row('Mục tiêu', `${Number(node.target_lat).toFixed(5)}°, ${Number(node.target_lng).toFixed(5)}°`)
-                : '';
+        function createNodePopupHtml(node) {
+            const isStation = node.loai === 'TRẠM_MẶT_ĐẤT';
+            const isSatellite = node.loai.includes('VỆ_TINH');
+            const routeStr = Array.isArray(node.route_to_sink) && node.route_to_sink.length
+                ? node.route_to_sink.map((id) => id.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', 'TRẠM_')).join(' ➔ ')
+                : 'Không có tuyến';
+            const row = (k, v) => `<div class="popup-row"><span>${k}</span><strong>${v}</strong></div>`;
 
-            return `<div class="uav-popup-card">
-                <div class="popup-banner" style="background-image: url('/static/assets/uav_sim.png');">
-                    <div class="popup-badge uav">UAV TUẦN TRA</div>
-                </div>
-                <div class="uav-popup-body">
-                    <div class="uav-popup-title">${escapeHtml(node.id)}</div>
-                    ${row('Trạng thái FSM', escapeHtml(state), 'state')}
-                    ${row('Đường truyền', escapeHtml(currentLink), 'state')}
-                    ${relayTarget}
-                    ${row('Pin', `${Number.isFinite(battery) ? battery.toFixed(1) : '—'}%`,
-                        battery < 25 ? 'battery-low' : '')}
-                    ${row('Tọa độ', `${Number.isFinite(latitude) ? latitude.toFixed(5) : '—'}°, ${Number.isFinite(longitude) ? longitude.toFixed(5) : '—'}°`)}
-                    ${row('Vận tốc', `${Number.isFinite(speed) ? speed.toFixed(1) : '—'} m/s`)}
-                    ${target}
-                </div>
-            </div>`;
-        }
-
-        function createStationPopup(node) {
-            const row = (label, value, className = '') =>
-                `<div class="uav-popup-row"><span class="uav-popup-label">${label}</span><span class="uav-popup-value ${className}">${value}</span></div>`;
-            return `<div class="uav-popup-card">
-                <div class="popup-banner" style="background-image: url('/static/assets/ground_station_sim.png');">
-                    <div class="popup-badge station">TRẠM MẶT ĐẤT</div>
-                </div>
-                <div class="uav-popup-body">
-                    <div class="uav-popup-title">${escapeHtml(node.id)}</div>
-                    ${row('Loại nút', 'Trạm kiểm lâm mặt đất', 'state')}
+            if (isStation) {
+                return `<div class="popup-card">
+                    <div class="popup-title">${escapeHtml(node.id)}</div>
+                    ${row('Vai trò', 'Data Sink & CNP Manager')}
                     ${row('Tọa độ', `${Number(node.vi_do).toFixed(4)}°, ${Number(node.kinh_do).toFixed(4)}°`)}
-                    ${row('Phủ sóng trực xạ (LoS)', '4.0 km (Ưu tiên)')}
-                    ${row('Bán kính tối đa', '8.0 km')}
-                    ${row('Trạng thái', 'Trực tuyến 24/7', 'state')}
-                </div>
+                    ${row('Bán kính A2G LoS', '4.2 km (Địa hình Sơn Trà)')}
+                    ${row('Láng giềng 1-hop', `${node.so_lang_gieng ?? 0} nút`)}
+                </div>`;
+            }
+            if (isSatellite) {
+                return `<div class="popup-card">
+                    <div class="popup-title">${escapeHtml(node.id)} (${escapeHtml(node.ten_quoc_te || '')})</div>
+                    ${row('Độ cao SGP4', `${(Number(node.do_cao) / 1000).toFixed(1)} km`)}
+                    ${row('Vận tốc quỹ đạo', `${Number(node.van_toc_m_s).toFixed(0)} m/s`)}
+                    ${row('Liên kết', escapeHtml(node.current_link || 'S2G'))}
+                    ${row('Đích chuyển tiếp', escapeHtml(node.relay_target_id || 'Không'))}
+                </div>`;
+            }
+            return `<div class="popup-card">
+                <div class="popup-title">${escapeHtml(node.id)} (${escapeHtml(node.zone_id || 'N/A')})</div>
+                ${row('Trạng thái FSM', escapeHtml(node.trang_thai))}
+                ${row('Kênh truyền', escapeHtml(node.current_link))}
+                ${row('Nút kế tiếp', escapeHtml(node.relay_target_id || 'Trực tiếp'))}
+                ${row('Tuyến về trạm', escapeHtml(routeStr))}
+                ${row('Pin còn lại', `${Number(node.pin_pct).toFixed(1)}% (${Number(node.pin_joule).toFixed(0)} J)`)}
+                ${row('Độ cao / Tốc độ', `${Number(node.do_cao).toFixed(0)}m · ${Number(node.van_toc_m_s).toFixed(1)} m/s`)}
+                ${row('Nhiệm vụ CNP đã nhận', `${node.so_nhiem_vu ?? 0}`)}
             </div>`;
         }
 
-        function createSatellitePopup(node) {
-            const row = (label, value, className = '') =>
-                `<div class="uav-popup-row"><span class="uav-popup-label">${label}</span><span class="uav-popup-value ${className}">${value}</span></div>`;
-            return `<div class="uav-popup-card">
-                <div class="popup-banner" style="background-image: url('/static/assets/satellite_sim.png');">
-                    <div class="popup-badge sat">VỆ TINH LEO</div>
-                </div>
-                <div class="uav-popup-body">
-                    <div class="uav-popup-title">${escapeHtml(node.id)}</div>
-                    ${row('Quỹ đạo', 'LEO (CelesTrak TLE)', 'state')}
-                    ${row('Độ cao vệ tinh', `${(node.do_cao / 1000).toFixed(1)} km`)}
-                    ${row('Vị trí dưới chân', `${Number(node.vi_do).toFixed(2)}°, ${Number(node.kinh_do).toFixed(2)}°`)}
-                    ${row('Đường truyền', 'LEO Relay Backhaul', 'state')}
-                </div>
-            </div>`;
-        }
-
-        window.addEventListener('resize', () => {
-            map2d.invalidateSize();
-        });
-
-        function setConnectionState(state, label) {
-            const el = document.getElementById('conn-status');
-            el.className = `connection ${state}`;
-            el.lastElementChild.textContent = label;
-        }
-
-        function placeIncidentMarker(lat, lon, label = 'Điểm nghi cháy') {
-            if (targetIncidentMarker2D) map2d.removeLayer(targetIncidentMarker2D);
-            targetIncidentMarker2D = L.circleMarker([lat, lon], {
-                radius: 8, color: '#ff7b7b', fillColor: '#ff7b7b', fillOpacity: 0.8
-            }).addTo(map2d).bindPopup(`${escapeHtml(label)}: (${lat}, ${lon})`);
-        }
-
-        function escapeHtml(value) {
-            return String(value).replace(/[&<>"']/g, (char) => ({
-                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-            })[char]);
+        function populateUavDropdown(nodes) {
+            const select = document.getElementById('target-uav-select');
+            if (select.options.length > 0) return;
+            nodes.filter((n) => n.loai === 'MÁY_BAY').forEach((uav) => {
+                const opt = document.createElement('option');
+                opt.value = uav.id;
+                opt.textContent = `${uav.id.replace('MÁY_BAY_', '')} (${uav.zone_id || ''})`;
+                select.appendChild(opt);
+            });
         }
 
         async function loadInitialState() {
             try {
-                const response = await fetch('/api/init-state');
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const data = await response.json();
-                renderPatrolZones(data.patrol_zones);
-                if (data.nodes && data.network_metrics) {
-                    updateDashboard(data.nodes, data.network_metrics, data.connectivity_metrics || {});
-                }
-                const plan = data.deployment_plan || {};
-                const stations = Object.entries(plan.phan_bo_theo_tram || {})
-                    .map(([station, count]) => `${station.replace('TRẠM_KIỂM_LÂM_', '')}: ${count}`)
-                    .join(' · ');
-                if (plan.so_uav) {
-                    const zoneSummary = plan.so_vung_geofence
-                        ? ` · ${plan.so_vung_geofence} vùng · ${plan.uav_moi_vung} UAV/vùng`
-                        : '';
-                    document.getElementById('deployment-summary').textContent =
-                        `${plan.so_uav} UAV / ${plan.so_tram} trạm${zoneSummary} · ${stations} · cự ly xuất phát TB ${plan.khoang_cach_xuat_phat_trung_binh_km} km (trước tối ưu ${plan.khoang_cach_dau_vao_trung_binh_km} km)`;
-                    appendLog(
-                        'SUCCESS',
-                        `Đã phân bổ ${plan.so_uav} UAV tại ${plan.so_vung_geofence || 1} vùng tuần tra; cự ly xuất phát TB ${plan.khoang_cach_xuat_phat_trung_binh_km} km${stations ? ` (${stations})` : ''}.`
-                    );
-                }
+                const res = await fetch('/api/init-state');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
 
+                renderPatrolZones(data.patrol_zones);
+                updateZoneCoverageVisuals(data.zone_coverage);
+                populateUavDropdown(data.nodes || []);
+
+                layerWaypoints2D.clearLayers();
                 Object.values(data.uav_waypoints || {}).forEach((waypoints) => {
-                    const latlngs = waypoints.map((point) => [point.vi_do, point.kinh_do]);
+                    const latlngs = waypoints.map((pt) => [pt.vi_do, pt.kinh_do]);
                     if (latlngs.length > 2) {
                         latlngs.push(latlngs[0]);
-                        L.polyline(latlngs, { color: '#45d5e8', weight: 1.5, dashArray: '5, 6', opacity: 0.55 }).addTo(layerWaypoints2D);
+                        L.polyline(latlngs, { color: '#45d5e8', weight: 1.2, dashArray: '4, 6', opacity: 0.4 }).addTo(layerWaypoints2D);
                     }
                 });
-                (data.nodes || []).filter((node) => node.loai === 'TRẠM_MẶT_ĐẤT').forEach((node) => {
-                    L.circle([node.vi_do, node.kinh_do], { radius: 4000, color: '#69e3a3', weight: 1, fillOpacity: 0.04, dashArray: '4, 4' }).addTo(layerCoverage2D);
-                    L.circle([node.vi_do, node.kinh_do], { radius: 8000, color: '#69e3a3', weight: 1, fillOpacity: 0.015 }).addTo(layerCoverage2D);
+
+                layerCoverage2D.clearLayers();
+                (data.nodes || []).filter((n) => n.loai === 'TRẠM_MẶT_ĐẤT').forEach((st) => {
+                    L.circle([st.vi_do, st.kinh_do], {
+                        radius: 4200, color: '#69e3a3', weight: 1.5, fillOpacity: 0.03, dashArray: '5, 5'
+                    }).addTo(layerCoverage2D).bindTooltip('Bán kính A2G Trực tiếp (4.2 km)', { sticky: true });
                 });
-            } catch (error) {
-                appendLog('WARN', `Không tải được dữ liệu bản đồ ban đầu: ${error.message}`);
+
+                if (data.last_auction) renderAuctionInspector(data.last_auction);
+                if (data.last_e2e_route) renderE2ERouteInspector(data.last_e2e_route, false);
+
+                if (data.nodes && data.network_metrics) {
+                    updateDashboard(data.nodes, data.network_metrics, data.connectivity_metrics || {}, data.zone_coverage);
+                }
+            } catch (err) {
+                appendLog('WARN', `Lỗi tải trạng thái khởi tạo: ${err.message}`);
             }
-        }
-
-        function updateDashboard(nodes, metrics, connectivity = {}) {
-            dashboardNodes = nodes;
-            const uavCount = nodes.filter((node) => node.loai === 'MÁY_BAY').length;
-            const satelliteCount = nodes.filter((node) => node.loai.includes('VỆ_TINH')).length;
-            const stationCount = nodes.filter((node) => node.loai === 'TRẠM_MẶT_ĐẤT').length;
-            document.getElementById('kpi-total-nodes').textContent = `${nodes.length} nút`;
-            document.getElementById('kpi-node-breakdown').textContent = `${uavCount} UAV · ${satelliteCount} LEO · ${stationCount} trạm`;
-            document.getElementById('kpi-success').textContent = metrics.tong_goi_tin_thanh_cong ?? 0;
-            document.getElementById('kpi-delay').textContent = `${metrics.do_tre_trung_binh_ms ?? 0} ms`;
-            document.getElementById('kpi-drop').textContent = (metrics.tong_goi_tin_rot_per || 0) + (metrics.tong_goi_tin_mat_los || 0);
-            document.getElementById('kpi-connected-uavs').textContent =
-                `${connectivity.uav_ket_noi ?? 0}/${connectivity.tong_uav ?? uavCount}`;
-            document.getElementById('kpi-availability').textContent =
-                `${connectivity.do_kha_dung_pct ?? 0}%`;
-            document.getElementById('kpi-outage').textContent =
-                `${connectivity.mat_lien_lac_lien_tuc_toi_da_giay ?? 0} s`;
-            document.getElementById('kpi-energy').textContent =
-                `${Number(connectivity.nang_luong_tieu_thu_joule ?? metrics.nang_luong_tieu_hao_joule ?? 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} J`;
-            document.getElementById('node-filter-label').textContent = `${nodes.length} nút`;
-
-            const list = document.getElementById('node-list-container');
-            list.replaceChildren();
-            nodes.forEach((node) => {
-                const isStation = node.loai === 'TRẠM_MẶT_ĐẤT';
-                const isSatellite = node.loai.includes('VỆ_TINH');
-
-                if (!markers2D[node.id]) {
-                    markers2D[node.id] = L.marker([node.vi_do, node.kinh_do], { icon: createCustomIcon2D(node) }).addTo(map2d);
-                } else {
-                    markers2D[node.id].setLatLng([node.vi_do, node.kinh_do]);
-                    markers2D[node.id].setIcon(createCustomIcon2D(node));
-                }
-
-                const marker = markers2D[node.id];
-                let popupContent = '';
-                if (node.loai === 'MÁY_BAY') {
-                    popupContent = createUavStatusPopup(node);
-                } else if (isStation) {
-                    popupContent = createStationPopup(node);
-                } else if (isSatellite) {
-                    popupContent = createSatellitePopup(node);
-                }
-
-                if (popupContent) {
-                    if (!marker.getPopup()) {
-                        marker.bindPopup(popupContent, { className: 'uav-status-popup', maxWidth: 280 });
-                    } else if (marker.isPopupOpen()) {
-                        marker.setPopupContent(popupContent);
-                    } else {
-                        marker.getPopup().setContent(popupContent);
-                    }
-                }
-
-                const stateClass = node.trang_thai.includes('PIN_YẾU') || node.pin_pct < 20 ? 'status-err' :
-                    node.trang_thai.includes('ĐẤU_GIÁ') || node.trang_thai.includes('TRUYỀN_TẢI') ? 'status-warn' : 'status-ok';
-                const iconSrc = isStation ? '/static/assets/ground_station.svg' :
-                                isSatellite ? '/static/assets/satellite.svg' : '/static/assets/uav.svg';
-                const avatarClass = isStation ? 'avatar-station' : isSatellite ? 'avatar-sat' : 'avatar-uav';
-
-                const card = document.createElement('button');
-                card.type = 'button';
-                card.className = 'node-card';
-                card.style.width = '100%';
-                card.style.color = 'inherit';
-                card.style.textAlign = 'left';
-                card.innerHTML = `<div class="node-card-inner">
-                    <div class="node-avatar-box ${avatarClass}">
-                        <img src="${iconSrc}" class="node-card-avatar" alt="">
-                    </div>
-                    <div class="node-card-body">
-                        <div class="node-card-head"><span>${escapeHtml(node.id)}</span><span class="${stateClass}">${node.pin_pct}%</span></div>
-                        <div class="node-card-meta">${escapeHtml(node.loai)} · ${escapeHtml(node.trang_thai)}</div>
-                        <div class="node-card-meta">${Number(node.vi_do).toFixed(2)}°, ${Number(node.kinh_do).toFixed(2)}° · ${(node.do_cao / 1000).toFixed(1)} km</div>
-                    </div>
-                </div>`;
-                card.addEventListener('click', () => {
-                    map2d.flyTo([node.vi_do, node.kinh_do], isSatellite ? 4 : 14, { duration: 1 });
-                    if (marker) marker.openPopup();
-                });
-                list.appendChild(card);
-            });
-            renderCommunicationLinks(nodes);
-            cap_nhat_goi_y_nhiem_vu();
         }
 
         function renderCommunicationLinks(nodes) {
             layerCommunicationLinks2D.clearLayers();
-            const nodesById = new Map(nodes.map((node) => [node.id, node]));
-            const stations = nodes.filter((node) => node.loai === 'TRẠM_MẶT_ĐẤT');
-            const satellites = nodes.filter((node) => node.loai.includes('VỆ_TINH'));
+            const nodesById = new Map(nodes.map((n) => [n.id, n]));
             const colors = {
                 GROUND_LINK: '#69e3a3',
                 FANET_RELAY: '#45d5e8',
                 LEO_SATELLITE: '#b68cff',
-                LEO_SATELLITE_LINK: '#b68cff'
+                S2G_LINK: '#f4c96b',
+                ISL_LINK: '#b68cff'
             };
-            nodes.filter((node) => node.loai === 'MÁY_BAY').forEach((uav) => {
-                const link = uav.current_link;
-                let target = null;
-                if (link === 'FANET_RELAY') {
-                    target = nodesById.get(uav.relay_target_id);
-                } else if (link === 'GROUND_LINK') {
-                    target = stations[0];
-                } else if (link === 'LEO_SATELLITE' || link === 'LEO_SATELLITE_LINK') {
-                    target = satellites[0];
-                }
-                if (!target) return;
-                L.polyline(
-                    [[uav.lat ?? uav.vi_do, uav.lng ?? uav.kinh_do],
-                        [target.lat ?? target.vi_do, target.lng ?? target.kinh_do]],
-                    {
-                        color: colors[link] || '#b68cff',
-                        weight: link === 'FANET_RELAY' ? 2.5 : 1.5,
-                        opacity: 0.55,
-                        dashArray: link === 'LEO_SATELLITE' ? '4, 5' : null
+
+            nodes.forEach((node) => {
+                if (node.trang_thai === 'NGẮT_KẾT_NỐI') return;
+                if (node.loai === 'MÁY_BAY') {
+                    const target = nodesById.get(node.relay_target_id);
+                    if (!target) return;
+                    const linkType = node.current_link || 'GROUND_LINK';
+                    L.polyline(
+                        [[node.vi_do, node.kinh_do], [target.vi_do, target.kinh_do]],
+                        {
+                            color: colors[linkType] || '#45d5e8',
+                            weight: linkType === 'FANET_RELAY' ? 2.2 : 1.5,
+                            opacity: 0.65,
+                            dashArray: linkType === 'LEO_SATELLITE' ? '4, 5' : null
+                        }
+                    ).addTo(layerCommunicationLinks2D);
+
+                    // Nếu UAV đang bay tới mục tiêu cháy hoặc trạm sạc, vẽ đường hướng di chuyển
+                    if (Number.isFinite(Number(node.target_lat)) && Number.isFinite(Number(node.target_lng))) {
+                        L.polyline(
+                            [[node.vi_do, node.kinh_do], [node.target_lat, node.target_lng]],
+                            { color: '#ff7b7b', weight: 2, dashArray: '3, 4', opacity: 0.85 }
+                        ).addTo(layerCommunicationLinks2D);
                     }
-                ).addTo(layerCommunicationLinks2D);
+                } else if (node.loai.includes('VỆ_TINH') && node.relay_target_id) {
+                    const target = nodesById.get(node.relay_target_id);
+                    if (!target) return;
+                    L.polyline(
+                        [[node.vi_do, node.kinh_do], [target.vi_do, target.kinh_do]],
+                        {
+                            color: colors[node.current_link] || '#f4c96b',
+                            weight: 1.4,
+                            opacity: 0.45,
+                            dashArray: '6, 6'
+                        }
+                    ).addTo(layerCommunicationLinks2D);
+                }
             });
         }
 
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const ws = new WebSocket(`${protocol}//${window.location.host}/ws/mophong`);
-        ws.onopen = () => {
-            setConnectionState('online', 'Đang trực tuyến');
-            appendLog('INFO', 'Đã kết nối luồng telemetry mạng SAGSINS.');
-        };
-        ws.onclose = () => setConnectionState('offline', 'Mất kết nối máy chủ');
-        ws.onerror = () => appendLog('WARN', 'Có lỗi khi kết nối WebSocket mô phỏng.');
-        ws.onmessage = (event) => {
-            try {
-                const message = JSON.parse(event.data);
-                if (message.type === 'WORLD_STATE') {
-                    updateDashboard(
-                        message.data.nodes || [],
-                        message.data.network_metrics || {},
-                        message.data.connectivity_metrics || {}
-                    );
-                }
-                else if (message.type === 'RF_LINK') drawBeamOnMap(message.data);
-                else if (message.type === 'E2E_ROUTE_COMPLETED') return;
-                else if (message.type === 'MISSION_COMPLETED') appendLog('SUCCESS', formatMissionLog(message.data));
-                else if (message.type === 'LOG' && typeof message.data?.noi_dung === 'string' && message.data.noi_dung.includes('ĐÃ THU THẬP GÓI TIN')) return;
-                else if (message.data) appendLog(message.data.cap_do || message.type, message.data.noi_dung || JSON.stringify(message.data));
-            } catch (error) {
-                appendLog('WARN', `Không đọc được bản tin WebSocket: ${error.message}`);
-            }
-        };
+        function updateDashboard(nodes, metrics, connectivity = {}, zoneCoverage = null) {
+            dashboardNodes = nodes;
+            if (zoneCoverage) updateZoneCoverageVisuals(zoneCoverage);
+            populateUavDropdown(nodes);
 
-        function formatMissionLog(data) {
-            const incident = String(data?.loai_su_co || 'Sự cố').replaceAll('_', ' ').toLocaleLowerCase('vi-VN');
-            const route = Array.isArray(data?.lo_trinh) ? data.lo_trinh.join(' → ') : '';
-            const status = data?.trang_thai_phu_song === 'KET_NOI' ? 'Kết nối' : 'Mất kết nối';
-            return route
-                ? `🔥 ${incident} · Tuyến: ${route} · ${status}`
-                : `🔥 ${incident} · ${status}`;
+            const uavCount = nodes.filter((n) => n.loai === 'MÁY_BAY').length;
+            const satCount = nodes.filter((n) => n.loai.includes('VỆ_TINH')).length;
+            const stCount = nodes.filter((n) => n.loai === 'TRẠM_MẶT_ĐẤT').length;
+
+            document.getElementById('kpi-total-nodes').textContent = `${nodes.length} nút`;
+            document.getElementById('kpi-node-breakdown').textContent = `${uavCount} UAV · ${satCount} LEO · ${stCount} Trạm`;
+            document.getElementById('kpi-connected-uavs').textContent = `${connectivity.uav_ket_noi ?? uavCount}/${connectivity.tong_uav ?? uavCount} UAV`;
+            document.getElementById('kpi-link-breakdown').textContent =
+                `A2G: ${connectivity.uav_ground_link ?? 0} · FANET: ${connectivity.uav_fanet_relay ?? 0} · LEO: ${connectivity.uav_leo_satellite ?? 0}`;
+
+            if (zoneCoverage) {
+                const activeZones = Object.values(zoneCoverage).filter((z) => z.uav_hoat_dong > 0).length;
+                document.getElementById('kpi-zone-coverage').textContent = `${activeZones}/7 vùng`;
+            }
+            document.getElementById('kpi-handover-count').textContent = `Bàn giao: ${connectivity.vung_tuan_tra_ban_giao ?? 0}`;
+            document.getElementById('kpi-availability').textContent = `${connectivity.do_kha_dung_pct ?? 100}%`;
+            document.getElementById('kpi-outage').textContent = `Gián đoạn max: ${connectivity.mat_lien_lac_lien_tuc_toi_da_giay ?? 0}s`;
+
+            const dropCount = (metrics.tong_goi_tin_rot_per || 0) + (metrics.tong_goi_tin_mat_los || 0);
+            document.getElementById('kpi-packets').textContent = `${metrics.tong_goi_tin_thanh_cong ?? 0} / ${dropCount}`;
+            document.getElementById('kpi-delay').textContent = `Trễ TB: ${metrics.do_tre_trung_binh_ms ?? 0} ms`;
+            document.getElementById('kpi-energy').textContent =
+                `${Number(connectivity.nang_luong_tieu_thu_joule ?? metrics.nang_luong_tieu_hao_joule ?? 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} J`;
+            document.getElementById('kpi-missions').textContent = `Nhiệm vụ CNP: ${connectivity.nhiem_vu_da_dieu_phoi ?? 0}`;
+
+            // Cập nhật Markers trên bản đồ
+            nodes.forEach((node) => {
+                if (!markers2D[node.id]) {
+                    markers2D[node.id] = L.marker([node.vi_do, node.kinh_do], { icon: createCustomIcon2D(node) }).addTo(map2d);
+                    markers2D[node.id].bindPopup(createNodePopupHtml(node), { className: 'uav-status-popup', maxWidth: 280 });
+                } else {
+                    markers2D[node.id].setLatLng([node.vi_do, node.kinh_do]);
+                    markers2D[node.id].setIcon(createCustomIcon2D(node));
+                    const popup = markers2D[node.id].getPopup();
+                    if (popup) popup.setContent(createNodePopupHtml(node));
+                }
+            });
+
+            renderNodeListInPlace(nodes);
+            renderCommunicationLinks(nodes);
+            capNhatGoiYSuCo();
+        }
+
+        function matchesNodeFilter(node) {
+            if (activeNodeFilter === 'ALL') return true;
+            if (activeNodeFilter === 'A2G') return node.loai === 'MÁY_BAY' && node.current_link === 'GROUND_LINK';
+            if (activeNodeFilter === 'FANET') return node.loai === 'MÁY_BAY' && node.current_link === 'FANET_RELAY';
+            if (activeNodeFilter === 'LEO') return node.loai.includes('VỆ_TINH') || node.current_link === 'LEO_SATELLITE';
+            if (activeNodeFilter === 'LOW') return node.pin_pct < 35 || ['PIN_YẾU_RTB', 'ĐANG_QUAY_VỀ_SẠC', 'ĐANG_SẠC', 'NGẮT_KẾT_NỐI'].includes(node.trang_thai);
+            return true;
+        }
+
+        function setNodeFilter(filter, btnEl) {
+            activeNodeFilter = filter;
+            document.querySelectorAll('.filter-tab').forEach((b) => b.classList.remove('active'));
+            if (btnEl) btnEl.classList.add('active');
+            renderNodeListInPlace(dashboardNodes);
+        }
+
+        function renderNodeListInPlace(nodes) {
+            const container = document.getElementById('node-list-container');
+            const filtered = nodes.filter(matchesNodeFilter);
+            document.getElementById('node-filter-label').textContent = `${filtered.length}/${nodes.length} nút`;
+
+            const existingCards = new Map(
+                Array.from(container.children).map((el) => [el.getAttribute('data-node-id'), el])
+            );
+            const seenIds = new Set();
+
+            filtered.forEach((node) => {
+                seenIds.add(node.id);
+                let card = existingCards.get(node.id);
+                if (!card) {
+                    card = document.createElement('button');
+                    card.type = 'button';
+                    card.className = 'node-card';
+                    card.setAttribute('data-node-id', node.id);
+                    card.addEventListener('click', () => {
+                        const current = dashboardNodes.find((n) => n.id === node.id) || node;
+                        const isSat = current.loai.includes('VỆ_TINH');
+                        map2d.flyTo([current.vi_do, current.kinh_do], isSat ? 6 : 14, { duration: 0.8 });
+                        if (markers2D[current.id]) markers2D[current.id].openPopup();
+                    });
+                    container.appendChild(card);
+                }
+
+                const battery = Number(node.pin_pct ?? 100);
+                const borderColor = node.loai === 'TRẠM_MẶT_ĐẤT' ? '#69e3a3'
+                    : node.loai.includes('VỆ_TINH') ? '#f4c96b'
+                    : battery < 25 ? '#ff7b7b'
+                    : node.current_link === 'GROUND_LINK' ? '#69e3a3'
+                    : node.current_link === 'FANET_RELAY' ? '#45d5e8' : '#b68cff';
+
+                card.style.borderLeftColor = borderColor;
+                const shortName = node.id.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', 'TRẠM_');
+                const zoneBadge = node.zone_id ? ` · ${node.zone_id}` : (node.ten_quoc_te ? ` · ${node.ten_quoc_te}` : '');
+                const nextHop = node.relay_target_id ? ` ➔ ${node.relay_target_id.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', 'TRẠM_')}` : '';
+
+                card.innerHTML = `
+                    <div class="node-card-top">
+                        <span>${escapeHtml(shortName)}${escapeHtml(zoneBadge)}</span>
+                        <span style="color:${borderColor}">${battery.toFixed(0)}%</span>
+                    </div>
+                    <div class="node-card-sub">
+                        <span>${escapeHtml(node.trang_thai)}</span>
+                        <span>${escapeHtml(node.current_link || node.loai)}${escapeHtml(nextHop)}</span>
+                    </div>
+                    <div class="battery-bar">
+                        <div class="battery-fill" style="width:${Math.max(0, Math.min(100, battery))}%; background:${borderColor}"></div>
+                    </div>
+                `;
+            });
+
+            existingCards.forEach((el, id) => {
+                if (!seenIds.has(id)) el.remove();
+            });
+        }
+
+        function renderAuctionInspector(auction) {
+            if (!auction) return;
+            const box = document.getElementById('auction-inspector');
+            const tag = document.getElementById('auction-session-tag');
+            tag.textContent = `Phiên #${String(auction.ma_phien || '').slice(0, 8)} · ${auction.thoi_gian || ''}`;
+
+            const proposals = Array.isArray(auction.proposals) ? auction.proposals : [];
+            const refusals = Array.isArray(auction.refusals) ? auction.refusals : [];
+
+            let rowsHtml = '';
+            proposals.slice(0, 5).forEach((p, idx) => {
+                const isWin = idx === 0 && auction.thanh_cong;
+                const badge = isWin ? `<span class="badge-win">WIN</span>` : `<span class="badge-bid">PROPOSE</span>`;
+                const uavShort = String(p.uav_id || '').replace('MÁY_BAY_', '');
+                const distKm = ((p.khoang_cach_m || 0) / 1000).toFixed(2);
+                rowsHtml += `
+                    <tr>
+                        <td>${badge} <b>${escapeHtml(uavShort)}</b></td>
+                        <td>${distKm} km</td>
+                        <td>${Number(p.pin_du_kien_pct || 0).toFixed(1)}%</td>
+                        <td><b>${Number(p.chi_phi || 0).toFixed(0)}</b></td>
+                    </tr>
+                `;
+            });
+
+            refusals.slice(0, 3).forEach((r) => {
+                const uavShort = String(r.uav_id || '').replace('MÁY_BAY_', '');
+                const distKm = ((r.khoang_cach_m || 0) / 1000).toFixed(2);
+                rowsHtml += `
+                    <tr>
+                        <td><span class="badge-refuse">REFUSE</span> ${escapeHtml(uavShort)}</td>
+                        <td>${distKm} km</td>
+                        <td style="color:var(--red)">${Number(r.pin_du_kien_pct || 0).toFixed(1)}%</td>
+                        <td class="muted">Thiếu pin dự trữ</td>
+                    </tr>
+                `;
+            });
+
+            box.innerHTML = `
+                <div><b>Tâm cháy:</b> (${Number(auction.vi_do).toFixed(4)}, ${Number(auction.kinh_do).toFixed(4)}) ·
+                <b>Báo giá:</b> ${proposals.length} hợp lệ / ${refusals.length} từ chối</div>
+                <table class="auction-table">
+                    <thead>
+                        <tr><th>Tác nhân</th><th>Cự ly</th><th>Pin khứ hồi</th><th>Chi phí</th></tr>
+                    </thead>
+                    <tbody>${rowsHtml || '<tr><td colspan="4" class="muted">Không có UAV nộp thầu</td></tr>'}</tbody>
+                </table>
+            `;
+        }
+
+        function renderE2ERouteInspector(routeData, drawOnMap = true) {
+            if (!routeData) return;
+            const box = document.getElementById('e2e-route-inspector');
+            const tag = document.getElementById('e2e-metrics-tag');
+            const hops = routeData.so_chang_hop ?? 1;
+            tag.textContent = `${hops} hops · ${routeData.e2e_delay_ms ?? 0} ms`;
+
+            const loTrinh = Array.isArray(routeData.lo_trinh) ? routeData.lo_trinh : [];
+            const chainText = loTrinh.map((id) => id.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', 'TRẠM_')).join(' ➔ ');
+
+            box.innerHTML = `
+                <div><b>Phiên:</b> #${String(routeData.ma_phien || '').slice(0, 8)} · <b>SNR cuối:</b> ${routeData.snr_chang_cuoi_db ?? 0} dB · <b>Dung lượng:</b> ${routeData.dung_luong_chang_cuoi_mbps ?? 0} Mbps</div>
+                <div class="route-chain">${escapeHtml(chainText)}</div>
+            `;
+
+            if (drawOnMap && loTrinh.length >= 2) {
+                layerE2ERoute2D.clearLayers();
+                const nodesById = new Map(dashboardNodes.map((n) => [n.id, n]));
+                const coords = loTrinh.map((id) => nodesById.get(id)).filter(Boolean).map((n) => [n.vi_do, n.kinh_do]);
+                if (coords.length >= 2) {
+                    const line = L.polyline(coords, {
+                        color: '#f4c96b', weight: 4, opacity: 0.95
+                    }).addTo(layerE2ERoute2D);
+                    setTimeout(() => {
+                        layerE2ERoute2D.removeLayer(line);
+                    }, 7000);
+                }
+            }
         }
 
         function drawBeamOnMap(link) {
@@ -946,81 +987,77 @@
             const mapLine = L.polyline([
                 [link.toa_do_dau.vi_do, link.toa_do_dau.kinh_do],
                 [link.toa_do_cuoi.vi_do, link.toa_do_cuoi.kinh_do]
-            ], { color, weight: kind.includes('DU_LIEU') ? 3 : 2, opacity: .9 }).addTo(layerBeams2D);
+            ], { color, weight: kind.includes('DU_LIEU') ? 3.2 : 2, opacity: 0.9 }).addTo(layerBeams2D);
             setTimeout(() => {
                 layerBeams2D.removeLayer(mapLine);
-            }, 1100);
+            }, 950);
+        }
+
+        function setLogFilter(filter, btnEl) {
+            activeLogFilter = filter;
+            document.querySelectorAll('.log-filter-btn').forEach((b) => b.classList.remove('active'));
+            if (btnEl) btnEl.classList.add('active');
+            const output = document.getElementById('terminal-output');
+            Array.from(output.children).forEach((entry) => {
+                const cat = entry.getAttribute('data-cat') || 'ALL';
+                entry.style.display = (activeLogFilter === 'ALL' || cat === activeLogFilter) ? '' : 'none';
+            });
         }
 
         function appendLog(level, message) {
             const output = document.getElementById('terminal-output');
             const entry = document.createElement('div');
-            const time = document.createElement('span');
-            const text = document.createElement('span');
             const safeLevel = ['INFO', 'BID', 'WIN', 'WARN', 'EVENT', 'RELAY', 'SUCCESS'].includes(level) ? level : 'INFO';
+            let category = 'INFO';
+            if (['BID', 'WIN', 'EVENT'].includes(safeLevel) || String(message).includes('CNP')) category = 'CNP';
+            else if (['RELAY', 'SUCCESS'].includes(safeLevel)) category = 'RELAY';
+            else if (safeLevel === 'WARN') category = 'WARN';
+
             entry.className = `log-entry log-${safeLevel}`;
-            time.className = 'log-time';
-            time.textContent = `[${new Date().toLocaleTimeString('vi-VN', { hour12: false })}]`;
-            text.textContent = String(message);
-            entry.append(time, text);
+            entry.setAttribute('data-cat', category);
+            if (activeLogFilter !== 'ALL' && category !== activeLogFilter) {
+                entry.style.display = 'none';
+            }
+
+            const timeSpan = document.createElement('span');
+            timeSpan.className = 'log-time';
+            timeSpan.textContent = `[${new Date().toLocaleTimeString('vi-VN', { hour12: false })}]`;
+
+            const textSpan = document.createElement('span');
+            textSpan.textContent = String(message);
+
+            entry.append(timeSpan, textSpan);
             output.appendChild(entry);
-            while (output.children.length > 80) output.removeChild(output.firstChild);
+            while (output.children.length > 90) output.removeChild(output.firstChild);
             output.scrollTop = output.scrollHeight;
         }
 
-        function xoa_ket_qua_nhiem_vu() {
-            const feedback = document.getElementById('mission-feedback');
-            feedback.className = 'mission-feedback';
-            feedback.textContent = '';
-        }
-
-        function khoang_cach_km(lat1, lon1, lat2, lon2) {
-            const rad = (value) => value * Math.PI / 180;
+        function khoangCachKm(lat1, lon1, lat2, lon2) {
+            const rad = (v) => v * Math.PI / 180;
             const dLat = rad(lat2 - lat1);
             const dLon = rad(lon2 - lon1);
-            const a = Math.sin(dLat / 2) ** 2 +
-                Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon / 2) ** 2;
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos(rad(lat1)) * Math.cos(rad(lat2)) * Math.sin(dLon / 2) ** 2;
             return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
         }
 
-        function cap_nhat_goi_y_nhiem_vu() {
+        function capNhatGoiYSuCo() {
             const lat = Number.parseFloat(document.getElementById('sim-lat').value);
             const lon = Number.parseFloat(document.getElementById('sim-lon').value);
             const hint = document.getElementById('mission-location-hint');
-            if (!Number.isFinite(lat) || !Number.isFinite(lon) || !dashboardNodes.length) {
-                hint.textContent = '';
-                return;
-            }
-
-            const uavs = dashboardNodes.filter((node) => node.loai === 'MÁY_BAY');
-            if (!uavs.length) {
-                hint.textContent = 'Chưa nhận được dữ liệu UAV từ máy chủ.';
-                return;
-            }
+            if (!Number.isFinite(lat) || !Number.isFinite(lon) || !dashboardNodes.length) return;
+            const uavs = dashboardNodes.filter((n) => n.loai === 'MÁY_BAY');
+            if (!uavs.length) return;
             const nearest = uavs.reduce((best, node) => {
-                const distance = khoang_cach_km(lat, lon, node.vi_do, node.kinh_do);
+                const distance = khoangCachKm(lat, lon, node.vi_do, node.kinh_do);
                 return !best || distance < best.distance ? { node, distance } : best;
             }, null);
-            const pin = Number(nearest.node.pin_pct) || 0;
-            hint.className = 'mission-feedback';
-            hint.textContent = `Gần nhất: ${nearest.node.id} · ${nearest.distance.toFixed(1)} km · ` +
-                `pin ${pin.toFixed(1)}% · ${nearest.node.trang_thai}`;
+            if (nearest) {
+                hint.textContent = `Gần nhất: ${nearest.node.id.replace('MÁY_BAY_', '')} (${nearest.node.zone_id || ''}) · ${nearest.distance.toFixed(2)} km · Pin ${Number(nearest.node.pin_pct).toFixed(0)}%`;
+            }
         }
 
-        function isPointInSonTra(latitude, longitude) {
-            if (!patrolZonesLoaded) return false;
-            const point = L.latLng(latitude, longitude);
-            return allZones.some((zone) => isPointInPolygon(point, zone));
-        }
-
-        document.getElementById('sim-lat').addEventListener('input', () => {
-            xoa_ket_qua_nhiem_vu();
-            cap_nhat_goi_y_nhiem_vu();
-        });
-        document.getElementById('sim-lon').addEventListener('input', () => {
-            xoa_ket_qua_nhiem_vu();
-            cap_nhat_goi_y_nhiem_vu();
-        });
+        document.getElementById('sim-lat').addEventListener('input', capNhatGoiYSuCo);
+        document.getElementById('sim-lon').addEventListener('input', capNhatGoiYSuCo);
 
         async function postJson(url, body) {
             const response = await fetch(url, {
@@ -1034,91 +1071,139 @@
         }
 
         async function triggerEvent() {
-            const button = document.querySelector('#control-panel .button.primary');
+            const btn = document.getElementById('btn-trigger-cnp');
             const feedback = document.getElementById('mission-feedback');
             const lat = Number.parseFloat(document.getElementById('sim-lat').value);
             const lon = Number.parseFloat(document.getElementById('sim-lon').value);
-            if (Number.isFinite(lat) && Number.isFinite(lon)) {
-                if (!patrolZonesLoaded) {
-                    feedback.className = 'mission-feedback error';
-                    feedback.textContent = 'Chưa tải xong dữ liệu ranh giới rừng; vui lòng thử lại.';
-                    return;
-                }
-                if (!isPointInSonTra(lat, lon)) {
-                    alert("Tọa độ nằm ngoài toàn bộ 7 vùng rừng Sơn Trà!");
-                    return;
-                }
-            }
-            if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lon) || lon < -180 || lon > 180) {
-                feedback.className = 'mission-feedback error';
-                feedback.textContent = 'Tọa độ không hợp lệ (vĩ độ −90..90, kinh độ −180..180).';
-                appendLog('WARN', feedback.textContent);
+
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+            if (patrolZonesLoaded && !isPointInSonTra(lat, lon)) {
+                feedback.className = 'feedback-line err';
+                feedback.textContent = 'Tọa độ nằm ngoài ranh giới 7 vùng rừng Sơn Trà!';
                 return;
             }
-            placeIncidentMarker(lat, lon, 'Điểm nghi cháy');
-            button.disabled = true;
-            feedback.className = 'mission-feedback';
-            feedback.textContent = 'Đang chọn UAV và lập tuyến chuyển tiếp dữ liệu…';
+
+            placeIncidentMarker(lat, lon, 'Điểm cháy rừng');
+            btn.disabled = true;
+            feedback.className = 'feedback-line';
+            feedback.textContent = 'Đang phát CFP_FIRE_EVENT và gom báo giá PROPOSE từ bầy UAV…';
+
             try {
                 const result = await postJson('/api/su-co', {
-                    loai_su_co: document.getElementById('sim-type').value,
+                    loai_su_co: 'CHÁY_RỪNG',
                     vi_do: lat,
                     kinh_do: lon
                 });
-                feedback.className = 'mission-feedback success';
-                feedback.textContent = `${result.uav_dieu_dong} được điều động · ${result.khoang_cach_tiep_can_km} km`;
-                appendLog('EVENT', result.thong_bao || 'Đã gửi yêu cầu điều phối.');
+                feedback.className = 'feedback-line ok';
+                feedback.textContent = `Đã trao thầu cho ${result.uav_dieu_dong} (cự ly ${result.khoang_cach_tiep_can_km} km, chi phí ${result.chi_phi})`;
+                if (result.auction_detail) renderAuctionInspector(result.auction_detail);
             } catch (error) {
-                feedback.className = 'mission-feedback error';
+                feedback.className = 'feedback-line err';
                 feedback.textContent = error.message;
-                appendLog('WARN', `Không thể kích hoạt nhiệm vụ: ${error.message}`);
+                appendLog('WARN', error.message);
             } finally {
-                button.disabled = false;
+                btn.disabled = false;
+            }
+        }
+
+        async function applyNodeBatteryFault() {
+            const uavId = document.getElementById('target-uav-select').value;
+            const pct = Number.parseFloat(document.getElementById('target-battery-select').value);
+            if (!uavId) return;
+            try {
+                const res = await postJson('/api/cap-nhat-pin', {
+                    ma_dinh_danh: uavId,
+                    phan_tram_pin_moi: pct
+                });
+                appendLog('WARN', res.thong_bao);
+            } catch (err) {
+                appendLog('WARN', `Lỗi cập nhật pin: ${err.message}`);
+            }
+        }
+
+        function updateSimBadge() {
+            const badge = document.getElementById('sim-speed-badge');
+            badge.textContent = currentPaused ? 'TẠM DỪNG' : `${currentSpeed}× · ĐANG CHẠY`;
+            document.getElementById('btn-pause').textContent = currentPaused ? 'Tiếp tục' : 'Tạm dừng';
+            document.getElementById('btn-pause').classList.toggle('active', currentPaused);
+            [1, 4, 8].forEach((s) => {
+                const b = document.getElementById(`btn-spd-${s}`);
+                if (b) b.classList.toggle('active', !currentPaused && currentSpeed === s);
+            });
+        }
+
+        async function togglePause() {
+            try {
+                const res = await postJson('/api/dieu-khien-thoi-gian', { tam_dung: !currentPaused });
+                currentPaused = Boolean(res.paused);
+                currentSpeed = Number(res.time_scale || currentSpeed);
+                updateSimBadge();
+            } catch (err) {
+                appendLog('WARN', err.message);
             }
         }
 
         async function setSpeed(scale) {
             try {
-                await postJson('/api/dieu-khien-thoi-gian', { time_scale: scale, tam_dung: false });
-                appendLog('INFO', `Đã đặt tốc độ mô phỏng ${scale}×.`);
-            } catch (error) {
-                appendLog('WARN', `Không thể đổi tốc độ mô phỏng: ${error.message}`);
-            }
-        }
-
-        async function drainBattery() {
-            try {
-                const result = await postJson('/api/cap-nhat-pin', {
-                    ma_dinh_danh: 'MÁY_BAY_UAV_01',
-                    phan_tram_pin_moi: 5
-                });
-                appendLog('WARN', result.thong_bao || 'Đã đặt pin UAV 01 ở mức thấp.');
-            } catch (error) {
-                appendLog('WARN', `Không thể cập nhật pin UAV 01: ${error.message}`);
+                const res = await postJson('/api/dieu-khien-thoi-gian', { time_scale: scale, tam_dung: false });
+                currentSpeed = Number(res.time_scale || scale);
+                currentPaused = Boolean(res.paused);
+                updateSimBadge();
+            } catch (err) {
+                appendLog('WARN', err.message);
             }
         }
 
         function togglePatrolRoutes() {
             showPatrolRoutes = !showPatrolRoutes;
             if (showPatrolRoutes) {
-                if (!map2d.hasLayer(layerWaypoints2D)) map2d.addLayer(layerWaypoints2D);
-            } else if (map2d.hasLayer(layerWaypoints2D)) {
+                map2d.addLayer(layerWaypoints2D);
+                map2d.addLayer(layerZones2D);
+            } else {
                 map2d.removeLayer(layerWaypoints2D);
+                map2d.removeLayer(layerZones2D);
             }
         }
 
-        function toggleAgentsShowcaseModal() {
-            const modal = document.getElementById('agents-showcase-modal');
-            if (modal) {
-                modal.classList.toggle('active');
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws/mophong`);
+        ws.onopen = () => {
+            const el = document.getElementById('conn-status');
+            el.className = 'connection online';
+            el.lastElementChild.textContent = 'Trực tuyến';
+            appendLog('INFO', 'Đã kết nối kênh đồng bộ thời gian thực SAGSINS.');
+        };
+        ws.onclose = () => {
+            const el = document.getElementById('conn-status');
+            el.className = 'connection offline';
+            el.lastElementChild.textContent = 'Mất kết nối';
+        };
+        ws.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'WORLD_STATE') {
+                    updateDashboard(
+                        msg.data.nodes || [],
+                        msg.data.network_metrics || {},
+                        msg.data.connectivity_metrics || {},
+                        msg.data.zone_coverage || null
+                    );
+                } else if (msg.type === 'CNP_AUCTION_RESULT') {
+                    renderAuctionInspector(msg.data);
+                } else if (msg.type === 'E2E_ROUTE_COMPLETED') {
+                    renderE2ERouteInspector(msg.data, true);
+                } else if (msg.type === 'RF_LINK') {
+                    drawBeamOnMap(msg.data);
+                } else if (msg.type === 'MISSION_COMPLETED') {
+                    const routeStr = Array.isArray(msg.data?.lo_trinh) ? msg.data.lo_trinh.join(' ➔ ') : '';
+                    appendLog('SUCCESS', `🎯 Hoàn tất truyền dữ liệu sự cố: ${routeStr} (${msg.data?.e2e_delay_ms ?? 0} ms)`);
+                } else if (msg.data) {
+                    appendLog(msg.data.cap_do || msg.type, msg.data.noi_dung || JSON.stringify(msg.data));
+                }
+            } catch (e) {
+                console.error(e);
             }
-        }
-
-        function handleModalBackdropClick(event) {
-            if (event.target && event.target.id === 'agents-showcase-modal') {
-                toggleAgentsShowcaseModal();
-            }
-        }
+        };
 
         loadInitialState();
     </script>

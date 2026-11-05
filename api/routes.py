@@ -8,25 +8,20 @@ from api.schemas import (
 )
 from core.base_agent import AgentState
 
+
 def tao_bo_dinh_tuyen_api(sim_loop) -> APIRouter:
     """
     Khởi tạo APIRouter gắn kết trực tiếp với thực thể SimulationLoop.
-    Đảm bảo kiến trúc Dependency Injection sạch sẽ.
     """
     router = APIRouter()
 
-    # =========================================================================
-    # 1. CỔNG WEBSOCKET ĐỒNG BỘ DỮ LIỆU THỜI GIAN THỰC (TELEMETRY & RF LINKS)
-    # =========================================================================
     @router.websocket("/ws/mophong")
     async def ket_noi_websocket(websocket: WebSocket):
         await websocket.accept()
         sim_loop.broker.danh_sach_client_ws.append(websocket)
         try:
-            # Ngay khi trình duyệt kết nối, gửi lập tức trạng thái ban đầu
             await sim_loop.broker.dong_bo_trang_thai_toan_mang()
             while True:
-                # Duy trì kết nối lắng nghe lệnh ping từ trình duyệt
                 await websocket.receive_text()
         except WebSocketDisconnect:
             if websocket in sim_loop.broker.danh_sach_client_ws:
@@ -52,17 +47,14 @@ def tao_bo_dinh_tuyen_api(sim_loop) -> APIRouter:
         finally:
             await server.disconnect_satellite(uav_id, websocket)
 
-    # =========================================================================
-    # 2. CÁC ENDPOINT RESTFUL API ĐIỀU KHIỂN KỊCH BẢN MÔ PHỎNG
-    # =========================================================================
     @router.get("/api/init-state")
     async def lay_trang_thai_khoi_tao():
-        """Trả trạng thái tác tử, tuyến tuần tra và chỉ số mạng."""
+        """Trả trạng thái tác tử, tuyến tuần tra, độ phủ 7 vùng và chỉ số mạng."""
         return sim_loop.lay_du_lieu_khoi_tao_ban_do()
 
     @router.post("/api/su-co")
     async def kich_hoat_su_co(req: KichHoatSuCoRequest):
-        """Mô phỏng phát hiện điểm cháy và điều động UAV qua CNP."""
+        """Mô phỏng phát hiện điểm cháy và điều động UAV qua FIPA-CNP."""
         ket_qua = await sim_loop.kich_hoat_su_co_khan_cap(
             loai_su_co=req.loai_su_co,
             vi_do=req.vi_do,
@@ -92,8 +84,8 @@ def tao_bo_dinh_tuyen_api(sim_loop) -> APIRouter:
     @router.post("/api/cap-nhat-pin")
     async def cap_nhat_pin_tac_nhan(req: CapNhatPinNodeRequest):
         """
-        Giả lập tình huống UAV bị suy giảm pin đột ngột (< 20%) hoặc sập nguồn (0%)
-        để kiểm chứng thuật toán tự động né tránh Node yếu pin khi đấu giá.
+        Giả lập tình huống Node bị suy giảm pin (< 25%), sập nguồn (0%) hoặc nạp đầy (100%)
+        để kiểm chứng tự động bàn giao vùng tuần tra và tự động định tuyến lại (Self-Healing).
         """
         tac_nhan = sim_loop.broker.lay_tac_nhan(req.ma_dinh_danh)
         if not tac_nhan:
@@ -101,13 +93,31 @@ def tao_bo_dinh_tuyen_api(sim_loop) -> APIRouter:
 
         tac_nhan.pin_hien_tai = (req.phan_tram_pin_moi / 100.0) * tac_nhan.pin_toi_da
         if tac_nhan.pin_hien_tai <= 0:
+            if hasattr(tac_nhan, "_giai_phong_uav_chuyen_tiep"):
+                tac_nhan._giai_phong_uav_chuyen_tiep()
             tac_nhan.chuyen_trang_thai(AgentState.OFFLINE)
+            if hasattr(tac_nhan, "_phat_yeu_cau_ban_giao_vung"):
+                await tac_nhan._phat_yeu_cau_ban_giao_vung()
         elif req.phan_tram_pin_moi < tac_nhan.nguong_pin_yeu_pct:
             tac_nhan.chuyen_trang_thai(AgentState.LOW_BATTERY)
+            if hasattr(tac_nhan, "_phat_yeu_cau_ban_giao_vung"):
+                await tac_nhan._phat_yeu_cau_ban_giao_vung()
         else:
+            if hasattr(tac_nhan, "_yeu_cau_ban_giao_da_phat"):
+                tac_nhan._yeu_cau_ban_giao_da_phat = False
+            if hasattr(tac_nhan, "_khoi_phuc_quy_dao_tuan_tra_goc"):
+                tac_nhan._khoi_phuc_quy_dao_tuan_tra_goc()
+            if hasattr(tac_nhan, "_phat_thong_bao_khoi_phuc_vung"):
+                await tac_nhan._phat_thong_bao_khoi_phuc_vung()
             tac_nhan.chuyen_trang_thai(
                 AgentState.PATROLLING if tac_nhan.loai_tac_nhan == "MÁY_BAY" else AgentState.IDLE
             )
+
+        # Cập nhật lại đường truyền của các UAV và thống kê liên lạc ngay lập tức
+        for agent in sim_loop.broker.danh_sach_tac_nhan.values():
+            if hasattr(agent, "evaluate_communication_link"):
+                agent.evaluate_communication_link()
+        await sim_loop._kiem_tra_lien_lac_lien_tuc(0.0)
 
         thong_bao = (
             f"🔋 Đã cập nhật năng lượng [{req.ma_dinh_danh}] ➔ {tac_nhan.phan_tram_pin}% "
