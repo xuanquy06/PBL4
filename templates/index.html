@@ -83,10 +83,25 @@
             flex: 1;
             display: grid;
             grid-template-columns: 1fr 330px;
+            grid-template-rows: 1fr;
             min-height: 0;
+            height: calc(100vh - 48px);
         }
-        .map-wrap { position: relative; width: 100%; height: 100%; }
-        #map { width: 100%; height: 100%; background: #070b12; }
+        .map-wrap {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            min-height: 0;
+            overflow: hidden;
+        }
+        #map {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            background: #0b1622;
+            z-index: 1;
+        }
 
         /* FLOATING OVERLAYS ON MAP */
         .map-float {
@@ -240,11 +255,16 @@
                 <button class="btn btn-ok" onclick="injectBattery(100)" title="Sạc đầy 100%">Sạc</button>
             </div>
 
-            <!-- Top-right: Layer toggles -->
+            <!-- Top-right: Base map & Layer toggles -->
             <div class="map-float float-top-right">
+                <select id="baseMapSelect" class="select-sm" onchange="switchBaseMap(this.value)">
+                    <option value="satellite" selected>🛰️ Ảnh vệ tinh</option>
+                    <option value="osm">🗺️ Bản đồ chuẩn</option>
+                    <option value="dark">🌑 Nền tối</option>
+                </select>
                 <label class="chk-label"><input type="checkbox" id="chkZones" checked onchange="toggleLayers()"> 7 Vùng</label>
                 <label class="chk-label"><input type="checkbox" id="chkLinks" checked onchange="toggleLayers()"> Liên kết</label>
-                <label class="chk-label"><input type="checkbox" id="chkRoutes" onchange="toggleLayers()"> Quỹ đạo tuần tra</label>
+                <label class="chk-label"><input type="checkbox" id="chkRoutes" checked onchange="toggleLayers()"> Quỹ đạo</label>
             </div>
 
             <!-- Bottom-left: Compact 7-zone badges -->
@@ -302,12 +322,42 @@
 
     <script>
         const map = L.map('map', { center: [16.115, 108.265], zoom: 13 });
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            maxZoom: 19, attribution: '&copy; OpenStreetMap'
-        }).addTo(map);
+
+        const baseLayers = {
+            satellite: L.layerGroup([
+                L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                    maxZoom: 19,
+                    attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics'
+                }),
+                L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+                    maxZoom: 19,
+                    opacity: 0.75
+                })
+            ]),
+            osm: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors'
+            }),
+            dark: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap &copy; CARTO'
+            })
+        };
+
+        let activeBaseLayer = baseLayers.satellite;
+        activeBaseLayer.addTo(map);
+
+        function switchBaseMap(mode) {
+            if (activeBaseLayer) map.removeLayer(activeBaseLayer);
+            activeBaseLayer = baseLayers[mode] || baseLayers.satellite;
+            activeBaseLayer.addTo(map);
+        }
+
+        window.addEventListener('resize', () => map.invalidateSize());
+        setTimeout(() => map.invalidateSize(), 150);
 
         const zoneLayer = L.layerGroup().addTo(map);
-        const patrolLayer = L.layerGroup(); // Mặc định ẩn để bản đồ thoáng
+        const patrolLayer = L.layerGroup().addTo(map);
         const linkLayer = L.layerGroup().addTo(map);
         const e2eLayer = L.layerGroup().addTo(map);
         const fireLayer = L.layerGroup().addTo(map);
@@ -334,15 +384,19 @@
             if (node.loai === 'TRẠM_MẶT_ĐẤT') {
                 return L.divIcon({
                     className: '',
-                    html: `<div style="width:14px;height:14px;background:#22c55e;border:2px solid #fff;border-radius:3px;box-shadow:0 0 8px #22c55e;"></div>`,
-                    iconSize: [14, 14], iconAnchor: [7, 7]
+                    html: `<div style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.9);border:2px solid #22c55e;border-radius:6px;box-shadow:0 0 10px #22c55e;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.2"><path d="M12 2a10 10 0 0 1 10 10"/><path d="M12 6a6 6 0 0 1 6 6"/><circle cx="12" cy="12" r="2"/><path d="M12 14v8"/><path d="M8 22h8"/></svg>
+                    </div>`,
+                    iconSize: [26, 26], iconAnchor: [13, 13]
                 });
             }
             if (node.loai && node.loai.includes('VỆ_TINH')) {
                 return L.divIcon({
                     className: '',
-                    html: `<div style="width:14px;height:14px;background:#a855f7;border:2px solid #fff;border-radius:50%;box-shadow:0 0 10px #a855f7;"></div>`,
-                    iconSize: [14, 14], iconAnchor: [7, 7]
+                    html: `<div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.9);border:2px solid #a855f7;border-radius:50%;box-shadow:0 0 12px #a855f7;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d8b4fe" stroke-width="2"><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M4 9h4v6H4zM16 9h4v6h-4z"/><path d="M12 15v5"/></svg>
+                    </div>`,
+                    iconSize: [28, 28], iconAnchor: [14, 14]
                 });
             }
             let color = '#38bdf8';
@@ -351,8 +405,10 @@
             else if (node.state === 'RETURNING' || node.state === 'CHARGING') color = '#eab308';
             return L.divIcon({
                 className: '',
-                html: `<div style="width:10px;height:10px;background:${color};border:1.5px solid #fff;border-radius:50%;box-shadow:0 0 6px ${color};"></div>`,
-                iconSize: [10, 10], iconAnchor: [5, 5]
+                html: `<div style="width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.88);border:1.8px solid ${color};border-radius:50%;box-shadow:0 0 8px ${color};">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><path d="M5 5l4 4M19 5l-4 4M5 19l4-4M19 19l-4-4"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/></svg>
+                </div>`,
+                iconSize: [22, 22], iconAnchor: [11, 11]
             });
         }
 
@@ -366,7 +422,7 @@
                 patrolZones.features.forEach(feat => {
                     const zId = feat.properties.zone_id;
                     const geo = L.geoJSON(feat, {
-                        style: { color: '#22c55e', weight: 1.3, fillColor: '#22c55e', fillOpacity: 0.07 }
+                        style: { color: '#4ade80', weight: 1.8, fillColor: '#22c55e', fillOpacity: 0.14 }
                     }).addTo(zoneLayer);
                     zonePolygons.set(zId, geo);
                     zoneBounds.set(zId, geo.getBounds());
@@ -377,7 +433,7 @@
                     if (!pts || pts.length < 2) return;
                     const latlngs = pts.map(p => [p.vi_do, p.kinh_do]);
                     latlngs.push(latlngs[0]);
-                    L.polyline(latlngs, { color: '#334155', weight: 1, dashArray: '3,5', opacity: 0.65 }).addTo(patrolLayer);
+                    L.polyline(latlngs, { color: '#93c5fd', weight: 1.1, dashArray: '4,5', opacity: 0.55 }).addTo(patrolLayer);
                 });
             }
         }
