@@ -64,13 +64,19 @@ class FakeAgent:
         self.tai_hang_doi_pct = 0.0
         self.cong_suat_bay_w = 80.0
         self.so_nhiem_vu_da_nhan = 0
-        self.hang_doi_thong_diep = asyncio.Queue()
+        self._hang_doi_thong_diep = None
         self.radio_config = {
             "tan_so_hz": 2.4e9,
             "cong_suat_phat_dbm": 35.0,
             "bang_thong_hz": 20e6
         }
         self.toa_do = {"node": node_id, "vi_do": 0.0, "kinh_do": 0.0, "do_cao": 1000.0}
+
+    @property
+    def hang_doi_thong_diep(self):
+        if self._hang_doi_thong_diep is None:
+            self._hang_doi_thong_diep = asyncio.Queue()
+        return self._hang_doi_thong_diep
 
     @property
     def phan_tram_pin(self):
@@ -193,17 +199,17 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
         server = GroundStationServer(broker)
         websocket = FakeWebSocket()
 
-        self.assertTrue(await server.connect(uav.ma_dinh_danh, websocket))
-        delivered = await server.broadcast_command(
-            {"loai_tin": "CFP_GOI_THAU"},
-            {uav.ma_dinh_danh}
+        self.assertTrue(await asyncio.wait_for(server.connect(uav.ma_dinh_danh, websocket), timeout=5.0))
+        delivered = await asyncio.wait_for(
+            server.broadcast_command({"loai_tin": "CFP_GOI_THAU"}, {uav.ma_dinh_danh}),
+            timeout=5.0
         )
 
         self.assertTrue(websocket.accepted)
         self.assertEqual(delivered, {uav.ma_dinh_danh})
         self.assertEqual(websocket.sent[0]["type"], "COMMAND")
         self.assertEqual(websocket.sent[0]["data"]["loai_tin"], "CFP_GOI_THAU")
-        await server.disconnect(uav.ma_dinh_danh, websocket)
+        await asyncio.wait_for(server.disconnect(uav.ma_dinh_danh, websocket), timeout=5.0)
         self.assertNotIn(uav.ma_dinh_danh, server.clients)
 
     async def test_ground_station_accepts_relayed_telemetry_only_from_valid_relay(self):
@@ -236,7 +242,7 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
         }])
         server = GroundStationServer(broker)
 
-        await server.receive_telemetry(relay.ma_dinh_danh, websocket)
+        await asyncio.wait_for(server.receive_telemetry(relay.ma_dinh_danh, websocket), timeout=5.0)
 
         self.assertEqual(
             server.latest_telemetry[source.ma_dinh_danh]["relay_target_id"],
@@ -325,7 +331,7 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
             patch.object(relay, "_ensure_websocket_connection", new_callable=AsyncMock, return_value=True),
             patch.object(relay, "_send_websocket_json", new_callable=AsyncMock, return_value=True) as send
         ):
-            await source._gui_telemetry_websocket()
+            await asyncio.wait_for(source._gui_telemetry_websocket(), timeout=5.0)
 
         send.assert_awaited_once()
         packet = send.await_args.args[1]
@@ -350,7 +356,7 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
             patch.object(uav, "_send_websocket_json", new_callable=AsyncMock, return_value=True) as send,
             patch("agents.uav_agent.asyncio.sleep", new_callable=AsyncMock) as sleep
         ):
-            await uav._gui_qua_ve_tinh_sau_do_tre()
+            await asyncio.wait_for(uav._gui_qua_ve_tinh_sau_do_tre(), timeout=5.0)
 
         sleep.assert_awaited_once_with(2.0)
         self.assertEqual(send.await_args.args[1]["type"], "SATELLITE_UPLINK")
@@ -372,7 +378,7 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
         )
         uav.chuyen_trang_thai(AgentState.IDLE)
 
-        await uav.update(10.0)
+        await asyncio.wait_for(uav.update(10.0), timeout=5.0)
         profile = uav.xuat_ho_so_trang_thai()
 
         self.assertEqual(uav.uav_state, UAVState.STANDBY)
@@ -428,7 +434,7 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
         )
         uav.pin_hien_tai = 25000.0
 
-        await uav.cap_nhat_vat_ly(1.0)
+        await asyncio.wait_for(uav.cap_nhat_vat_ly(1.0), timeout=5.0)
 
         self.assertEqual(uav.trang_thai, AgentState.RETURNING)
         self.assertEqual(uav.toa_do_tram_sac["kinh_do"], station.toa_do["kinh_do"])
@@ -449,14 +455,14 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
         )
         uav.pin_hien_tai = 20000.0
 
-        await uav.cap_nhat_vat_ly(1.0)
+        await asyncio.wait_for(uav.cap_nhat_vat_ly(1.0), timeout=5.0)
 
         self.assertEqual(uav.trang_thai, AgentState.RETURNING)
         self.assertLess(uav.pin_hien_tai, 20000.0)
 
         uav.pin_hien_tai = uav.pin_toi_da - 100.0
         uav.chuyen_trang_thai(AgentState.CHARGING)
-        await uav.cap_nhat_vat_ly(1.0)
+        await asyncio.wait_for(uav.cap_nhat_vat_ly(1.0), timeout=5.0)
 
         self.assertEqual(uav.pin_hien_tai, uav.pin_toi_da)
         self.assertEqual(uav.trang_thai, AgentState.PATROLLING)
@@ -507,8 +513,8 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
             return_value=True
         ) as send_packet:
-            await uav.cap_nhat_vat_ly(1.0)
-            await uav.cap_nhat_vat_ly(1.0)
+            await asyncio.wait_for(uav.cap_nhat_vat_ly(1.0), timeout=5.0)
+            await asyncio.wait_for(uav.cap_nhat_vat_ly(1.0), timeout=5.0)
 
         self.assertEqual(uav.trang_thai, AgentState.LOW_BATTERY_RTB)
         self.assertEqual(uav.nguong_pin_yeu_pct, LOW_BATTERY_THRESHOLD)
@@ -527,13 +533,16 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
         simulation.broker = broker
         simulation._ban_giao_vung_uav = {}
 
-        await simulation._lap_lich_ban_giao_vung([uav, same_zone_uav, other_zone_uav])
+        await asyncio.wait_for(
+            simulation._lap_lich_ban_giao_vung([uav, same_zone_uav, other_zone_uav]),
+            timeout=5.0
+        )
 
         self.assertIn(uav.ma_dinh_danh, same_zone_uav._vung_tuan_tra_phu)
         self.assertNotIn(uav.ma_dinh_danh, other_zone_uav._vung_tuan_tra_phu)
 
 
-class ScenarioDeploymentTests(unittest.TestCase):
+class ScenarioDeploymentTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _point_in_ring(latitude, longitude, ring):
         inside = False
@@ -677,7 +686,7 @@ class ScenarioDeploymentTests(unittest.TestCase):
             )
         )
 
-    def test_cnp_bid_or_refusal_uses_flight_energy_not_geographic_radius(self):
+    async def test_cnp_bid_or_refusal_uses_flight_energy_not_geographic_radius(self):
         class FakeCnpBroker:
             def __init__(self):
                 self.physics = FakePhysics({})
@@ -712,22 +721,21 @@ class ScenarioDeploymentTests(unittest.TestCase):
             )
             uav.pin_hien_tai = battery_joule
             uav.chuyen_trang_thai(AgentState.PATROLLING)
-            await uav._tra_bao_gia(
-                {
-                    "loai_tin": "CFP_GOI_THAU",
-                    "ma_phien_dau_gia": "session",
-                    "toa_do_su_co": {"vi_do": 16.24, "kinh_do": 108.2}
-                },
-                "MÁY_BAY_UAV_02"
+            await asyncio.wait_for(
+                uav._tra_bao_gia(
+                    {
+                        "loai_tin": "CFP_GOI_THAU",
+                        "ma_phien_dau_gia": "session",
+                        "toa_do_su_co": {"vi_do": 16.24, "kinh_do": 108.2}
+                    },
+                    "MÁY_BAY_UAV_02"
+                ),
+                timeout=5.0
             )
             return broker.sent_messages
 
-        loop = asyncio.new_event_loop()
-        try:
-            proposals = loop.run_until_complete(run_case(50000.0))
-            refusals = loop.run_until_complete(run_case(20000.0))
-        finally:
-            loop.close()
+        proposals = await asyncio.wait_for(run_case(50000.0), timeout=5.0)
+        refusals = await asyncio.wait_for(run_case(20000.0), timeout=5.0)
 
         distance_km = FakePhysics.tinh_khoang_cach_3d(
             {"vi_do": 16.1, "kinh_do": 108.2, "do_cao": 1200.0},
@@ -791,9 +799,11 @@ class MissionDispatchTests(unittest.IsolatedAsyncioTestCase):
             {"vi_do": target_latitude, "kinh_do": 108.2, "do_cao": 0.0}
         ) / 1000.0
 
-        result = await simulation.kich_hoat_su_co_khan_cap(
-            "CHÁY_RỪNG", target_latitude, 108.2
-        )
+        with patch("core.ground_station_server.asyncio.sleep", new_callable=AsyncMock):
+            result = await asyncio.wait_for(
+                simulation.kich_hoat_su_co_khan_cap("CHÁY_RỪNG", target_latitude, 108.2),
+                timeout=5.0
+            )
 
         self.assertEqual(
             [message["loai_tin"] for message in bid_messages],
@@ -823,11 +833,11 @@ class MissionDispatchTests(unittest.IsolatedAsyncioTestCase):
             }
         )()
 
-        result = await simulation.kich_hoat_su_co_khan_cap(
-            "CHÁY_RỪNG",
-            16.8508,
-            103.7948
-        )
+        with patch("core.ground_station_server.asyncio.sleep", new_callable=AsyncMock):
+            result = await asyncio.wait_for(
+                simulation.kich_hoat_su_co_khan_cap("CHÁY_RỪNG", 16.8508, 103.7948),
+                timeout=5.0
+            )
 
         self.assertFalse(result["thanh_cong"])
         self.assertEqual(result["uav_gan_nhat"], nearest_uav.ma_dinh_danh)
@@ -844,8 +854,11 @@ class FleetAvailabilityTests(unittest.IsolatedAsyncioTestCase):
             if agent.loai_tac_nhan == "MÁY_BAY"
         ]
 
-        for _ in range(1200):
-            await asyncio.gather(*(uav.cap_nhat_vat_ly(1.0) for uav in uavs))
+        async def _run_patrol():
+            for _ in range(1200):
+                await asyncio.gather(*(uav.cap_nhat_vat_ly(1.0) for uav in uavs))
+
+        await asyncio.wait_for(_run_patrol(), timeout=15.0)
 
         disconnected = [
             uav.ma_dinh_danh for uav in uavs
