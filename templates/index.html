@@ -513,9 +513,11 @@
                     zonePolygons.set(zId, geo);
                     zoneBounds.set(zId, b);
 
-                    const center = b.getCenter();
-                    L.marker(center, {
+                    const pc = feat.properties.patrol_center;
+                    const labelPos = (pc && pc.length === 2) ? [pc[1], pc[0]] : b.getCenter();
+                    L.marker(labelPos, {
                         interactive: false,
+                        zIndexOffset: 500,
                         icon: L.divIcon({
                             className: '',
                             html: `<div class="zone-map-label">${shortName}</div>`,
