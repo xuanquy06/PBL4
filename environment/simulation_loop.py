@@ -1,7 +1,7 @@
 import asyncio
 import time
 import uuid
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from environment.physics_engine import PhysicsEngine
 from environment.scenario_manager import ScenarioManager
 from core.message_broker import MessageBroker
@@ -30,10 +30,10 @@ class SimulationLoop:
         self.tam_dung = False
         self.so_buoc_thoi_gian = 0
 
-        self.scenario = ScenarioManager(data_dir="data")
-        self.physics = PhysicsEngine()
-        self.broker = MessageBroker(physics_engine=self.physics, scenario_manager=self.scenario)
-        self.ground_station_server = GroundStationServer(self.broker)
+        self.scenario: Any = ScenarioManager(data_dir="data")
+        self.physics: Any = PhysicsEngine()
+        self.broker: Any = MessageBroker(physics_engine=self.physics, scenario_manager=self.scenario)
+        self.ground_station_server: Any = GroundStationServer(self.broker)
         setattr(self.broker, "ground_station_server", self.ground_station_server)
         self.uav_ws_server_url = uav_ws_server_url
 

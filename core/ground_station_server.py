@@ -7,13 +7,13 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 
 class GroundStationServer:
-    def __init__(self, broker):
-        self.broker = broker
-        self.clients: dict[str, WebSocket] = {}
-        self.satellite_clients: dict[str, WebSocket] = {}
-        self.latest_telemetry: dict[str, dict] = {}
-        self.danh_sach_propose: dict[str, list[dict]] = {}
-        self.danh_sach_refuse: dict[str, list[dict]] = {}
+    def __init__(self, broker: Any):
+        self.broker: Any = broker
+        self.clients: dict[str, Any] = {}
+        self.satellite_clients: dict[str, Any] = {}
+        self.latest_telemetry: dict[str, dict[str, Any]] = {}
+        self.danh_sach_propose: dict[str, list[dict[str, Any]]] = {}
+        self.danh_sach_refuse: dict[str, list[dict[str, Any]]] = {}
         self._lock = asyncio.Lock()
 
     def nhan_propose(self, propose_data: dict):
@@ -152,7 +152,7 @@ class GroundStationServer:
 
         return winner
 
-    async def _accept_uav(self, uav_id: str, websocket: WebSocket) -> bool:
+    async def _accept_uav(self, uav_id: str, websocket: Any) -> bool:
         agent = self.broker.lay_tac_nhan(uav_id)
         if not agent or agent.loai_tac_nhan != "MÁY_BAY":
             await websocket.close(code=1008, reason="UAV không hợp lệ")
@@ -160,7 +160,7 @@ class GroundStationServer:
         await websocket.accept()
         return True
 
-    async def connect(self, uav_id: str, websocket: WebSocket) -> bool:
+    async def connect(self, uav_id: str, websocket: Any) -> bool:
         if not await self._accept_uav(uav_id, websocket):
             return False
         async with self._lock:
@@ -170,7 +170,7 @@ class GroundStationServer:
             await previous.close(code=1001, reason="UAV kết nối lại")
         return True
 
-    async def connect_satellite(self, uav_id: str, websocket: WebSocket) -> bool:
+    async def connect_satellite(self, uav_id: str, websocket: Any) -> bool:
         if not await self._accept_uav(uav_id, websocket):
             return False
         async with self._lock:
@@ -180,12 +180,12 @@ class GroundStationServer:
             await previous.close(code=1001, reason="UAV kết nối vệ tinh lại")
         return True
 
-    async def disconnect(self, uav_id: str, websocket: WebSocket):
+    async def disconnect(self, uav_id: str, websocket: Any):
         async with self._lock:
             if self.clients.get(uav_id) is websocket:
                 del self.clients[uav_id]
 
-    async def disconnect_satellite(self, uav_id: str, websocket: WebSocket):
+    async def disconnect_satellite(self, uav_id: str, websocket: Any):
         async with self._lock:
             if self.satellite_clients.get(uav_id) is websocket:
                 del self.satellite_clients[uav_id]
@@ -201,7 +201,7 @@ class GroundStationServer:
             )
         )
 
-    async def receive_telemetry(self, uav_id: str, websocket: WebSocket):
+    async def receive_telemetry(self, uav_id: str, websocket: Any):
         try:
             while True:
                 payload = await websocket.receive_json()
@@ -254,7 +254,7 @@ class GroundStationServer:
         except WebSocketDisconnect:
             return
 
-    async def receive_satellite_telemetry(self, uav_id: str, websocket: WebSocket):
+    async def receive_satellite_telemetry(self, uav_id: str, websocket: Any):
         try:
             while True:
                 payload = await websocket.receive_json()

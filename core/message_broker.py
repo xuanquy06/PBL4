@@ -3,13 +3,13 @@ import heapq
 import json
 import random
 import time
-from typing import Dict, List, TYPE_CHECKING, Optional
+from typing import Any, Dict, List, TYPE_CHECKING, Optional
 from fastapi import WebSocket
 
 if TYPE_CHECKING:
     from core.base_agent import BaseAgent
 
-RouteChannel = dict[str, bool | float]
+RouteChannel = dict[str, Any]
 RouteState = tuple[float, str, tuple[str, ...], tuple[RouteChannel, ...]]
 
 
@@ -20,15 +20,17 @@ class MessageBroker:
     - Cập nhật tri thức láng giềng cục bộ cho nút nhận khi gói tin truyền qua kênh vật lý.
     - Đồng bộ trạng thái mạng, liên kết, độ phủ 7 phân khu và số liệu QoS ra giao diện Web.
     """
-    def __init__(self, physics_engine, scenario_manager):
-        self.physics = physics_engine
-        self.scenario = scenario_manager
-        self.danh_sach_tac_nhan: Dict[str, "BaseAgent"] = {}
+    def __init__(self, physics_engine: Any, scenario_manager: Any):
+        self.physics: Any = physics_engine
+        self.scenario: Any = scenario_manager
+        self.danh_sach_tac_nhan: Dict[str, Any] = {}
         self.danh_sach_client_ws: List[WebSocket] = []
-        self.phien_dau_gia_gan_nhat: Optional[dict] = None
-        self.tuyen_e2e_gan_nhat: Optional[dict] = None
+        self.phien_dau_gia_gan_nhat: Optional[dict[str, Any]] = None
+        self.tuyen_e2e_gan_nhat: Optional[dict[str, Any]] = None
+        self.ground_station_server: Any = None
+        self.thong_ke_lien_tuc: dict[str, Any] = {}
 
-        self.thong_ke_toan_mang = {
+        self.thong_ke_toan_mang: dict[str, Any] = {
             "tong_goi_tin_phat": 0,
             "tong_goi_tin_thanh_cong": 0,
             "tong_goi_tin_rot_per": 0,
@@ -37,12 +39,12 @@ class MessageBroker:
             "nang_luong_tieu_hao_joule": 0.0
         }
 
-    def dang_ky_tac_nhan(self, tac_nhan):
+    def dang_ky_tac_nhan(self, tac_nhan: Any):
         """Đăng ký một Node mạng (UAV, Vệ tinh, Trạm mặt đất) vào không gian mô phỏng"""
         self.danh_sach_tac_nhan[tac_nhan.ma_dinh_danh] = tac_nhan
         print(f"[WIRELESS MEDIUM] Đã đăng ký Node: {tac_nhan.ma_dinh_danh} ({tac_nhan.loai_tac_nhan})")
 
-    def lay_tac_nhan(self, ma_dinh_danh: str) -> Optional["BaseAgent"]:
+    def lay_tac_nhan(self, ma_dinh_danh: str) -> Optional[Any]:
         return self.danh_sach_tac_nhan.get(ma_dinh_danh)
 
     def cap_nhat_nang_luong_tong(self):
@@ -59,7 +61,7 @@ class MessageBroker:
         ma_bat_dau: str,
         kich_thuoc_kb: float = 250.0,
         loai_tru: Optional[set[str]] = None
-    ) -> Optional[dict]:
+    ) -> Optional[dict[str, Any]]:
         """
         Tìm tuyến khả dụng có chi phí QoS + Năng lượng thấp nhất từ một node tới trạm mặt đất.
         Đã khắc phục lỗi tự khóa trạng thái RELAYING: cho phép nhiều UAV cùng định tuyến
@@ -172,19 +174,21 @@ class MessageBroker:
         cong_suat_w = 10.0 ** ((agent.radio_config["cong_suat_phat_dbm"] - 30.0) / 10.0)
         return round(cong_suat_w * 0.05 * (kich_thuoc_kb / 10.0), 4)
 
-    def tao_bao_gia(self, ma_ung_vien: str, ma_nguon: str, thong_so_chang_dau: dict, kich_thuoc_kb: float) -> Optional[dict]:
+    def tao_bao_gia(self, ma_ung_vien: str, ma_nguon: str, thong_so_chang_dau: dict[str, Any], kich_thuoc_kb: float) -> Optional[dict[str, Any]]:
         """Định giá đường truyền từ nguồn, qua ứng viên, đến một trạm mặt đất."""
         ung_vien = self.danh_sach_tac_nhan.get(ma_ung_vien)
         if not ung_vien:
             return None
+        tuyen: dict[str, Any]
         if ung_vien.loai_tac_nhan == "TRẠM_MẶT_ĐẤT":
             tuyen = {"nodes": [ma_ung_vien], "channels": [], "cost": 0.0, "energy_j": 0.0, "delay_ms": 0.0}
         else:
-            tuyen = self.tim_tuyen_den_tram_mat_dat(
+            tuyen_tim = self.tim_tuyen_den_tram_mat_dat(
                 ma_ung_vien, kich_thuoc_kb, loai_tru={ma_nguon}
             )
-            if not tuyen:
+            if not tuyen_tim:
                 return None
+            tuyen = tuyen_tim
 
         bw_dau = max(0.5, thong_so_chang_dau.get("dung_luong_mbps", 0.0))
         bw_tuyen = [max(0.5, kenh["dung_luong_mbps"]) for kenh in tuyen["channels"]]
@@ -409,8 +413,9 @@ class MessageBroker:
                 entry["uav_dang_sac_hoac_rtb"] += 1
             else:
                 entry["uav_hoat_dong"] += 1
-            if getattr(agent, "_vung_tuan_tra_phu", None):
-                entry["uav_nhan_ban_giao"] += len(agent._vung_tuan_tra_phu)
+            vung_phu = getattr(agent, "_vung_tuan_tra_phu", None)
+            if vung_phu:
+                entry["uav_nhan_ban_giao"] += len(vung_phu)
 
         for z_id, entry in vung_stats.items():
             if entry["uav_hoat_dong"] == 0:

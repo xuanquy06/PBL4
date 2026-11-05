@@ -5,6 +5,7 @@ import sys
 import unittest
 import tempfile
 from io import TextIOWrapper
+from typing import Any
 from unittest.mock import AsyncMock, patch
 from fastapi import WebSocketDisconnect
 
@@ -64,13 +65,14 @@ class FakeAgent:
         self.tai_hang_doi_pct = 0.0
         self.cong_suat_bay_w = 80.0
         self.so_nhiem_vu_da_nhan = 0
-        self._hang_doi_thong_diep = None
-        self.radio_config = {
+        self.xu_ly_thong_diep: Any = None
+        self._hang_doi_thong_diep: Any = None
+        self.radio_config: dict[str, float] = {
             "tan_so_hz": 2.4e9,
             "cong_suat_phat_dbm": 35.0,
             "bang_thong_hz": 20e6
         }
-        self.toa_do = {"node": node_id, "vi_do": 0.0, "kinh_do": 0.0, "do_cao": 1000.0}
+        self.toa_do: dict[str, Any] = {"node": node_id, "vi_do": 0.0, "kinh_do": 0.0, "do_cao": 1000.0}
 
     @property
     def hang_doi_thong_diep(self):
