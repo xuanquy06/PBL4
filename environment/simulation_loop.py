@@ -476,6 +476,7 @@ class SimulationLoop:
             "connectivity_metrics": self._chi_so_lien_lac,
             "last_auction": self.broker.phien_dau_gia_gan_nhat,
             "last_e2e_route": self.broker.tuyen_e2e_gan_nhat,
+            "recent_logs": list(getattr(self.broker, "nhat_ky_gan_day", [])),
             "uav_energy_model": {
                 agent.ma_dinh_danh: {
                     "power_w": getattr(agent, "cong_suat_bay_w", 0.0),

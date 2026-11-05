@@ -50,6 +50,13 @@ app.include_router(tao_bo_dinh_tuyen_api(sim_loop))
 
 @app.get("/", response_class=HTMLResponse)
 async def trang_chu(request: Request):
-    """Render giao diện giám sát và điều phối mạng SAGSINS."""
+    """Render trang bản đồ chiến thuật SAGSINS."""
     content = templates.get_template("index.html").render(request=request)
+    return HTMLResponse(content=content)
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def trang_dashboard(request: Request):
+    """Render trang Dashboard thống kê và điều phối MAS SAGSINS."""
+    content = templates.get_template("dashboard.html").render(request=request)
     return HTMLResponse(content=content)

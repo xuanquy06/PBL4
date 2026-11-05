@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAGSINS MAS — Dashboard Điều phối</title>
+    <style>
+        :root {
+            --bg-dark: #090d16;
+            --bg-panel: #111827;
+            --bg-card: #1a2333;
+            --border-color: #26334d;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --accent-blue: #38bdf8;
+            --accent-green: #22c55e;
+            --accent-amber: #f59e0b;
+            --accent-red: #ef4444;
+            --accent-purple: #a855f7;
+            --accent-cyan: #06b6d4;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text-main);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            font-size: 12px;
+        }
+        /* TOP BAR */
+        .topbar {
+            height: 48px;
+            background: var(--bg-panel);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 14px;
+            flex-shrink: 0;
+        }
+        .brand-nav { display: flex; align-items: center; gap: 14px; }
+        .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+        .ws-dot {
+            width: 9px; height: 9px; border-radius: 50%;
+            background: var(--accent-red); box-shadow: 0 0 6px var(--accent-red);
+        }
+        .ws-dot.online { background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green); }
+        .nav-tabs { display: flex; gap: 4px; background: var(--bg-dark); padding: 3px; border-radius: 6px; border: 1px solid var(--border-color); }
+        .nav-link {
+            text-decoration: none; color: var(--text-muted); font-weight: 600; font-size: 12px;
+            padding: 5px 12px; border-radius: 4px; transition: 0.15s;
+        }
+        .nav-link:hover { color: var(--text-main); }
+        .nav-link.active { background: var(--accent-blue); color: #090d16; }
+
+        .sim-controls { display: flex; align-items: center; gap: 6px; }
+        .btn {
+            background: var(--bg-card); color: var(--text-main);
+            border: 1px solid var(--border-color); border-radius: 5px;
+            padding: 5px 10px; font-size: 11px; font-weight: 600; cursor: pointer;
+            text-decoration: none;
+        }
+        .btn:hover { border-color: var(--accent-blue); }
+        .btn.active { background: var(--accent-blue); color: #090d16; border-color: var(--accent-blue); }
+
+        /* DASHBOARD CONTAINER */
+        .dash-wrap {
+            flex: 1;
+            padding: 12px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            min-height: 0;
+        }
+
+        /* ROW 1: KPI CARDS */
+        .kpi-row {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 10px;
+            flex-shrink: 0;
+        }
+        .kpi-card {
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: 7px;
+            padding: 10px 12px;
+        }
+        .k-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; margin-bottom: 4px; }
+        .k-val { font-size: 18px; font-weight: 700; }
+        .k-sub { font-size: 10px; color: var(--text-muted); margin-top: 3px; }
+        .tier-bar {
+            height: 6px; border-radius: 3px; background: #090d16;
+            display: flex; overflow: hidden; margin-top: 6px;
+        }
+
+        /* ROW 2: 3-COLUMN ANALYTICS GRID */
+        .main-grid {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 1.15fr 1.15fr 1fr;
+            gap: 12px;
+            min-height: 0;
+        }
+        .panel {
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: 7px;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            overflow: hidden;
+        }
+        .panel-head {
+            padding: 9px 12px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            background: rgba(26, 35, 51, 0.5);
+        }
+        .panel-body {
+            flex: 1;
+            padding: 10px 12px;
+            overflow-y: auto;
+        }
+
+        /* CNP TABLE */
+        .tbl { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
+        .tbl th, .tbl td { padding: 5px 6px; border-bottom: 1px solid var(--border-color); text-align: left; }
+        .tbl th { color: var(--text-muted); font-size: 10px; text-transform: uppercase; }
+        .tbl tr.win { background: rgba(34, 197, 94, 0.14); color: #86efac; font-weight: 600; }
+        .tbl tr.refuse { color: #fca5a5; opacity: 0.8; }
+
+        /* E2E CHAIN */
+        .e2e-chain { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+        .hop-box {
+            background: var(--bg-card); border: 1px solid var(--accent-blue);
+            border-radius: 5px; padding: 4px 8px; font-weight: 600; font-size: 11px;
+        }
+
+        /* 7 ZONES MATRIX */
+        .zone-matrix { display: flex; flex-direction: column; gap: 7px; }
+        .z-row {
+            background: var(--bg-card); border: 1px solid var(--border-color);
+            border-left: 3px solid var(--accent-green); border-radius: 5px;
+            padding: 7px 9px;
+        }
+        .z-row.handover { border-left-color: var(--accent-amber); }
+        .z-row.gap { border-left-color: var(--accent-red); }
+        .z-head { display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 5px; font-size: 11px; }
+        .z-uavs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+        .u-chip {
+            background: rgba(9, 13, 22, 0.65); border: 1px solid var(--border-color);
+            border-radius: 4px; padding: 4px 6px; font-size: 10px;
+        }
+        .u-top { display: flex; justify-content: space-between; font-weight: 600; }
+        .u-bar { height: 3px; background: #090d16; border-radius: 2px; margin-top: 3px; overflow: hidden; }
+        .u-fill { height: 100%; background: var(--accent-green); }
+
+        /* LOG STREAM */
+        .log-item {
+            font-family: 'JetBrains Mono', Consolas, monospace;
+            font-size: 11px; padding: 5px 7px; border-radius: 4px;
+            background: rgba(9, 13, 22, 0.55); border-left: 3px solid var(--accent-blue);
+            margin-bottom: 5px; line-height: 1.4;
+        }
+        .log-item.WARN { border-left-color: var(--accent-amber); }
+        .log-item.ALERT { border-left-color: var(--accent-red); }
+        .log-item.WIN, .log-item.CNP { border-left-color: var(--accent-green); }
+        .log-item.ROUTE { border-left-color: var(--accent-purple); }
+    </style>
+</head>
+<body>
+    <!-- TOP BAR -->
+    <header class="topbar">
+        <div class="brand-nav">
+            <div class="brand">
+                <div id="wsDot" class="ws-dot"></div>
+                <span>SAGSINS MAS</span>
+            </div>
+            <nav class="nav-tabs">
+                <a href="/" class="nav-link">🗺️ Bản đồ</a>
+                <a href="/dashboard" class="nav-link active">📊 Dashboard</a>
+            </nav>
+        </div>
+
+        <div class="sim-controls">
+            <a href="/api/xuat-csv" class="btn">📥 Xuất CSV</a>
+            <button id="btnPause" class="btn" onclick="togglePause()">⏸ Tạm dừng</button>
+            <button class="btn speed-btn active" data-speed="1" onclick="setSpeed(1)">1x</button>
+            <button class="btn speed-btn" data-speed="2" onclick="setSpeed(2)">2x</button>
+            <button class="btn speed-btn" data-speed="5" onclick="setSpeed(5)">5x</button>
+        </div>
+    </header>
+
+    <!-- DASHBOARD BODY -->
+    <main class="dash-wrap">
+        <!-- ROW 1: 6 KPI CARDS -->
+        <section class="kpi-row">
+            <div class="kpi-card">
+                <div class="k-label">UAV Kết nối</div>
+                <div id="kUav" class="k-val" style="color:var(--accent-green)">0 / 21</div>
+                <div id="kAvail" class="k-sub">Khả dụng: 100%</div>
+            </div>
+            <div class="kpi-card">
+                <div class="k-label">Liên kết 3 tầng (A2G / FANET / LEO)</div>
+                <div id="kTiers" class="k-val" style="color:var(--accent-blue)">0 / 0 / 0</div>
+                <div class="tier-bar">
+                    <div id="barA2G" style="width:100%;background:var(--accent-green)"></div>
+                    <div id="barFanet" style="width:0%;background:var(--accent-amber)"></div>
+                    <div id="barLeo" style="width:0%;background:var(--accent-purple)"></div>
+                </div>
+            </div>
+            <div class="kpi-card">
+                <div class="k-label">Tỷ lệ nhận gói (PDR)</div>
+                <div id="kPdr" class="k-val" style="color:var(--accent-cyan)">100.0%</div>
+                <div id="kPackets" class="k-sub">0 / 0 gói</div>
+            </div>
+            <div class="kpi-card">
+                <div class="k-label">Độ trễ TB</div>
+                <div id="kDelay" class="k-val">0.0 ms</div>
+                <div id="kDrops" class="k-sub">Rớt PER: 0 · Mất LoS: 0</div>
+            </div>
+            <div class="kpi-card">
+                <div class="k-label">Năng lượng toàn mạng</div>
+                <div id="kEnergy" class="k-val" style="color:var(--accent-amber)">0 J</div>
+                <div class="k-sub">RF Tx/Rx + Động cơ</div>
+            </div>
+            <div class="kpi-card">
+                <div class="k-label">Đấu thầu CNP hoàn tất</div>
+                <div id="kMissions" class="k-val" style="color:var(--accent-purple)">0</div>
+                <div id="kSatStatus" class="k-sub">3 Vệ tinh LEO hoạt động</div>
+            </div>
+        </section>
+
+        <!-- ROW 2: 3 ANALYTICS COLUMNS -->
+        <section class="main-grid">
+            <!-- COLUMN 1: CNP AUCTION & E2E ROUTE -->
+            <div class="panel">
+                <div class="panel-head">
+                    <span>1. Đấu thầu CNP & Định tuyến E2E</span>
+                    <span id="cnpTime" style="color:var(--accent-green)"></span>
+                </div>
+                <div class="panel-body">
+                    <div style="font-weight:700;color:var(--text-muted);font-size:10px;text-transform:uppercase;">Phiên đấu thầu CNP gần nhất</div>
+                    <div id="cnpDetail" style="margin-top:6px;margin-bottom:14px;color:var(--text-muted);">
+                        Chưa có phiên đấu thầu nào. Hãy báo cháy trên trang Bản đồ.
+                    </div>
+
+                    <div style="font-weight:700;color:var(--text-muted);font-size:10px;text-transform:uppercase;border-top:1px solid var(--border-color);padding-top:10px;">
+                        Chuỗi định tuyến đa chặng E2E mới nhất
+                    </div>
+                    <div id="e2eDetail" style="margin-top:6px;color:var(--text-muted);">
+                        Đang chờ gói dữ liệu định tuyến về Trạm mặt đất...
+                    </div>
+                </div>
+            </div>
+
+            <!-- COLUMN 2: 7-ZONE MATRIX & 21 UAV FLEET -->
+            <div class="panel">
+                <div class="panel-head">
+                    <span>2. Ma trận 7 Phân khu & 21 UAV</span>
+                    <span id="zoneSummary" style="color:var(--accent-green)">7/7 An toàn</span>
+                </div>
+                <div class="panel-body">
+                    <div id="zoneMatrix" class="zone-matrix"></div>
+                </div>
+            </div>
+
+            <!-- COLUMN 3: PROTOCOL EVENT LOGS -->
+            <div class="panel">
+                <div class="panel-head">
+                    <span>3. Nhật ký giao thức MAS</span>
+                    <button class="btn" style="padding:2px 6px;font-size:10px;" onclick="document.getElementById('logStream').innerHTML=''">Xóa</button>
+                </div>
+                <div id="logStream" class="panel-body"></div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        let isPaused = false;
+        let nodesCache = [];
+
+        function updateKpis(net, conn) {
+            if (conn) {
+                const total = conn.tong_uav || 21;
+                const a2g = conn.uav_ground_link || 0;
+                const fanet = conn.uav_fanet_relay || 0;
+                const leo = conn.uav_leo_satellite || 0;
+                document.getElementById('kUav').textContent = `${conn.uav_ket_noi || 0} / ${total}`;
+                document.getElementById('kAvail').textContent = `Khả dụng: ${conn.do_kha_dung_pct ?? 100}%`;
+                document.getElementById('kTiers').textContent = `${a2g} / ${fanet} / ${leo}`;
+                document.getElementById('barA2G').style.width = `${(a2g / total) * 100}%`;
+                document.getElementById('barFanet').style.width = `${(fanet / total) * 100}%`;
+                document.getElementById('barLeo').style.width = `${(leo / total) * 100}%`;
+                document.getElementById('kMissions').textContent = conn.nhiem_vu_da_dieu_phoi || 0;
+            }
+            if (net) {
+                const sent = net.tong_goi_tin_phat || 0;
+                const ok = net.tong_goi_tin_thanh_cong || 0;
+                const pdr = sent > 0 ? ((ok / sent) * 100).toFixed(1) : '100.0';
+                document.getElementById('kPdr').textContent = `${pdr}%`;
+                document.getElementById('kPackets').textContent = `${ok} / ${sent} gói thành công`;
+                document.getElementById('kDelay').textContent = `${net.do_tre_trung_binh_ms || 0} ms`;
+                document.getElementById('kDrops').textContent = `Rớt PER: ${net.tong_goi_tin_rot_per || 0} · Mất LoS: ${net.tong_goi_tin_mat_los || 0}`;
+                document.getElementById('kEnergy').textContent = `${Math.round(net.nang_luong_tieu_hao_joule || 0)} J`;
+            }
+        }
+
+        function renderCnp(auc) {
+            if (!auc) return;
+            document.getElementById('cnpTime').textContent = auc.thoi_gian || '';
+            const box = document.getElementById('cnpDetail');
+            const props = auc.proposals || [];
+            const refs = auc.refusals || [];
+            const header = auc.thanh_cong
+                ? `<div style="color:var(--accent-green);font-weight:700;margin-bottom:4px;">🏆 Thắng thầu: ${auc.winner_id} (${auc.vi_do?.toFixed(4)}, ${auc.kinh_do?.toFixed(4)})</div>`
+                : `<div style="color:var(--accent-red);font-weight:700;margin-bottom:4px;">❌ Không UAV nào đủ pin khứ hồi (>25%)</div>`;
+
+            const rows = [
+                ...props.map((p, i) => `
+                    <tr class="${i === 0 ? 'win' : ''}">
+                        <td>${p.uav_id.replace('MÁY_BAY_', '')}</td>
+                        <td>${((p.khoang_cach_m || 0) / 1000).toFixed(2)} km</td>
+                        <td>${p.pin_du_kien_pct ?? '-'}%</td>
+                        <td>${p.chi_phi}</td>
+                        <td>${i === 0 ? 'WIN' : 'LOSE'}</td>
+                    </tr>
+                `),
+                ...refs.slice(0, 6).map(r => `
+                    <tr class="refuse">
+                        <td>${(r.uav_id || '').replace('MÁY_BAY_', '')}</td>
+                        <td>${((r.khoang_cach_m || 0) / 1000).toFixed(2)} km</td>
+                        <td>${r.pin_du_kien_pct ?? '-'}%</td>
+                        <td>—</td>
+                        <td>REFUSE</td>
+                    </tr>
+                `)
+            ].join('');
+
+            box.innerHTML = `
+                ${header}
+                <table class="tbl">
+                    <thead><tr><th>UAV</th><th>Cự ly</th><th>Pin sau NV</th><th>Chi phí</th><th>KQ</th></tr></thead>
+                    <tbody>${rows || '<tr><td colspan="5">Không có báo giá</td></tr>'}</tbody>
+                </table>
+            `;
+        }
+
+        function renderE2E(data) {
+            if (!data || !data.lo_trinh_hop) return;
+            const box = document.getElementById('e2eDetail');
+            box.innerHTML = `
+                <div style="font-size:11px;margin-bottom:4px;">
+                    Gói: <b>${data.loai_du_lieu || 'TELEMETRY'}</b> · Tổng trễ: <b style="color:var(--accent-cyan)">${data.tong_do_tre_ms} ms</b> · Băng thông: <b>${data.dung_luong_min_mbps} Mbps</b>
+                </div>
+                <div class="e2e-chain">
+                    ${data.lo_trinh_hop.map(h => `<span class="hop-box">${h.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '')}</span>`).join('<span>➔</span>')}
+                </div>
+            `;
+        }
+
+        function renderZoneMatrix(zoneCoverage, nodes) {
+            if (!zoneCoverage) return;
+            const uavsByZone = {};
+            (nodes || []).filter(n => n.loai === 'MÁY_BAY').forEach(u => {
+                const z = u.zone_id || 'ZONE_01';
+                (uavsByZone[z] = uavsByZone[z] || []).push(u);
+            });
+
+            let okCount = 0;
+            const keys = Object.keys(zoneCoverage).sort();
+            document.getElementById('zoneMatrix').innerHTML = keys.map(zId => {
+                const z = zoneCoverage[zId];
+                let cls = '';
+                let tag = 'Đủ phủ sóng';
+                if (z.trang_thai === 'MAT_PHU_SONG') { cls = 'gap'; tag = 'Mất phủ sóng'; }
+                else if (z.trang_thai === 'BAN_GIAO_TAM_THOI') { cls = 'handover'; tag = 'Đang bàn giao'; }
+                else okCount++;
+
+                const uavs = uavsByZone[zId] || [];
+                return `
+                    <div class="z-row ${cls}">
+                        <div class="z-head">
+                            <span>${zId} (${z.uav_hoat_dong}/${z.tong_uav} UAV)</span>
+                            <span style="color:var(--text-muted);font-weight:600;">${tag}</span>
+                        </div>
+                        <div class="z-uavs">
+                            ${uavs.map(u => {
+                                const c = u.pin_pct < 25 ? '#ef4444' : (u.pin_pct < 50 ? '#f59e0b' : '#22c55e');
+                                const linkShort = (u.current_link || '').replace('_LINK', '').replace('_SATELLITE', '');
+                                return `
+                                    <div class="u-chip">
+                                        <div class="u-top">
+                                            <span>${u.id.replace('MÁY_BAY_', '')}</span>
+                                            <span style="color:${c}">${u.pin_pct}%</span>
+                                        </div>
+                                        <div style="color:var(--text-muted);font-size:9px;margin-top:2px;">${u.state} · ${linkShort}</div>
+                                        <div class="u-bar"><div class="u-fill" style="width:${u.pin_pct}%;background:${c}"></div></div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            document.getElementById('zoneSummary').textContent = `${okCount}/${keys.length} An toàn`;
+        }
+
+        function appendLog(capDo, noiDung, timeStr) {
+            const box = document.getElementById('logStream');
+            const el = document.createElement('div');
+            el.className = `log-item ${capDo || 'INFO'}`;
+            el.innerHTML = `<span style="color:var(--text-muted)">[${timeStr}]</span> <b>[${capDo}]</b> ${noiDung}`;
+            box.prepend(el);
+            while (box.children.length > 60) box.removeChild(box.lastChild);
+        }
+
+        async function togglePause() {
+            isPaused = !isPaused;
+            const res = await fetch('/api/dieu-khien-thoi-gian', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tam_dung: isPaused })
+            });
+            const d = await res.json();
+            isPaused = d.paused;
+            const btn = document.getElementById('btnPause');
+            btn.textContent = isPaused ? '▶ Tiếp tục' : '⏸ Tạm dừng';
+            btn.classList.toggle('active', isPaused);
+        }
+
+        async function setSpeed(scale) {
+            await fetch('/api/dieu-khien-thoi-gian', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ time_scale: scale })
+            });
+            document.querySelectorAll('.speed-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.speed) === scale));
+        }
+
+        async function init() {
+            const res = await fetch('/api/init-state');
+            const d = await res.json();
+            nodesCache = d.nodes || [];
+            updateKpis(d.network_metrics, d.connectivity_metrics);
+            renderZoneMatrix(d.zone_coverage, nodesCache);
+            if (d.last_auction) renderCnp(d.last_auction);
+            if (d.last_e2e_route) renderE2E(d.last_e2e_route);
+            if (d.recent_logs) {
+                d.recent_logs.forEach(l => appendLog(l.cap_do, l.noi_dung, l.timestamp));
+            }
+
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${proto}//${location.host}/ws/mophong`);
+            ws.onopen = () => document.getElementById('wsDot').classList.add('online');
+            ws.onclose = () => document.getElementById('wsDot').classList.remove('online');
+            ws.onmessage = (ev) => {
+                const msg = JSON.parse(ev.data);
+                if (msg.type === 'WORLD_STATE') {
+                    nodesCache = msg.data.nodes || [];
+                    updateKpis(msg.data.network_metrics, msg.data.connectivity_metrics);
+                    renderZoneMatrix(msg.data.zone_coverage, nodesCache);
+                    if (msg.data.last_auction) renderCnp(msg.data.last_auction);
+                    if (msg.data.last_e2e_route) renderE2E(msg.data.last_e2e_route);
+                } else if (msg.type === 'CNP_AUCTION_RESULT') {
+                    renderCnp(msg.data);
+                } else if (msg.type === 'E2E_ROUTE_COMPLETED') {
+                    renderE2E(msg.data);
+                } else if (msg.type === 'LOG') {
+                    appendLog(msg.data.cap_do, msg.data.noi_dung, msg.timestamp);
+                }
+            };
+        }
+        init();
+    </script>
+</body>
+</html>

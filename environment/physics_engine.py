@@ -65,7 +65,7 @@ class PhysicsEngine:
         """Nhận danh sách TLE từ ScenarioManager, nạp vào bộ giải SGP4 và căn pha qua vùng giám sát."""
         self._base_utc = datetime.now(timezone.utc)
         # Căn lệch pha giữa các vệ tinh (-120s, 0s, +150s...) để tạo chuỗi phủ sóng liên tục S2G & ISL
-        phase_shifts = (-90.0, 30.0, 180.0, -210.0, 300.0)
+        phase_shifts = (-80.0, 0.0, 85.0, -140.0, 140.0)
         for idx, item in enumerate(danh_sach_tle):
             sat_id = item["ma_ve_tinh"]
             sat_obj = EarthSatellite(item["tle_line1"], item["tle_line2"], sat_id, self.ts)
@@ -76,12 +76,14 @@ class PhysicsEngine:
     def lay_vi_tri_ve_tinh(self, sat_id: str, bu_thoi_gian_giay: float = 0.0) -> dict:
         """
         Tính toán tọa độ (Vĩ độ, Kinh độ, Độ cao) và vận tốc 3D của vệ tinh bằng SGP4.
-        Cho phép truyền `bu_thoi_gian_giay` để tăng tốc thời gian mô phỏng (Time Warp).
+        Cho phép truyền `bu_thoi_gian_giay` để tăng tốc thời gian mô phỏng (Time Warp),
+        chu kỳ cửa sổ bay qua khu vực giám sát tự động nối tiếp theo chòm vệ tinh LEO.
         """
         if sat_id not in self.satellites_tle:
             raise ValueError(f"Chưa có dữ liệu TLE cho {sat_id}")
 
-        offset_sec = self.satellites_time_offset_sec.get(sat_id, 0.0) + float(bu_thoi_gian_giay)
+        rel_pass_sec = ((float(bu_thoi_gian_giay) + 150.0) % 300.0) - 150.0
+        offset_sec = self.satellites_time_offset_sec.get(sat_id, 0.0) + rel_pass_sec
         dt_now = self._base_utc + timedelta(seconds=offset_sec)
         t_skyfield = self.ts.from_datetime(dt_now)
 
@@ -214,7 +216,7 @@ class PhysicsEngine:
         co_los, goc_ngang = self.kiem_tra_tam_nhin_thang(pos1, pos2)
         khoang_cach_m = self.tinh_khoang_cach_3d(pos1, pos2)
 
-        if not co_los or khoang_cach_m <= 0:
+        if not co_los:
             return {
                 "kha_dung": False,
                 "khoang_cach_km": round(khoang_cach_m / 1000.0, 2),
@@ -226,20 +228,21 @@ class PhysicsEngine:
                 "per": 1.0
             }
 
+        khoang_cach_hieu_dung_m = max(1.0, khoang_cach_m)
         is_space_link = max(float(pos1["do_cao"]), float(pos2["do_cao"])) > 80000.0
         # Nếu là liên kết vệ tinh (A2S / S2G / ISL), đồng bộ sang băng tần Ku-band (12 GHz) và công suất phát đáp
         effective_freq_hz = 12.0e9 if is_space_link else float(tan_so_hz)
-        effective_tx_dbm = max(float(cong_suat_phat_dbm), 42.0) if is_space_link else float(cong_suat_phat_dbm)
+        effective_tx_dbm = max(float(cong_suat_phat_dbm), 43.0) if is_space_link else float(cong_suat_phat_dbm)
         effective_bw_hz = 40.0e6 if is_space_link else float(bang_thong_hz)
 
         # 1. Độ trễ truyền sóng điện từ (ms) + trễ xử lý chuyển mạch phát đáp vệ tinh (nếu có)
-        do_tre_ms = (khoang_cach_m / SPEED_OF_LIGHT) * 1000.0
+        do_tre_ms = (khoang_cach_hieu_dung_m / SPEED_OF_LIGHT) * 1000.0
         if is_space_link:
             do_tre_ms += 12.0
 
         # 2. Suy hao không gian tự do (Free-Space Path Loss - FSPL)
         fspl_db = (
-            20.0 * math.log10(khoang_cach_m)
+            20.0 * math.log10(khoang_cach_hieu_dung_m)
             + 20.0 * math.log10(effective_freq_hz)
             + 20.0 * math.log10(4.0 * math.pi / SPEED_OF_LIGHT)
         )
@@ -248,15 +251,15 @@ class PhysicsEngine:
         suy_hao_phu_db = 0.0
         if is_space_link and min(float(pos1["do_cao"]), float(pos2["do_cao"])) < 20000.0:
             sin_el = max(0.087, math.sin(math.radians(max(5.0, goc_ngang))))
-            suy_hao_phu_db = 2.2 / sin_el
+            suy_hao_phu_db = 2.0 / sin_el
         elif not is_space_link and min(float(pos1["do_cao"]), float(pos2["do_cao"])) < 100.0:
             # Suy hao đa đường & tán xạ qua sườn rừng Sơn Trà cho liên kết A2G
-            suy_hao_phu_db = 6.0 + (khoang_cach_m / 1000.0) * 1.8
+            suy_hao_phu_db = 5.0 + (khoang_cach_hieu_dung_m / 1000.0) * 1.5
 
         tong_suy_hao_db = fspl_db + suy_hao_phu_db
 
         # 3. Quỹ đường truyền (Link Budget): Độ lợi ăng-ten (Tx Gain + Rx Gain)
-        tong_antenna_gain_dbi = 42.0 if is_space_link else 14.0
+        tong_antenna_gain_dbi = 54.0 if is_space_link else 16.0
         cong_suat_thu_dbm = effective_tx_dbm + tong_antenna_gain_dbi - tong_suy_hao_db
 
         # 4. Công suất nhiễu nhiệt nền (Thermal Noise: N = k * T * B) + Noise Figure (5 dB)
