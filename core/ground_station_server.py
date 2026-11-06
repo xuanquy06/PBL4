@@ -42,6 +42,16 @@ class GroundStationServer:
                 return
         danh_sach.append(refuse_data)
 
+    def nhan_mission_abort(self, abort_data: dict):
+        """Tiếp nhận báo cáo huỷ nhiệm vụ khi UAV gặp sự cố giữa đường bay."""
+        ma_phien = abort_data.get("ma_phien_dau_gia")
+        uav_id = abort_data.get("uav_id")
+        sim_loop = getattr(self.broker, "simulation_loop", None)
+        if sim_loop and hasattr(sim_loop, "xu_ly_uav_gap_su_co_nhiem_vu"):
+            asyncio.create_task(
+                sim_loop.xu_ly_uav_gap_su_co_nhiem_vu(ma_phien, uav_id, abort_data.get("ly_do", ""))
+            )
+
     async def _chuyen_lenh_cho_tac_nhan(self, agent, thong_diep: dict):
         """Đảm bảo mỗi lệnh CNP chỉ được xử lý đúng 1 lần duy nhất bởi tác nhân."""
         if not agent:
@@ -57,7 +67,8 @@ class GroundStationServer:
         self,
         ma_phien: str,
         thong_diep_cfp: dict,
-        thoi_gian_cho_s: float = 0.8
+        thoi_gian_cho_s: float = 0.8,
+        exclude_uavs: Optional[set[str]] = None
     ) -> Optional[dict]:
         """
         Thu gom các gói PROPOSE và REFUSE từ các UAV trong cửa sổ thời gian đấu giá.
@@ -75,6 +86,8 @@ class GroundStationServer:
 
         danh_sach = self.danh_sach_propose.pop(ma_phien, [])
         danh_sach_tu_choi = self.danh_sach_refuse.pop(ma_phien, [])
+        if exclude_uavs:
+            danh_sach = [p for p in danh_sach if (p.get("uav_id") or p.get("nguoi_gui")) not in exclude_uavs]
 
         if not danh_sach:
             ket_qua_rong = {
@@ -96,7 +109,14 @@ class GroundStationServer:
             )
             return None
 
-        danh_sach_sorted = sorted(danh_sach, key=lambda p: float(p.get("chi_phi", float("inf"))))
+        fire_zone = thong_diep_cfp.get("zone_id")
+        def ranking_key(p):
+            p_zone = p.get("zone_id")
+            # Cùng phân khu cháy xếp ưu tiên tuyệt đối (hạng 0), phân khu khác hạng 1
+            zone_rank = 0 if (fire_zone and p_zone == fire_zone) else 1
+            return (zone_rank, float(p.get("chi_phi", float("inf"))))
+
+        danh_sach_sorted = sorted(danh_sach, key=ranking_key)
         winner = danh_sach_sorted[0]
         winner_id = winner["uav_id"]
 

@@ -14,7 +14,24 @@
         ],
         "patrol_radius_m": 300.0,
         "west_boundary_lng": 108.209405,
-        "east_boundary_lng": 108.228808
+        "east_boundary_lng": 108.228808,
+        "patrol_subcenters": [
+          [
+            16.1315,
+            108.2245,
+            200.0
+          ],
+          [
+            16.1272,
+            108.2249,
+            220.0
+          ],
+          [
+            16.123,
+            108.2245,
+            200.0
+          ]
+        ]
       },
       "geometry": {
         "type": "MultiPolygon",
@@ -114,7 +131,24 @@
         ],
         "patrol_radius_m": 620.0,
         "west_boundary_lng": 108.228808,
-        "east_boundary_lng": 108.246825
+        "east_boundary_lng": 108.246825,
+        "patrol_subcenters": [
+          [
+            16.136,
+            108.238,
+            420.0
+          ],
+          [
+            16.1281,
+            108.238,
+            450.0
+          ],
+          [
+            16.12,
+            108.238,
+            420.0
+          ]
+        ]
       },
       "geometry": {
         "type": "MultiPolygon",
@@ -206,7 +240,24 @@
         ],
         "patrol_radius_m": 650.0,
         "west_boundary_lng": 108.246825,
-        "east_boundary_lng": 108.264842
+        "east_boundary_lng": 108.264842,
+        "patrol_subcenters": [
+          [
+            16.136,
+            108.2557,
+            450.0
+          ],
+          [
+            16.1268,
+            108.2557,
+            450.0
+          ],
+          [
+            16.118,
+            108.2557,
+            450.0
+          ]
+        ]
       },
       "geometry": {
         "type": "MultiPolygon",
@@ -286,7 +337,24 @@
         ],
         "patrol_radius_m": 620.0,
         "west_boundary_lng": 108.264842,
-        "east_boundary_lng": 108.282859
+        "east_boundary_lng": 108.282859,
+        "patrol_subcenters": [
+          [
+            16.126,
+            108.2737,
+            420.0
+          ],
+          [
+            16.1182,
+            108.2737,
+            450.0
+          ],
+          [
+            16.111,
+            108.2737,
+            420.0
+          ]
+        ]
       },
       "geometry": {
         "type": "MultiPolygon",
@@ -374,7 +442,24 @@
         ],
         "patrol_radius_m": 600.0,
         "west_boundary_lng": 108.282859,
-        "east_boundary_lng": 108.300876
+        "east_boundary_lng": 108.300876,
+        "patrol_subcenters": [
+          [
+            16.1275,
+            108.2917,
+            420.0
+          ],
+          [
+            16.1201,
+            108.2917,
+            450.0
+          ],
+          [
+            16.113,
+            108.2917,
+            420.0
+          ]
+        ]
       },
       "geometry": {
         "type": "MultiPolygon",
@@ -458,7 +543,24 @@
         ],
         "patrol_radius_m": 480.0,
         "west_boundary_lng": 108.300876,
-        "east_boundary_lng": 108.318893
+        "east_boundary_lng": 108.318893,
+        "patrol_subcenters": [
+          [
+            16.1255,
+            108.31,
+            260.0
+          ],
+          [
+            16.122,
+            108.31,
+            360.0
+          ],
+          [
+            16.116,
+            108.31,
+            300.0
+          ]
+        ]
       },
       "geometry": {
         "type": "MultiPolygon",
@@ -562,7 +664,24 @@
         ],
         "patrol_radius_m": 430.0,
         "west_boundary_lng": 108.318893,
-        "east_boundary_lng": 108.338296
+        "east_boundary_lng": 108.338296,
+        "patrol_subcenters": [
+          [
+            16.131,
+            108.3245,
+            280.0
+          ],
+          [
+            16.1261,
+            108.325,
+            320.0
+          ],
+          [
+            16.1215,
+            108.3255,
+            280.0
+          ]
+        ]
       },
       "geometry": {
         "type": "MultiPolygon",

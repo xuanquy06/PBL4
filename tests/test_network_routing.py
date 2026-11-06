@@ -585,7 +585,7 @@ class ScenarioDeploymentTests(unittest.TestCase):
         stations = [node for node in nodes if node["loai_tac_nhan"] == "TRẠM_MẶT_ĐẤT"]
         zones = scenario.patrol_zones["features"]
 
-        self.assertEqual(len(uavs), 21)
+        self.assertEqual(len(uavs), 28)
         self.assertEqual(len(stations), 1)
         self.assertEqual(stations[0]["ma_dinh_danh"], "TRẠM_KIỂM_LÂM_SƠN_TRÀ")
         self.assertEqual((stations[0]["vi_do"], stations[0]["kinh_do"]), (16.105, 108.250))
@@ -593,21 +593,21 @@ class ScenarioDeploymentTests(unittest.TestCase):
         self.assertEqual(len(zones), 7)
         self.assertEqual(
             scenario.ke_hoach_bo_tri_ban_dau["phan_bo_theo_tram"],
-            {"TRẠM_KIỂM_LÂM_SƠN_TRÀ": 21}
+            {"TRẠM_KIỂM_LÂM_SƠN_TRÀ": 28}
         )
         self.assertEqual(scenario.ke_hoach_bo_tri_ban_dau["so_vung_geofence"], 7)
         self.assertEqual(
             [len(uavs) for uavs in scenario.ke_hoach_bo_tri_ban_dau["uav_theo_vung"].values()],
-            [3] * 7
+            [4] * 7
         )
-        self.assertEqual(len(scenario.ke_hoach_bo_tri_ban_dau["tram_cua_uav"]), 21)
+        self.assertEqual(len(scenario.ke_hoach_bo_tri_ban_dau["tram_cua_uav"]), 28)
 
         for zone_index, zone in enumerate(zones):
             longitude, latitude = zone["properties"]["patrol_center"]
             self.assertTrue(self._point_in_zone(latitude, longitude, zone))
             zone_uavs = uavs[zone_index * 3:zone_index * 3 + 3]
             self.assertEqual({uav["zone_id"] for uav in zone_uavs}, {zone["properties"]["zone_id"]})
-            battery_ranges = ((95, 100), (60, 70), (30, 35))
+            battery_ranges = ((95, 100), (70, 85), (50, 65))
             for uav, (minimum, maximum) in zip(zone_uavs, battery_ranges):
                 self.assertGreaterEqual(uav["pin_khoi_tao_pct"], minimum)
                 self.assertLessEqual(uav["pin_khoi_tao_pct"], maximum)
@@ -622,6 +622,12 @@ class ScenarioDeploymentTests(unittest.TestCase):
                         self._point_in_zone(point["vi_do"], point["kinh_do"], zone),
                         f"{zone['properties']['zone_id']} contains every waypoint for UAV {uav_index}"
                     )
+
+        reserve_uavs = uavs[21:28]
+        self.assertEqual(len(reserve_uavs), 7)
+        for reserve_idx, reserve_uav in enumerate(reserve_uavs):
+            self.assertEqual(reserve_uav["zone_id"], f"ZONE_{reserve_idx + 1:02d}")
+            self.assertEqual(reserve_uav["pin_khoi_tao_pct"], 100.0)
 
         for index in range(6):
             west_zone = zones[index]
@@ -652,13 +658,13 @@ class ScenarioDeploymentTests(unittest.TestCase):
 
         self.assertEqual(
             sum(node["loai_tac_nhan"] == "MÁY_BAY" for node in nodes),
-            21
+            28
         )
         self.assertEqual(
             sum(node["loai_tac_nhan"] == "TRẠM_MẶT_ĐẤT" for node in nodes),
             1
         )
-        self.assertEqual(len(waypoints), 21)
+        self.assertEqual(len(waypoints), 28)
         self.assertTrue(all(len(route) == 6 for route in waypoints.values()))
 
     def test_stale_patrol_routes_outside_zone_are_regenerated(self):

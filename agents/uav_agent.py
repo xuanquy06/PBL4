@@ -78,7 +78,11 @@ class UAVAgent(BaseAgent):
         self._websocket_connect_lock: Optional[asyncio.Lock] = None
         self._websocket_retry_after = {"uav": 0.0, "satellite": 0.0}
         self._websocket_error_reported: set[str] = set()
-        self.chuyen_trang_thai(AgentState.PATROLLING)
+        if self._dang_o_tai_tram():
+            self.chuyen_trang_thai(AgentState.IDLE)
+            self.uav_state = UAVState.STANDBY
+        else:
+            self.chuyen_trang_thai(AgentState.PATROLLING)
 
     def _get_send_lock(self) -> asyncio.Lock:
         if self._websocket_send_lock is None:
@@ -259,15 +263,16 @@ class UAVAgent(BaseAgent):
         )
 
     def _dang_o_tai_tram(self) -> bool:
+        tac_nhan_map = getattr(self.bo_dinh_tuyen, "danh_sach_tac_nhan", {}) or {}
         return any(
-            agent.loai_tac_nhan == "TRẠM_MẶT_ĐẤT"
+            getattr(agent, "loai_tac_nhan", None) == "TRẠM_MẶT_ĐẤT"
             and self._khoang_cach_m(
                 self.toa_do["vi_do"],
                 self.toa_do["kinh_do"],
                 agent.toa_do["vi_do"],
                 agent.toa_do["kinh_do"]
             ) <= 1.0
-            for agent in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()
+            for agent in tac_nhan_map.values()
         )
 
     def evaluate_communication_link(self, tram_lat: Optional[float] = None, tram_lon: Optional[float] = None) -> str:
@@ -587,12 +592,16 @@ class UAVAgent(BaseAgent):
             # 3. Ràng buộc cứng: Pin dự kiến sau khứ hồi phải > 25%
             if pin_du_kien_pct > LOW_BATTERY_THRESHOLD:
                 # Hàm chi phí đa mục tiêu: Cự ly + Mức hao hụt pin + Cân bằng tải số nhiệm vụ + Trọng số đang gánh vùng phụ
+                # Ưu tiên tuyệt đối UAV nội vùng: Phạt 12,000 nếu UAV từ phân khu khác
+                fire_zone = thong_diep.get("zone_id")
+                phat_khac_vung = 0.0 if (not fire_zone or self.zone_id == fire_zone) else 12000.0
                 he_so_ganh_vung = len(self._vung_tuan_tra_phu) * 1500.0
                 chi_phi = round(
                     kc_m
                     + (100.0 - self.phan_tram_pin) * 40.0
                     + self.so_nhiem_vu_da_nhan * 3000.0
-                    + he_so_ganh_vung,
+                    + he_so_ganh_vung
+                    + phat_khac_vung,
                     2
                 )
                 propose_msg = {
@@ -837,6 +846,27 @@ class UAVAgent(BaseAgent):
             "BID", f"[{self.ma_dinh_danh}] Báo giá tuyến {bao_gia['tuyen']} · chi phí {bao_gia['chi_phi']}"
         )
 
+    async def _bao_huy_nhiem_vu(self, su_co: dict, ly_do: str):
+        """Thông báo khẩn cấp về trạm khi UAV gặp sự cố giữa đường bay làm nhiệm vụ cháy."""
+        await self.bo_dinh_tuyen.gui_log_ra_web(
+            "WARN", f"⚠️ [{self.ma_dinh_danh}] HUỶ NHIỆM VỤ #{su_co.get('ma_phien_dau_gia', '')[:8]}: {ly_do}."
+        )
+        msg = {
+            "loai_tin": "MISSION_ABORT",
+            "ma_phien_dau_gia": su_co.get("ma_phien_dau_gia"),
+            "uav_id": self.ma_dinh_danh,
+            "zone_id": self.zone_id,
+            "vi_do": su_co.get("vi_do"),
+            "kinh_do": su_co.get("kinh_do"),
+            "ly_do": ly_do,
+            "thoi_gian": time.time(),
+        }
+        gcs_server = getattr(self.bo_dinh_tuyen, "ground_station_server", None)
+        if gcs_server and hasattr(gcs_server, "nhan_mission_abort"):
+            await gcs_server.nhan_mission_abort(msg)
+        else:
+            await self.bo_dinh_tuyen.gui_don_huong(self.ma_dinh_danh, "TRẠM_KIỂM_LÂM_SƠN_TRÀ", msg)
+
     async def _thuc_hien_nhiem_vu(self, su_co: dict):
         try:
             toa_do_muc_tieu = self.toa_do_muc_tieu
@@ -853,22 +883,19 @@ class UAVAgent(BaseAgent):
             deadline = time.monotonic() + timeout
             den_muc_tieu_ev = self._get_den_muc_tieu_event()
             while not den_muc_tieu_ev.is_set():
-                if self.trang_thai in (AgentState.OFFLINE, AgentState.LOW_BATTERY):
-                    await self.bo_dinh_tuyen.gui_log_ra_web(
-                        "WARN", f"[{self.ma_dinh_danh}] Hủy nhiệm vụ do pin chạm ngưỡng RTB an toàn."
-                    )
+                if self.trang_thai in (AgentState.OFFLINE, AgentState.LOW_BATTERY) or self.phan_tram_pin <= 5.0:
+                    await self._bao_huy_nhiem_vu(su_co, "Pin sập hoặc UAV chuyển OFFLINE")
                     return
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
+                    await self._bao_huy_nhiem_vu(su_co, "Timeout không tới được tâm cháy")
                     raise asyncio.TimeoutError
                 try:
                     await asyncio.wait_for(den_muc_tieu_ev.wait(), timeout=min(1.0, remaining))
                 except asyncio.TimeoutError:
                     continue
-            if self.trang_thai in (AgentState.OFFLINE, AgentState.LOW_BATTERY):
-                await self.bo_dinh_tuyen.gui_log_ra_web(
-                    "WARN", f"[{self.ma_dinh_danh}] Hủy nhiệm vụ do pin chạm ngưỡng RTB an toàn."
-                )
+            if self.trang_thai in (AgentState.OFFLINE, AgentState.LOW_BATTERY) or self.phan_tram_pin <= 5.0:
+                await self._bao_huy_nhiem_vu(su_co, "Pin sập hoặc UAV chuyển OFFLINE")
                 return
             await self._dau_gia_va_truyen(su_co)
             self._bat_dau_tuan_tra_vung_su_co(su_co)

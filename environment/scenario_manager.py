@@ -44,8 +44,8 @@ class ScenarioManager:
         return zones
 
     def _kich_ban_can_tai_sinh(self) -> bool:
-        """Nhận diện bộ CSV cũ hoặc thiếu tuyến của đội UAV 21 chiếc."""
-        expected_uavs = {f"MÁY_BAY_UAV_{index:02d}" for index in range(1, 22)}
+        """Nhận diện bộ CSV cũ hoặc thiếu tuyến của đội UAV 28 chiếc (21 tuần tra + 7 dự phòng)."""
+        expected_uavs = {f"MÁY_BAY_UAV_{index:02d}" for index in range(1, 29)}
         if not os.path.exists(self.nodes_csv_path) or not os.path.exists(self.waypoints_csv_path):
             return True
 
@@ -61,7 +61,8 @@ class ScenarioManager:
         ]
         if uavs != expected_uavs or len(stations) != 1:
             return True
-        battery_ranges = ((95.0, 100.0), (60.0, 70.0), (30.0, 35.0))
+
+        battery_ranges = ((95.0, 100.0), (70.0, 85.0), (50.0, 65.0))
         for row in nodes:
             if row["loai_tac_nhan"] != "MÁY_BAY":
                 continue
@@ -70,12 +71,17 @@ class ScenarioManager:
                 battery = float(row.get("pin_khoi_tao_pct", ""))
             except ValueError:
                 return True
-            battery_min, battery_max = battery_ranges[uav_index % 3]
-            if (
-                row.get("zone_id") != f"ZONE_{uav_index // 3 + 1:02d}"
-                or not (battery_min <= battery <= battery_max)
-            ):
-                return True
+            if uav_index < 21:
+                battery_min, battery_max = battery_ranges[uav_index % 3]
+                if (
+                    row.get("zone_id") != f"ZONE_{uav_index // 3 + 1:02d}"
+                    or not (battery_min <= battery <= battery_max)
+                ):
+                    return True
+            else:
+                reserve_zone_idx = uav_index - 21 + 1
+                if row.get("zone_id") != f"ZONE_{reserve_zone_idx:02d}" or battery < 95.0:
+                    return True
 
         waypoint_routes = {}
         with open(self.waypoints_csv_path, mode="r", encoding="utf-8") as file:
@@ -89,16 +95,17 @@ class ScenarioManager:
 
         for ma_uav, route in waypoint_routes.items():
             uav_index = int(ma_uav.rsplit("_", 1)[-1]) - 1
-            zone = self.patrol_zones["features"][uav_index // 3]
-            if any(
-                not self._diem_nam_trong_vung(
-                    float(point["vi_do"]),
-                    float(point["kinh_do"]),
-                    zone
-                )
-                for point in route
-            ):
-                return True
+            if uav_index < 21:
+                zone = self.patrol_zones["features"][uav_index // 3]
+                if any(
+                    not self._diem_nam_trong_vung(
+                        float(point["vi_do"]),
+                        float(point["kinh_do"]),
+                        zone
+                    )
+                    for point in route
+                ):
+                    return True
         return False
 
     @staticmethod
@@ -409,7 +416,10 @@ class ScenarioManager:
             ]
             uav_theo_vung = {}
             for index, uav in enumerate(cac_uav):
-                ma_vung = f"ZONE_{index // 3 + 1:02d}"
+                if index < 21:
+                    ma_vung = f"ZONE_{index // 3 + 1:02d}"
+                else:
+                    ma_vung = f"ZONE_{index - 21 + 1:02d}"
                 uav_theo_vung.setdefault(ma_vung, []).append(uav["ma_dinh_danh"])
             return {
                 "thuat_toan": "Phân cụm tuần tra cố định theo ranh giới Sơn Trà",
@@ -559,8 +569,8 @@ class ScenarioManager:
         return 6371000.0 * 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
 
     def _sinh_du_lieu_csv_mac_dinh(self):
-        """Sinh một trạm và 21 UAV phân bổ ba chiếc trong mỗi vùng rừng."""
-        print("[SCENARIO] Đang khởi tạo 21 UAV theo bảy vùng rừng Sơn Trà...")
+        """Sinh một trạm, 21 UAV tuần tra ba chiếc/vùng (3 vòng Bắc-Trung-Nam riêng biệt) và 7 UAV dự phòng tại trạm."""
+        print("[SCENARIO] Đang khởi tạo 28 UAV (21 tuần tra 3 dải + 7 dự phòng tại trạm)...")
         nodes_mac_dinh = [{
             "ma_dinh_danh": "TRẠM_KIỂM_LÂM_SƠN_TRÀ",
             "loai_tac_nhan": "TRẠM_MẶT_ĐẤT",
@@ -573,22 +583,32 @@ class ScenarioManager:
             "bang_thong_hz": 50000000.0,
         }]
         tat_ca_wp = []
+        battery_ranges = ((95, 100), (75, 85), (55, 65))
+
         for zone_index, zone in enumerate(self.patrol_zones["features"]):
-            longitude, latitude = zone["properties"]["patrol_center"]
-            radius = float(zone["properties"]["patrol_radius_m"])
-            for phase_index in range(3):
-                phase = phase_index * (2.0 * math.pi / 3.0)
-                uav_index = zone_index * 3 + phase_index + 1
-                altitude = 1000.0 + phase_index * 200.0
+            zid = zone["properties"]["zone_id"]
+            subcenters = zone["properties"].get("patrol_subcenters")
+            c_lon, c_lat = zone["properties"]["patrol_center"]
+            default_r = float(zone["properties"].get("patrol_radius_m", 400.0))
+
+            for sub_index in range(3):
+                uav_index = zone_index * 3 + sub_index + 1
+                altitude = 1000.0 + sub_index * 150.0
                 ma_uav = f"MÁY_BAY_UAV_{uav_index:02d}"
+
+                if subcenters and len(subcenters) > sub_index:
+                    s_lat, s_lon, s_rad = subcenters[sub_index]
+                else:
+                    s_lat, s_lon, s_rad = c_lat, c_lon, default_r
+
                 waypoints = self.sinh_quy_dao_tuan_tra_vong_tron(
-                    latitude,
-                    longitude,
+                    s_lat,
+                    s_lon,
                     altitude,
-                    ban_kinh_m=radius,
+                    ban_kinh_m=s_rad,
                     so_diem_da_giac=6,
                     van_toc_m_s=40.0,
-                    lech_pha_rad=phase,
+                    lech_pha_rad=0.0,
                 )
                 nodes_mac_dinh.append({
                     "ma_dinh_danh": ma_uav,
@@ -597,8 +617,8 @@ class ScenarioManager:
                     "kinh_do": waypoints[0]["kinh_do"],
                     "do_cao": altitude,
                     "pin_max_joule": 50000.0,
-                    "pin_khoi_tao_pct": random.randint(*((95, 100), (60, 70), (30, 35))[phase_index]),
-                    "zone_id": zone["properties"]["zone_id"],
+                    "pin_khoi_tao_pct": random.randint(*battery_ranges[sub_index]),
+                    "zone_id": zid,
                     "cong_suat_dbm": 35.0,
                     "tan_so_hz": 2400000000.0,
                     "bang_thong_hz": 20000000.0,
@@ -606,6 +626,35 @@ class ScenarioManager:
                 tat_ca_wp.extend(
                     {"ma_uav": ma_uav, **waypoint} for waypoint in waypoints
                 )
+
+        # 7 UAV dự phòng đỗ sẵn tại TRẠM_KIỂM_LÂM_SƠN_TRÀ, mỗi chiếc phụ trách 1 phân khu
+        for zone_index, zone in enumerate(self.patrol_zones["features"]):
+            reserve_idx = 21 + zone_index + 1
+            ma_uav = f"MÁY_BAY_UAV_{reserve_idx:02d}"
+            zid = zone["properties"]["zone_id"]
+            nodes_mac_dinh.append({
+                "ma_dinh_danh": ma_uav,
+                "loai_tac_nhan": "MÁY_BAY",
+                "vi_do": 16.105,
+                "kinh_do": 108.250,
+                "do_cao": 25.0,
+                "pin_max_joule": 50000.0,
+                "pin_khoi_tao_pct": 100,
+                "zone_id": zid,
+                "cong_suat_dbm": 35.0,
+                "tan_so_hz": 2400000000.0,
+                "bang_thong_hz": 20000000.0,
+            })
+            # 6 waypoint tạm tại trạm, khi cất cánh thay ca sẽ nhận lộ trình tuần tra
+            for pt_idx in range(6):
+                tat_ca_wp.append({
+                    "ma_uav": ma_uav,
+                    "thu_tu_diem": pt_idx + 1,
+                    "vi_do": 16.105,
+                    "kinh_do": 108.250,
+                    "do_cao": 25.0,
+                    "van_toc_m_s": 0.0,
+                })
 
         with open(self.waypoints_csv_path, mode="w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=["ma_uav", "thu_tu_diem", "vi_do", "kinh_do", "do_cao", "van_toc_m_s"])

@@ -35,6 +35,8 @@ class SimulationLoop:
         self.broker: Any = MessageBroker(physics_engine=self.physics, scenario_manager=self.scenario)
         self.ground_station_server: Any = GroundStationServer(self.broker)
         setattr(self.broker, "ground_station_server", self.ground_station_server)
+        setattr(self.broker, "simulation_loop", self)
+        self._active_fire_missions: Dict[str, dict] = {}
         self.uav_ws_server_url = uav_ws_server_url
 
         self._cac_tac_vu_nen: List[asyncio.Task] = []
@@ -161,6 +163,14 @@ class SimulationLoop:
                 for agent in self.broker.danh_sach_tac_nhan.values()
             ]
             await asyncio.gather(*cac_tac_vu_vat_ly)
+
+            # Watchdog kiểm tra các nhiệm vụ cháy: nếu UAV trúng thầu gặp nạn/OFFLINE thì kích hoạt tái đấu thầu ngay
+            for ma_phien, mission in list(self._active_fire_missions.items()):
+                wid = mission.get("winner_id")
+                w_agent = self.broker.danh_sach_tac_nhan.get(wid)
+                if w_agent and (w_agent.trang_thai == AgentState.OFFLINE or w_agent.phan_tram_pin <= 5.0):
+                    if wid not in mission.get("failed_uavs", set()):
+                        asyncio.create_task(self.xu_ly_uav_gap_su_co_nhiem_vu(ma_phien, wid, "UAV sập nguồn/OFFLINE"))
 
             self._thoi_gian_tich_luy_kiem_tra_lien_lac += dt_mo_phong
             if self._thoi_gian_tich_luy_kiem_tra_lien_lac >= 5.0:
@@ -313,6 +323,33 @@ class SimulationLoop:
                 self._ban_giao_vung_uav[chu_vung.ma_dinh_danh] = uav_da_nhan.ma_dinh_danh
                 continue
 
+            # 1. Ưu tiên điều động UAV dự bị của phân khu đang đỗ tại trạm (pin >= 90%)
+            u_reserve = next(
+                (
+                    u for u in cac_uav
+                    if u.ma_dinh_danh != chu_vung.ma_dinh_danh
+                    and getattr(u, "zone_id", None) == getattr(chu_vung, "zone_id", None)
+                    and u._dang_o_tai_tram()
+                    and u.phan_tram_pin >= 90.0
+                ),
+                None
+            )
+            if u_reserve:
+                waypoints = getattr(chu_vung, "waypoints_goc", None) or chu_vung.waypoints
+                u_reserve.waypoints_goc = list(waypoints)
+                u_reserve.waypoints = list(waypoints)
+                u_reserve.waypoint_index = 0
+                u_reserve.toa_do_tram_sac = None
+                u_reserve.chuyen_trang_thai(AgentState.PATROLLING)
+                self._ban_giao_vung_uav[chu_vung.ma_dinh_danh] = u_reserve.ma_dinh_danh
+                await self.broker.gui_log_ra_web(
+                    "INFO",
+                    f"🔄 [LUÂN PHIÊN TAG-TEAM] Điều động UAV dự phòng {u_reserve.ma_dinh_danh} (Pin {u_reserve.phan_tram_pin:.0f}%) "
+                    f"từ trạm ra thay thế {chu_vung.ma_dinh_danh} tại phân khu {chu_vung.zone_id}."
+                )
+                continue
+
+            # 2. Nếu trạm chưa kịp sạc xong UAV dự phòng, bàn giao tạm thời cho UAV tuần tra cùng phân khu
             cac_ung_vien = [
                 uav for uav in cac_uav
                 if uav.ma_dinh_danh != chu_vung.ma_dinh_danh
@@ -340,6 +377,60 @@ class SimulationLoop:
                 "WARN",
                 f"[LỊCH UAV] {uav_nhan.ma_dinh_danh} tạm nhận tuyến tuần tra của "
                 f"{chu_vung.ma_dinh_danh} trong lúc UAV quay về sạc."
+            )
+
+    async def xu_ly_uav_gap_su_co_nhiem_vu(self, ma_phien: str, uav_id: str, ly_do: str):
+        """Kích hoạt cơ chế tự động tái đấu giá (Re-auction) khi UAV đang xử lý cháy gặp sự cố / hết pin."""
+        if ma_phien not in self._active_fire_missions:
+            return
+        mission = self._active_fire_missions[ma_phien]
+        if mission.get("retry_count", 0) >= 3:
+            await self.broker.gui_log_ra_web(
+                "WARN", f"🚨 [SỰ CỐ CHÁY] Đám cháy #{ma_phien[:8]} tại ({mission['vi_do']:.4f}, {mission['kinh_do']:.4f}) không thể xử lý sau 3 lần tái điều động!"
+            )
+            return
+
+        mission["retry_count"] += 1
+        mission.setdefault("failed_uavs", set()).add(uav_id)
+        await self.broker.gui_log_ra_web(
+            "WARN",
+            f"⚠️ [SỰ CỐ NHIỆM VỤ] Tác tử {uav_id} gặp sự cố ({ly_do}). "
+            f"Kích hoạt tái đấu thầu tự động (Lần {mission['retry_count']}/3)..."
+        )
+
+        thong_diep_cfp = {
+            "loai_tin": "CFP_FIRE_EVENT",
+            "ma_phien_dau_gia": ma_phien,
+            "loai_su_co": mission["loai_su_co"],
+            "vi_do": mission["vi_do"],
+            "kinh_do": mission["kinh_do"],
+            "zone_id": mission["zone_id"],
+            "thoi_diem_khoi_tao": time.time(),
+            "nguoi_gui": "TRẠM_KIỂM_LÂM_SƠN_TRÀ"
+        }
+
+        for tac_nhan in self.broker.danh_sach_tac_nhan.values():
+            if tac_nhan.loai_tac_nhan == "MÁY_BAY" and tac_nhan.ma_dinh_danh not in mission["failed_uavs"]:
+                t_state = getattr(tac_nhan, "uav_state", None) or tac_nhan.trang_thai
+                t_name = getattr(t_state, "name", str(t_state))
+                if t_name in ("PATROLLING", "STANDBY", "IDLE", "RELAYING"):
+                    tac_vu = getattr(tac_nhan, "_tac_vu_su_co", None)
+                    if tac_vu is None or tac_vu.done():
+                        await tac_nhan.hang_doi_thong_diep.put(thong_diep_cfp.copy())
+                        if hasattr(tac_nhan, "xu_ly_thong_diep"):
+                            await tac_nhan.xu_ly_thong_diep(thong_diep_cfp.copy())
+
+        ket_qua = await self.ground_station_server.mo_phien_dau_gia_chay_rung(
+            ma_phien=ma_phien,
+            thong_diep_cfp=thong_diep_cfp,
+            thoi_gian_cho_s=0.6,
+            exclude_uavs=mission["failed_uavs"]
+        )
+        if ket_qua and (ket_qua.get("winner_id") or ket_qua.get("uav_id")):
+            new_wid = ket_qua.get("winner_id") or ket_qua.get("uav_id")
+            mission["winner_id"] = new_wid
+            await self.broker.gui_log_ra_web(
+                "WIN", f"🔄 [TÁI ĐẤU GIÁ THÀNH CÔNG] Đã bàn giao đám cháy #{ma_phien[:8]} cho tác tử ứng cứu [{new_wid}]!"
             )
 
     def _thong_tin_uav_gan_nhat(self, vi_do: float, kinh_do: float) -> dict:
@@ -386,12 +477,21 @@ class SimulationLoop:
         - Trao hợp đồng ACCEPT_PROPOSAL cho UAV có chi phí đa mục tiêu thấp nhất.
         """
         ma_phien = str(uuid.uuid4())
+        fire_zone_id = None
+        scenario = getattr(self, "scenario", None)
+        if scenario and hasattr(scenario, "patrol_zones") and isinstance(scenario.patrol_zones, dict):
+            for feat in scenario.patrol_zones.get("features", []):
+                if hasattr(scenario, "_diem_nam_trong_vung") and scenario._diem_nam_trong_vung(float(vi_do), float(kinh_do), feat):
+                    fire_zone_id = feat.get("properties", {}).get("zone_id")
+                    break
+
         thong_diep_cfp = {
             "loai_tin": "CFP_FIRE_EVENT",
             "ma_phien_dau_gia": ma_phien,
             "loai_su_co": loai_su_co,
             "vi_do": float(vi_do),
             "kinh_do": float(kinh_do),
+            "zone_id": fire_zone_id,
             "thoi_diem_khoi_tao": time.time(),
             "nguoi_gui": "TRẠM_KIỂM_LÂM_SƠN_TRÀ"
         }
@@ -468,7 +568,21 @@ class SimulationLoop:
                 **thong_tin_uav
             }
 
-        winner_id = ket_qua_dau_gia["uav_id"]
+        winner_id = ket_qua_dau_gia.get("uav_id") or ket_qua_dau_gia.get("winner_id")
+        if winner_id:
+            if not hasattr(self, "_active_fire_missions"):
+                self._active_fire_missions = {}
+            self._active_fire_missions[ma_phien] = {
+                "ma_phien": ma_phien,
+                "loai_su_co": loai_su_co,
+                "vi_do": float(vi_do),
+                "kinh_do": float(kinh_do),
+                "zone_id": fire_zone_id,
+                "winner_id": winner_id,
+                "retry_count": 0,
+                "failed_uavs": set(),
+                "status": "RESPONDING"
+            }
         khoang_cach_km = round(ket_qua_dau_gia.get("khoang_cach_m", 0.0) / 1000.0, 2)
         chi_phi = ket_qua_dau_gia.get("chi_phi", 0.0)
         self._so_nhiem_vu_dieu_phoi += 1
