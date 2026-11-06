@@ -378,6 +378,51 @@ class MessageBroker:
         if cac_tac_vu:
             await asyncio.gather(*cac_tac_vu)
 
+    async def gui_goi_tin_da_chang_ve_tram(self, ma_nguon: str, thong_diep: dict) -> bool:
+        """
+        Định tuyến và truyền gói tin đa chặng (Multi-hop E2E) từ UAV nguồn về Trạm mặt đất:
+        - Tìm lộ trình tối ưu qua Dijkstra (A2G trực tiếp, FANET Relay hoặc Vệ tinh LEO).
+        - Phát từng chặng qua `gui_don_huong` để kích hoạt hiệu ứng tia `RF_LINK` và thống kê QoS.
+        - Phát sự kiện `E2E_ROUTE_COMPLETED` khi gói tin tới Trạm mặt đất.
+        """
+        kich_thuoc_kb = float(thong_diep.get("kich_thuoc_kb", 12.0))
+        loai_tin = thong_diep.get("loai_tin") or thong_diep.get("loai_thong_diep") or "TELEMETRY_REPORT"
+        tuyen = self.tim_tuyen_den_tram_mat_dat(ma_nguon, kich_thuoc_kb=kich_thuoc_kb)
+        if not tuyen or len(tuyen.get("nodes", [])) < 2:
+            return False
+
+        nodes = list(tuyen["nodes"])
+        channels = list(tuyen.get("channels", []))
+        for idx in range(len(nodes) - 1):
+            hop_msg = {
+                **thong_diep,
+                "loai_tin": loai_tin,
+                "kich_thuoc_kb": kich_thuoc_kb,
+                "lo_trinh_di_qua": nodes[: idx + 2],
+            }
+            ok = await self.gui_don_huong(nodes[idx], nodes[idx + 1], hop_msg)
+            if not ok:
+                return False
+
+        last_ch = channels[-1] if channels else {}
+        tong_tre_ms = round(float(tuyen.get("delay_ms", 0.0)), 2)
+        ket_qua_e2e = {
+            "ma_phien": thong_diep.get("ma_phien_dau_gia", "TELEM"),
+            "loai_su_co": loai_tin,
+            "lo_trinh": nodes,
+            "lo_trinh_hop": nodes,
+            "so_chang_hop": len(nodes) - 1,
+            "e2e_delay_ms": tong_tre_ms,
+            "tong_do_tre_ms": tong_tre_ms,
+            "snr_chang_cuoi_db": last_ch.get("snr_db", 0.0),
+            "dung_luong_chang_cuoi_mbps": last_ch.get("dung_luong_mbps", 0.0),
+            "nang_luong_du_kien_joule": round(float(tuyen.get("energy_j", 0.0)), 3),
+            "thoi_gian": time.strftime("%H:%M:%S"),
+            "trang_thai_phu_song": "KET_NOI",
+        }
+        await self.phat_su_kien_ra_web("E2E_ROUTE_COMPLETED", ket_qua_e2e)
+        return True
+
     # =========================================================================
     # 2. QUẢN LÝ KẾT NỐI WEBSOCKET & ĐỒNG BỘ GIAO DIỆN
     # =========================================================================

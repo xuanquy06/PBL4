@@ -246,6 +246,33 @@ class SimulationLoop:
         self.broker.thong_ke_toan_mang["nang_luong_tieu_hao_joule"] = tong_nang_luong
         self.scenario.ghi_log_lien_lac_lien_tuc(self._chi_so_lien_lac)
 
+        # Phát gói tin Telemetry đa chặng luân phiên từ các UAV (ưu tiên UAV đa chặng FANET/LEO) để trực quan hóa tia truyền gói tin E2E
+        uav_ung_vien = [
+            u for u in cac_uav
+            if u.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY, AgentState.CHARGING)
+            and getattr(u, "current_link", "") in ("FANET_RELAY", "LEO_SATELLITE")
+        ] or [
+            u for u in cac_uav
+            if u.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY, AgentState.CHARGING)
+        ]
+        if uav_ung_vien:
+            idx_chon = (self.so_buoc_thoi_gian // 5) % len(uav_ung_vien)
+            uav_phat = uav_ung_vien[idx_chon]
+            asyncio.create_task(
+                self.broker.gui_goi_tin_da_chang_ve_tram(
+                    ma_nguon=uav_phat.ma_dinh_danh,
+                    thong_diep={
+                        "loai_thong_diep": "TELEMETRY_REPORT",
+                        "kich_thuoc_kb": 12.0,
+                        "noi_dung": {
+                            "zone_id": getattr(uav_phat, "zone_id", None),
+                            "pin_pct": round(uav_phat.phan_tram_pin, 1),
+                            "trang_thai": uav_phat.trang_thai.value,
+                        },
+                    },
+                )
+            )
+
     async def _lap_lich_ban_giao_vung(self, cac_uav: list):
         """Đồng bộ trạng thái bàn giao vùng giữa các UAV trong cùng phân khu."""
         by_id = {uav.ma_dinh_danh: uav for uav in cac_uav}

@@ -269,6 +269,7 @@
             <!-- Top-left: Fire & Fault controls -->
             <div class="map-float float-top-left">
                 <button id="btnFireMode" class="btn btn-danger" onclick="toggleFireMode()">🔥 Báo cháy</button>
+                <button id="btnClearFire" class="btn" style="display:none;" onclick="clearFires()" title="Xoá các điểm báo cháy trên bản đồ">🧹 Xoá cháy</button>
                 <span style="color:var(--border-color)">|</span>
                 <select id="faultUavSelect" class="select-sm"></select>
                 <button class="btn btn-danger" onclick="injectBattery(0)" title="Sập nguồn 0%">Sập</button>
@@ -276,7 +277,7 @@
                 <button class="btn btn-ok" onclick="injectBattery(100)" title="Sạc đầy 100%">Sạc</button>
             </div>
 
-            <!-- Top-right: Base map & Granular Layer toggles -->
+            <!-- Top-right: Base map & Granular Layer toggles with integrated legend -->
             <div class="map-float layer-panel">
                 <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
                     <span style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;">🎛️ Lớp hiển thị</span>
@@ -287,14 +288,18 @@
                     </select>
                 </div>
                 <div class="layer-grid">
-                    <label class="chk-label"><input type="checkbox" id="chkZones" checked onchange="toggleLayers()"> 7 Vùng (Z1–Z7)</label>
-                    <label class="chk-label"><input type="checkbox" id="chkFanet" checked onchange="toggleLayers()"> Tia FANET</label>
-                    <label class="chk-label"><input type="checkbox" id="chkLeo" checked onchange="toggleLayers()"> Tia Vệ tinh</label>
-                    <label class="chk-label"><input type="checkbox" id="chkE2E" checked onchange="toggleLayers()"> Tuyến E2E</label>
-                    <label class="chk-label"><input type="checkbox" id="chkA2G" onchange="toggleLayers()"> Tia A2G</label>
-                    <label class="chk-label"><input type="checkbox" id="chkRoutes" onchange="toggleLayers()"> Quỹ đạo</label>
-                    <label class="chk-label"><input type="checkbox" id="chkLabels" checked onchange="toggleLabels()"> Nhãn tên</label>
-                    <button class="btn" style="padding:2px 6px;font-size:10px;" onclick="setAllLinkLayers(false)" title="Tắt hết các tia để nhìn rõ vùng">Tắt tia</button>
+                    <label class="chk-label"><input type="checkbox" id="chkZones" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#4ade80"></i>7 Vùng (Z1–Z7)</label>
+                    <label class="chk-label"><input type="checkbox" id="chkRfPackets" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#f43f5e"></i>Tia Gói tin (RF)</label>
+                    <label class="chk-label"><input type="checkbox" id="chkFanet" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#f59e0b"></i>Tia FANET</label>
+                    <label class="chk-label"><input type="checkbox" id="chkA2G" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#22c55e"></i>Tia A2G</label>
+                    <label class="chk-label"><input type="checkbox" id="chkLeo" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#a855f7"></i>Tia Vệ tinh</label>
+                    <label class="chk-label"><input type="checkbox" id="chkE2E" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#38bdf8"></i>Tuyến E2E</label>
+                    <label class="chk-label"><input type="checkbox" id="chkRoutes" onchange="toggleLayers()"><i class="legend-dot" style="background:#93c5fd"></i>Quỹ đạo</label>
+                    <label class="chk-label"><input type="checkbox" id="chkLabels" checked onchange="toggleLabels()">Nhãn tên</label>
+                </div>
+                <div style="display:flex;gap:4px;padding-top:2px;">
+                    <button class="btn" style="flex:1;padding:2px 6px;font-size:10px;" onclick="setAllLinkLayers(true)">Bật hết tia</button>
+                    <button class="btn" style="flex:1;padding:2px 6px;font-size:10px;" onclick="setAllLinkLayers(false)">Tắt hết tia</button>
                 </div>
                 <div id="focusNodeBar" style="display:none;justify-content:space-between;align-items:center;background:rgba(56,189,248,0.14);border:1px solid var(--accent-blue);border-radius:4px;padding:3px 6px;font-size:10px;">
                     <span id="focusNodeText">🎯 Lọc: UAV_01</span>
@@ -304,16 +309,8 @@
 
             <!-- Bottom-left: Compact 7-zone badges -->
             <div class="map-float float-bottom-left">
-                <div style="font-size:10px;color:var(--text-muted);font-weight:700;">PHỦ SÓNG 7 PHÂN KHU (BẤM ĐỂ ZOOM)</div>
+                <div style="font-size:10px;color:var(--text-muted);font-weight:700;">7 PHÂN KHU (BẤM ĐỂ ZOOM)</div>
                 <div id="zoneStrip" class="zone-strip"></div>
-            </div>
-
-            <!-- Bottom-right: Link Legend -->
-            <div class="map-float float-bottom-right">
-                <span><i class="legend-dot" style="background:#22c55e"></i>A2G</span>
-                <span><i class="legend-dot" style="background:#f59e0b"></i>FANET</span>
-                <span><i class="legend-dot" style="background:#a855f7"></i>LEO</span>
-                <span><i class="legend-dot" style="background:#06b6d4"></i>S2G/ISL</span>
             </div>
         </div>
 
@@ -393,10 +390,11 @@
 
         const zoneLayer = L.layerGroup().addTo(map);
         const patrolLayer = L.layerGroup(); // Mặc định ẩn quỹ đạo để tránh rối mắt
-        const a2gLinkLayer = L.layerGroup(); // Mặc định ẩn tia A2G (có thể bật bằng 1 click)
+        const a2gLinkLayer = L.layerGroup().addTo(map);
         const fanetLinkLayer = L.layerGroup().addTo(map);
         const leoLinkLayer = L.layerGroup().addTo(map);
         const e2eLayer = L.layerGroup().addTo(map);
+        const rfPacketLayer = L.layerGroup().addTo(map); // Lớp hiển thị tia truyền gói tin tức thời (RF_LINK)
         const focusLayer = L.layerGroup().addTo(map);
         const fireLayer = L.layerGroup().addTo(map);
         const nodeLayer = L.layerGroup().addTo(map);
@@ -423,6 +421,7 @@
 
         function toggleLayers() {
             syncLayer('chkZones', zoneLayer);
+            syncLayer('chkRfPackets', rfPacketLayer);
             syncLayer('chkA2G', a2gLinkLayer);
             syncLayer('chkFanet', fanetLinkLayer);
             syncLayer('chkLeo', leoLinkLayer);
@@ -431,7 +430,7 @@
         }
 
         function setAllLinkLayers(enable) {
-            ['chkA2G', 'chkFanet', 'chkLeo', 'chkE2E', 'chkRoutes'].forEach(id => {
+            ['chkRfPackets', 'chkA2G', 'chkFanet', 'chkLeo', 'chkE2E', 'chkRoutes'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.checked = enable;
             });
@@ -742,11 +741,62 @@
             btn.textContent = fireMode ? '🎯 Click lên bản đồ...' : '🔥 Báo cháy';
         }
 
+        function clearFires() {
+            fireLayer.clearLayers();
+            document.getElementById('btnClearFire').style.display = 'none';
+        }
+
+        function drawRfPacketRay(data) {
+            if (!data || !data.toa_do_dau || !data.toa_do_cuoi) return;
+            if (!document.getElementById('chkRfPackets').checked) return;
+            const p1 = [data.toa_do_dau.vi_do, data.toa_do_dau.kinh_do];
+            const p2 = [data.toa_do_cuoi.vi_do, data.toa_do_cuoi.kinh_do];
+            const kind = data.loai_tin || 'DATA';
+
+            let color = '#38bdf8';
+            if (kind.includes('FIRE') || kind.includes('CFP')) color = '#f43f5e';
+            else if (kind.includes('PROPOSE') || kind.includes('ACCEPT')) color = '#10b981';
+            else if (kind.includes('RETURN') || kind.includes('HANDOVER')) color = '#f59e0b';
+
+            const shortKind = kind
+                .replace('CFP_FIRE_ALERT', 'CFP')
+                .replace('PROPOSE_BID', 'BID')
+                .replace('ACCEPT_PROPOSAL', 'AWARD')
+                .replace('REJECT_PROPOSAL', 'REJECT')
+                .replace('TELEMETRY_REPORT', 'TELEM')
+                .replace('EMERGENCY_RETURN', 'RTB');
+
+            const line = L.polyline([p1, p2], {
+                color: color,
+                weight: 3.0,
+                opacity: 0.92,
+                dashArray: '6, 4'
+            }).addTo(rfPacketLayer);
+
+            const mid = [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2];
+            const badge = L.marker(mid, {
+                interactive: false,
+                zIndexOffset: 800,
+                icon: L.divIcon({
+                    className: '',
+                    html: `<div style="background:rgba(9,13,22,0.92);border:1px solid ${color};color:${color};font-size:9px;font-weight:800;padding:1px 4px;border-radius:3px;white-space:nowrap;box-shadow:0 0 8px ${color};">⚡ ${shortKind}</div>`,
+                    iconSize: [46, 16],
+                    iconAnchor: [23, 8]
+                })
+            }).addTo(rfPacketLayer);
+
+            setTimeout(() => {
+                rfPacketLayer.removeLayer(line);
+                rfPacketLayer.removeLayer(badge);
+            }, 1100);
+        }
+
         map.on('click', async (e) => {
             if (!fireMode) return;
             toggleFireMode();
             const { lat, lng } = e.latlng;
             L.marker([lat, lng], { icon: L.divIcon({ className: '', html: '<div class="fire-pulse"></div>', iconSize: [20, 20], iconAnchor: [10, 10] }) }).addTo(fireLayer);
+            document.getElementById('btnClearFire').style.display = 'inline-block';
             try {
                 const res = await fetch('/api/su-co', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -809,6 +859,8 @@
                     updateKpis(msg.data.network_metrics, msg.data.connectivity_metrics);
                     if (msg.data.last_auction) renderCnpMini(msg.data.last_auction);
                     if (msg.data.last_e2e_route) renderE2EMini(msg.data.last_e2e_route);
+                } else if (msg.type === 'RF_LINK') {
+                    drawRfPacketRay(msg.data);
                 } else if (msg.type === 'CNP_AUCTION_RESULT') {
                     renderCnpMini(msg.data);
                 } else if (msg.type === 'E2E_ROUTE_COMPLETED') {
