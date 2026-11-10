@@ -58,6 +58,9 @@ class UAVAgent(BaseAgent):
         self._den_muc_tieu: Optional[asyncio.Event] = None
         self._tac_vu_su_co: Optional[asyncio.Task] = None
         self._yeu_cau_ban_giao_da_phat = False
+        self._waiting_for_relief_id: Optional[str] = None
+        self._relieving_target_id: Optional[str] = None
+        self._da_ban_giao_tai_cho = False
         self.uav_state = UAVState.STANDBY
         self.current_link = "LEO_SATELLITE"
         self.direct_los = False
@@ -155,21 +158,67 @@ class UAVAgent(BaseAgent):
         if self.trang_thai == AgentState.CHARGING or (
             self.uav_state == UAVState.STANDBY and self._dang_o_tai_tram()
         ):
+            was_charging = self.trang_thai == AgentState.CHARGING
             self.pin_hien_tai = min(self.pin_toi_da, self.pin_hien_tai + 300.0 * dt_giay)
-            if self.pin_hien_tai >= self.pin_toi_da:
+            if self.pin_hien_tai >= self.pin_toi_da and was_charging:
                 self._yeu_cau_ban_giao_da_phat = False
-                self._khoi_phuc_quy_dao_tuan_tra_goc()
-                self.chuyen_trang_thai(AgentState.PATROLLING)
-                await self._phat_thong_bao_khoi_phuc_vung()
-                await self.bo_dinh_tuyen.gui_log_ra_web(
-                    "INFO", f"[{self.ma_dinh_danh}] Sạc đầy pin 100%, khôi phục tuần tra phân khu {self.zone_id or ''}."
-                )
+                self._waiting_for_relief_id = None
+                self._relieving_target_id = None
+                self._da_ban_giao_tai_cho = False
+                uavs_active_in_zone = [
+                    u for u in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()
+                    if u.loai_tac_nhan == "MÁY_BAY"
+                    and u.ma_dinh_danh != self.ma_dinh_danh
+                    and self.zone_id
+                    and getattr(u, "zone_id", None) == self.zone_id
+                    and not u._dang_o_tai_tram()
+                    and u.trang_thai in (AgentState.PATROLLING, AgentState.RELAYING, AgentState.BIDDING)
+                ]
+                if self.zone_id and len(uavs_active_in_zone) >= 3:
+                    # Phân khu đã có đủ 3 UAV tuần tra (nhờ UAV dự bị thay ca), ở lại trạm làm UAV dự bị mới
+                    self.toa_do_tram_sac = None
+                    self.chuyen_trang_thai(AgentState.IDLE)
+                    self.uav_state = UAVState.STANDBY
+                    await self.bo_dinh_tuyen.gui_log_ra_web(
+                        "INFO",
+                        f"🔋 [{self.ma_dinh_danh}] Sạc đầy 100%, chuyển sang trực chiến DỰ BỊ tại Trạm cho {self.zone_id}."
+                    )
+                else:
+                    self._khoi_phuc_quy_dao_tuan_tra_goc()
+                    self.chuyen_trang_thai(AgentState.PATROLLING)
+                    await self._phat_thong_bao_khoi_phuc_vung()
+                    await self.bo_dinh_tuyen.gui_log_ra_web(
+                        "INFO", f"[{self.ma_dinh_danh}] Sạc đầy pin 100%, khôi phục tuần tra phân khu {self.zone_id or ''}."
+                    )
             return
-        if self.phan_tram_pin < LOW_BATTERY_THRESHOLD:
-            if self.uav_state != UAVState.RETURNING:
-                self.chuyen_trang_thai(AgentState.LOW_BATTERY_RTB)
-            if not self._yeu_cau_ban_giao_da_phat:
-                await self._phat_yeu_cau_ban_giao_vung()
+
+        # Kiểm tra xem UAV dự bị tiếp viện đã bay tới vùng chưa (In-Zone Hot-Swap)
+        if self._waiting_for_relief_id:
+            relief = self.bo_dinh_tuyen.danh_sach_tac_nhan.get(self._waiting_for_relief_id)
+            if not relief or relief.trang_thai == AgentState.OFFLINE:
+                self._waiting_for_relief_id = None
+            else:
+                dist_relief = self.bo_dinh_tuyen.physics.tinh_khoang_cach_3d(self.toa_do, relief.toa_do)
+                if not relief._dang_o_tai_tram() and dist_relief <= 450.0:
+                    relief._relieving_target_id = None
+                    self._waiting_for_relief_id = None
+                    self._da_ban_giao_tai_cho = True
+                    await self.bo_dinh_tuyen.gui_log_ra_web(
+                        "INFO",
+                        f"🤝 [BÀN GIAO TẠI CHỖ] {relief.ma_dinh_danh} đã tiếp cận {self.zone_id} "
+                        f"({dist_relief:.0f}m); {self.ma_dinh_danh} bắt đầu rời vùng về Trạm sạc."
+                    )
+
+        if self.phan_tram_pin < LOW_BATTERY_THRESHOLD and not self._waiting_for_relief_id:
+            # Nếu trong phân khu có UAV dự bị tại trạm và chưa bàn giao tại chỗ, ưu tiên gọi dự bị ra trước
+            if self.zone_id and not self._da_ban_giao_tai_cho and self._goi_uav_du_bi_thay_ca():
+                pass
+            else:
+                if self.uav_state != UAVState.RETURNING:
+                    self.chuyen_trang_thai(AgentState.LOW_BATTERY_RTB)
+                if not self._yeu_cau_ban_giao_da_phat:
+                    await self._phat_yeu_cau_ban_giao_vung()
+
         if self.trang_thai in (AgentState.LOW_BATTERY_RTB, AgentState.PATROLLING, AgentState.RELAYING) and (
             self.trang_thai == AgentState.LOW_BATTERY_RTB
             or not self._tac_vu_su_co
@@ -923,22 +972,82 @@ class UAVAgent(BaseAgent):
             self._tac_vu_su_co = None
 
     def _bat_dau_tuan_tra_vung_su_co(self, su_co: dict):
-        """Thiết lập 1 vòng quét (4 điểm) quanh đám cháy, sau đó tự động khôi phục về phân khu gốc."""
+        """Thiết lập 1 vòng quét nhỏ (~130m) sát quanh đám cháy, sau đó tự động khôi phục về phân khu gốc."""
         vi_do = float(su_co["vi_do"])
         kinh_do = float(su_co["kinh_do"])
         do_cao = float(self.toa_do["do_cao"])
-        delta_lat = 0.008
+        delta_lat = 0.0012
         delta_lon = delta_lat / max(0.2, abs(math.cos(math.radians(vi_do))))
         self.waypoints = [
-            {"vi_do": vi_do - delta_lat, "kinh_do": kinh_do - delta_lon, "do_cao": do_cao, "van_toc_m_s": 45.0},
-            {"vi_do": vi_do - delta_lat, "kinh_do": kinh_do + delta_lon, "do_cao": do_cao, "van_toc_m_s": 45.0},
-            {"vi_do": vi_do + delta_lat, "kinh_do": kinh_do + delta_lon, "do_cao": do_cao, "van_toc_m_s": 45.0},
-            {"vi_do": vi_do + delta_lat, "kinh_do": kinh_do - delta_lon, "do_cao": do_cao, "van_toc_m_s": 45.0}
+            {"vi_do": vi_do - delta_lat, "kinh_do": kinh_do - delta_lon, "do_cao": do_cao, "van_toc_m_s": 40.0},
+            {"vi_do": vi_do - delta_lat, "kinh_do": kinh_do + delta_lon, "do_cao": do_cao, "van_toc_m_s": 40.0},
+            {"vi_do": vi_do + delta_lat, "kinh_do": kinh_do + delta_lon, "do_cao": do_cao, "van_toc_m_s": 40.0},
+            {"vi_do": vi_do + delta_lat, "kinh_do": kinh_do - delta_lon, "do_cao": do_cao, "van_toc_m_s": 40.0}
         ]
         self.waypoint_index = 0
         self._so_diem_tuan_tra_su_co_con_lai = 4
 
+    def _goi_uav_du_bi_thay_ca(self) -> bool:
+        """
+        Gọi UAV dự bị của phân khu đang đỗ tại Trạm xuất kích ra vùng trước (Pre-Dispatch Hot-Swap).
+        Trả về True nếu đã có tiếp viện đang bay ra hoặc vừa điều động thành công.
+        """
+        if not self.zone_id or self._dang_o_tai_tram():
+            return False
+        if self._waiting_for_relief_id:
+            return True
+
+        uavs_cung_vung = [
+            u for u in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()
+            if u.loai_tac_nhan == "MÁY_BAY" and getattr(u, "zone_id", None) == self.zone_id
+        ]
+        if len(uavs_cung_vung) < 4:
+            return False
+
+        # Khóa luân phiên 1-by-1: nếu trong vùng đã có 1 chiếc đang chờ tiếp viện hoặc đang về sạc
+        dang_luan_phien = any(
+            u.ma_dinh_danh != self.ma_dinh_danh
+            and (
+                getattr(u, "_waiting_for_relief_id", None)
+                or getattr(u, "_relieving_target_id", None)
+                or u.trang_thai in (AgentState.RETURNING, AgentState.LOW_BATTERY_RTB, AgentState.CHARGING)
+            )
+            for u in uavs_cung_vung
+        )
+        if dang_luan_phien:
+            return True
+
+        u_reserve = next(
+            (
+                u for u in uavs_cung_vung
+                if u.ma_dinh_danh != self.ma_dinh_danh
+                and u._dang_o_tai_tram()
+                and u.trang_thai in (AgentState.IDLE, AgentState.PATROLLING)
+                and u.phan_tram_pin >= 80.0
+            ),
+            None
+        )
+        if not u_reserve:
+            return False
+
+        wps = [dict(wp) for wp in (self.waypoints_goc or self.waypoints)]
+        if not wps:
+            return False
+        for wp in wps:
+            wp["van_toc_m_s"] = max(45.0, float(wp.get("van_toc_m_s", 45.0)))
+        u_reserve.waypoints_goc = list(wps)
+        u_reserve.waypoints = list(wps)
+        u_reserve.waypoint_index = self.waypoint_index % len(wps)
+        u_reserve.toa_do_tram_sac = None
+        u_reserve._relieving_target_id = self.ma_dinh_danh
+        u_reserve._da_ban_giao_tai_cho = False
+        u_reserve.chuyen_trang_thai(AgentState.PATROLLING)
+        self._waiting_for_relief_id = u_reserve.ma_dinh_danh
+        return True
+
     async def _chon_tram_sac(self):
+        if self._dang_o_tai_tram():
+            return
         ung_vien = []
         for agent in self.bo_dinh_tuyen.danh_sach_tac_nhan.values():
             if agent.loai_tac_nhan != "TRẠM_MẶT_ĐẤT":
@@ -952,16 +1061,26 @@ class UAVAgent(BaseAgent):
         if not ung_vien:
             return
         distance, energy_to_base, tram = min(ung_vien, key=lambda item: item[0])
-        if self.trang_thai != AgentState.LOW_BATTERY_RTB:
-            nguong_quay_ve = max(
-                self.pin_toi_da * 0.4,
-                energy_to_base * 1.3 + 2500.0,
-                energy_to_base
-                + self.pin_toi_da * (self.nguong_pin_yeu_pct / 100.0)
-                + 1000.0
-            )
-            if self.pin_hien_tai > nguong_quay_ve:
+        nguong_quay_ve = max(
+            self.pin_toi_da * 0.4,
+            energy_to_base * 1.3 + 2500.0,
+            energy_to_base
+            + self.pin_toi_da * (self.nguong_pin_yeu_pct / 100.0)
+            + 1000.0
+        )
+        if self.trang_thai != AgentState.LOW_BATTERY_RTB and self.pin_hien_tai > nguong_quay_ve:
+            return
+
+        # Cơ chế In-Zone Hot-Swap cho phân khu 4 UAV:
+        # Người mới (UAV dự bị) bay tới vùng thì người cũ mới rời vùng về Trạm sạc.
+        if self.zone_id and not self._da_ban_giao_tai_cho:
+            if self._goi_uav_du_bi_thay_ca():
+                # Giữ mức năng lượng dự trữ an toàn trong lúc bay chờ UAV dự bị tới tiếp quản tại chỗ
+                san_pin_cho = max(energy_to_base * 1.35 + 2500.0, self.pin_toi_da * 0.26)
+                if self.pin_hien_tai < san_pin_cho:
+                    self.pin_hien_tai = san_pin_cho
                 return
+
         self.toa_do_tram_sac = {
             **tram.toa_do,
             "van_toc_m_s": max(20.0, float(self.toa_do.get("van_toc_m_s") or 45.0))
@@ -970,7 +1089,7 @@ class UAVAgent(BaseAgent):
             self.chuyen_trang_thai(AgentState.RETURNING)
         await self.bo_dinh_tuyen.gui_log_ra_web(
             "WARN",
-            f"[{self.ma_dinh_danh}] Pin {self.phan_tram_pin}%: quay về "
+            f"[{self.ma_dinh_danh}] Pin {self.phan_tram_pin:.1f}%: quay về "
             f"{tram.ma_dinh_danh} ({distance / 1000.0:.1f} km, "
             f"dự kiến {energy_to_base:.0f} J) để sạc."
         )

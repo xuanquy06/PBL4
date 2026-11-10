@@ -103,7 +103,10 @@ class MessageBroker:
                     or ke_tiep.trang_thai.value == "NGẮT_KẾT_NỐI"
                     or (
                         ke_tiep.loai_tac_nhan == "MÁY_BAY"
-                        and ke_tiep.trang_thai.value == "ĐANG_ĐẤU_GIÁ"
+                        and (
+                            ke_tiep.trang_thai.value in ("ĐANG_ĐẤU_GIÁ", "ĐANG_SẠC")
+                            or getattr(ke_tiep, "_dang_o_tai_tram", lambda: False)()
+                        )
                     )
                 ):
                     continue
@@ -500,9 +503,10 @@ class MessageBroker:
                 entry["uav_nhan_ban_giao"] += len(vung_phu)
 
         for z_id, entry in vung_stats.items():
+            nguong_du = min(3, entry["tong_uav"])
             if entry["uav_hoat_dong"] == 0:
                 entry["trang_thai"] = "MAT_PHU_SONG"
-            elif entry["uav_hoat_dong"] < entry["tong_uav"]:
+            elif entry["uav_hoat_dong"] < nguong_du:
                 entry["trang_thai"] = "BAN_GIAO_TAM_THOI"
             else:
                 entry["trang_thai"] = "DU_PHU_SONG"
