@@ -228,6 +228,21 @@
             box-shadow: 0 0 14px #ef4444; animation: pulse 1s infinite alternate;
         }
         @keyframes pulse { from { transform: scale(0.9); } to { transform: scale(1.25); } }
+
+        /* SMOOTH RADAR GLIDING FOR UAV MARKERS */
+        .leaflet-marker-pane > .smooth-uav-marker {
+            transition: transform 1.0s linear !important;
+            will-change: transform;
+        }
+        .map-zooming .leaflet-marker-pane > .smooth-uav-marker {
+            transition: none !important;
+        }
+        .uav-reserve-badge {
+            position: absolute; bottom: -5px; right: -5px;
+            background: #0284c7; color: #fff; font-size: 7px; font-weight: 800;
+            padding: 1px 3px; border-radius: 3px; border: 1px solid #38bdf8;
+            line-height: 1; letter-spacing: 0.2px; pointer-events: none;
+        }
     </style>
 </head>
 <body>
@@ -245,7 +260,7 @@
         </div>
 
         <div class="kpi-strip">
-            <div class="kpi-pill"><span>UAV:</span><strong id="kpiUav">0/21</strong></div>
+            <div class="kpi-pill"><span>UAV:</span><strong id="kpiUav">0/28</strong></div>
             <div class="kpi-pill"><span>7 Vùng:</span><strong id="kpiZones" style="color:var(--accent-green)">7/7</strong></div>
             <div class="kpi-pill"><span>A2G/FANET/LEO:</span><strong id="kpiLinks" style="color:var(--accent-blue)">0/0/0</strong></div>
             <div class="kpi-pill"><span>PDR:</span><strong id="kpiPdr">100%</strong></div>
@@ -342,9 +357,10 @@
             <div class="block-head" style="padding:10px 12px 0;margin:0;">
                 <span>Đội hình mạng (<span id="nodeCount">0</span>)</span>
             </div>
-            <div class="filter-bar">
+            <div class="filter-bar" style="grid-template-columns: repeat(5, 1fr);">
                 <button class="f-btn active" onclick="setNodeFilter('ALL', this)">Tất cả</button>
-                <button class="f-btn" onclick="setNodeFilter('UAV', this)">UAV (21)</button>
+                <button class="f-btn" onclick="setNodeFilter('PATROL', this)">Tuần tra (21)</button>
+                <button class="f-btn" onclick="setNodeFilter('RESERVE', this)">Dự bị (7)</button>
                 <button class="f-btn" onclick="setNodeFilter('SPACE', this)">Vệ tinh/Trạm</button>
                 <button class="f-btn" onclick="setNodeFilter('WARN', this)">Chú ý</button>
             </div>
@@ -387,6 +403,8 @@
 
         window.addEventListener('resize', () => map.invalidateSize());
         setTimeout(() => map.invalidateSize(), 150);
+        map.on('zoomstart', () => map.getContainer().classList.add('map-zooming'));
+        map.on('zoomend', () => map.getContainer().classList.remove('map-zooming'));
 
         const zoneLayer = L.layerGroup().addTo(map);
         const patrolLayer = L.layerGroup(); // Mặc định ẩn quỹ đạo để tránh rối mắt
@@ -451,9 +469,25 @@
             const txt = document.getElementById('focusNodeText');
             if (selectedNodeId) {
                 bar.style.display = 'flex';
-                txt.textContent = `🎯 Đang chọn: ${selectedNodeId.replace('MÁY_BAY_', '')}`;
                 const n = nodesCache.find(x => x.id === selectedNodeId);
-                if (pan && n) map.flyTo([n.vi_do, n.kinh_do], 14);
+                const shortId = selectedNodeId.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '').replace('VỆ_TINH_', '');
+                if (n) {
+                    let routeDesc = '';
+                    if (n.is_reserve) {
+                        routeDesc = '🛡️ Dự bị trực chiến tại Trạm (Pin 100%)';
+                    } else if (n.current_link === 'GROUND_LINK') {
+                        routeDesc = `🟢 Trực tiếp A2G ➔ TRẠM (${n.direct_los ? 'Tầm nhìn thẳng LoS' : 'Trong tầm phủ'})`;
+                    } else if (n.current_link === 'FANET_RELAY') {
+                        const rlName = (n.relay_target_id || '').replace('MÁY_BAY_', '');
+                        routeDesc = `🟠 Chuyển tiếp đa chặng FANET: ${shortId} ➔ ${rlName} ➔ TRẠM`;
+                    } else if (n.current_link === 'LEO_SATELLITE') {
+                        routeDesc = `🟣 Qua Vệ tinh LEO ➔ TRẠM (Space Backhaul)`;
+                    }
+                    txt.innerHTML = `🎯 <b>${shortId}</b> (${n.zone_id || ''}) · ${routeDesc}`;
+                    if (pan) map.flyTo([n.vi_do, n.kinh_do], 14);
+                } else {
+                    txt.textContent = `🎯 Đang chọn: ${shortId}`;
+                }
             } else {
                 bar.style.display = 'none';
             }
@@ -480,15 +514,18 @@
                 });
             }
             let color = '#38bdf8';
-            if (node.state === 'OFFLINE') color = '#ef4444';
+            if (node.is_reserve) color = '#0284c7';
+            else if (node.state === 'OFFLINE') color = '#ef4444';
             else if (node.state === 'RELAYING') color = '#f59e0b';
             else if (node.state === 'RETURNING' || node.state === 'CHARGING') color = '#eab308';
             const isSelected = selectedNodeId === node.id;
-            const ring = isSelected ? `0 0 0 3px rgba(56,189,248,0.45), 0 0 12px ${color}` : `0 0 7px ${color}`;
+            const ring = isSelected ? `0 0 0 3px rgba(56,189,248,0.5), 0 0 12px ${color}` : (node.is_reserve ? `0 0 5px #0284c7` : `0 0 7px ${color}`);
+            const reserveBadge = node.is_reserve ? `<span class="uav-reserve-badge">DỰ BỊ</span>` : '';
             return L.divIcon({
-                className: '',
-                html: `<div style="width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.9);border:1.8px solid ${color};border-radius:50%;box-shadow:${ring};">
+                className: 'smooth-uav-marker',
+                html: `<div style="position:relative;width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.9);border:1.8px solid ${color};border-radius:50%;box-shadow:${ring};">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><path d="M5 5l4 4M19 5l-4 4M5 19l4-4M19 19l-4-4"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/></svg>
+                    ${reserveBadge}
                 </div>`,
                 iconSize: [22, 22], iconAnchor: [11, 11]
             });
@@ -578,15 +615,20 @@
                 let m = markersById.get(n.id);
                 const pos = [n.vi_do, n.kinh_do];
                 const label = n.id.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '').replace('VỆ_TINH_', '');
+                const stateKey = `${n.state}_${n.pin_pct < 25 ? 'crit' : (n.pin_pct < 50 ? 'low' : 'ok')}_${selectedNodeId === n.id}_${n.is_reserve ? 1 : 0}`;
                 if (!m) {
                     m = L.marker(pos, { icon: createNodeIcon(n) }).addTo(nodeLayer);
+                    m._lastStateKey = stateKey;
                     m.bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -8], className: 'node-label' });
                     if (!showLabels) m.closeTooltip();
                     m.on('click', () => selectNode(n.id, false));
                     markersById.set(n.id, m);
                 } else {
                     m.setLatLng(pos);
-                    m.setIcon(createNodeIcon(n));
+                    if (m._lastStateKey !== stateKey) {
+                        m.setIcon(createNodeIcon(n));
+                        m._lastStateKey = stateKey;
+                    }
                 }
             });
 
@@ -604,31 +646,59 @@
                 }
             }
 
+            if (selectedNodeId) {
+                const selNode = byId.get(selectedNodeId);
+                if (selNode && selNode.tuyen_ve_tram && selNode.tuyen_ve_tram.length >= 2) {
+                    const coords = selNode.tuyen_ve_tram
+                        .map(id => byId.get(id))
+                        .filter(Boolean)
+                        .map(x => [x.vi_do, x.kinh_do]);
+                    if (coords.length >= 2) {
+                        L.polyline(coords, { color: '#38bdf8', weight: 3.5, opacity: 0.95 }).addTo(focusLayer);
+                    }
+                }
+            }
+
             nodesCache.forEach(n => {
                 if (n.state === 'OFFLINE') return;
                 if (selectedNodeId && n.id !== selectedNodeId && n.relay_target_id !== selectedNodeId) return;
 
                 if (n.loai === 'MÁY_BAY') {
+                    // Nếu là UAV dự bị hoặc đang sạc tại Trạm Kiểm Lâm (cự ly < 100m) -> Không vẽ tia A2G tự nối chính nó
+                    const st = stations[0];
+                    if (n.is_reserve || (st && Math.hypot(n.vi_do - st.vi_do, n.kinh_do - st.kinh_do) < 0.001)) {
+                        return;
+                    }
+
                     if (n.current_link === 'GROUND_LINK') {
-                        const st = byId.get(n.relay_target_id) || stations[0];
-                        if (st) L.polyline([[n.vi_do, n.kinh_do], [st.vi_do, st.kinh_do]], { color: '#22c55e', weight: 1.4, opacity: 0.65 }).addTo(a2gLinkLayer);
+                        const targetStation = byId.get(n.relay_target_id) || st;
+                        if (targetStation) {
+                            L.polyline([[n.vi_do, n.kinh_do], [targetStation.vi_do, targetStation.kinh_do]], {
+                                color: '#22c55e', weight: 1.4, opacity: 0.65
+                            }).addTo(a2gLinkLayer);
+                        }
                     } else if (n.current_link === 'FANET_RELAY' && n.relay_target_id) {
                         const rl = byId.get(n.relay_target_id);
                         if (rl) {
-                            L.polyline([[n.vi_do, n.kinh_do], [rl.vi_do, rl.kinh_do]], { color: '#f59e0b', weight: 2.0, dashArray: '5,4', opacity: 0.88 }).addTo(fanetLinkLayer);
-                            // Vẽ tiếp chặng từ Relay về Trạm để thấy trọn chuỗi chuyển tiếp
-                            const st = byId.get(rl.relay_target_id) || stations[0];
-                            if (st && rl.current_link === 'GROUND_LINK') {
-                                L.polyline([[rl.vi_do, rl.kinh_do], [st.vi_do, st.kinh_do]], { color: '#22c55e', weight: 1.5, dashArray: '2,4', opacity: 0.7 }).addTo(fanetLinkLayer);
-                            }
+                            L.polyline([[n.vi_do, n.kinh_do], [rl.vi_do, rl.kinh_do]], {
+                                color: '#f59e0b', weight: 2.2, dashArray: '5,4', opacity: 0.88
+                            }).addTo(fanetLinkLayer);
                         }
                     } else if (n.current_link === 'LEO_SATELLITE') {
                         const sat = byId.get(n.relay_target_id) || sats[0];
-                        if (sat) L.polyline([[n.vi_do, n.kinh_do], [sat.vi_do, sat.kinh_do]], { color: '#a855f7', weight: 1.6, dashArray: '3,6', opacity: 0.8 }).addTo(leoLinkLayer);
+                        if (sat) {
+                            L.polyline([[n.vi_do, n.kinh_do], [sat.vi_do, sat.kinh_do]], {
+                                color: '#a855f7', weight: 1.6, dashArray: '3,6', opacity: 0.8
+                            }).addTo(leoLinkLayer);
+                        }
                     }
                 } else if (n.loai && n.loai.includes('VỆ_TINH') && n.relay_target_id) {
                     const tgt = byId.get(n.relay_target_id);
-                    if (tgt) L.polyline([[n.vi_do, n.kinh_do], [tgt.vi_do, tgt.kinh_do]], { color: '#06b6d4', weight: 1.5, dashArray: '4,5', opacity: 0.65 }).addTo(leoLinkLayer);
+                    if (tgt) {
+                        L.polyline([[n.vi_do, n.kinh_do], [tgt.vi_do, tgt.kinh_do]], {
+                            color: '#06b6d4', weight: 1.5, dashArray: '4,5', opacity: 0.65
+                        }).addTo(leoLinkLayer);
+                    }
                 }
             });
 
@@ -647,7 +717,8 @@
             const box = document.getElementById('nodeList');
             document.getElementById('nodeCount').textContent = nodesCache.length;
             const filtered = nodesCache.filter(n => {
-                if (currentFilter === 'UAV') return n.loai === 'MÁY_BAY';
+                if (currentFilter === 'PATROL') return n.loai === 'MÁY_BAY' && !n.is_reserve;
+                if (currentFilter === 'RESERVE') return n.is_reserve;
                 if (currentFilter === 'SPACE') return n.loai !== 'MÁY_BAY';
                 if (currentFilter === 'WARN') return n.state === 'OFFLINE' || n.state === 'RELAYING' || n.pin_pct < 30;
                 return true;
@@ -655,13 +726,14 @@
 
             box.innerHTML = filtered.map(n => {
                 const batColor = n.pin_pct < 25 ? '#ef4444' : (n.pin_pct < 50 ? '#f59e0b' : '#22c55e');
-                const linkTxt = n.current_link ? n.current_link.replace('_LINK', '').replace('_SATELLITE', '') : n.loai;
+                const linkTxt = n.is_reserve ? 'DỰ BỊ TRẠM' : (n.current_link ? n.current_link.replace('_LINK', '').replace('_SATELLITE', '') : n.loai);
                 const activeBorder = selectedNodeId === n.id ? 'border-color:var(--accent-blue);background:rgba(56,189,248,0.1);' : '';
+                const reserveTag = n.is_reserve ? '<span style="color:#0ea5e9;font-weight:700;">[DỰ BỊ] </span>' : '';
                 return `
                     <div class="node-item ${n.state === 'OFFLINE' ? 'offline' : ''}" style="${activeBorder}" onclick="selectNode('${n.id}', true)">
                         <div class="n-top">
-                            <span class="n-id">${n.id.replace('MÁY_BAY_', '')}</span>
-                            <span class="n-badge">${n.trang_thai}</span>
+                            <span class="n-id">${reserveTag}${n.id.replace('MÁY_BAY_', '')}</span>
+                            <span class="n-badge">${n.is_reserve ? 'DỰ BỊ' : n.trang_thai}</span>
                         </div>
                         <div class="n-sub">
                             <span>${n.zone_id || linkTxt}</span>

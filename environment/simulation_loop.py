@@ -204,6 +204,8 @@ class SimulationLoop:
                 ket_noi += 1
                 self._mau_lien_lac_thanh_cong += 1
                 self._mat_lien_lac_lien_tuc_theo_uav[ma_uav] = 0.0
+                if hasattr(uav, "evaluate_communication_link"):
+                    uav.evaluate_communication_link()
                 link_kind = getattr(uav, "current_link", "GROUND_LINK")
                 if link_kind == "GROUND_LINK":
                     dem_ground += 1

@@ -207,7 +207,7 @@
         <section class="kpi-row">
             <div class="kpi-card">
                 <div class="k-label">UAV Kết nối</div>
-                <div id="kUav" class="k-val" style="color:var(--accent-green)">0 / 21</div>
+                <div id="kUav" class="k-val" style="color:var(--accent-green)">0 / 28</div>
                 <div id="kAvail" class="k-sub">Khả dụng: 100%</div>
             </div>
             <div class="kpi-card">
@@ -292,7 +292,7 @@
 
         function updateKpis(net, conn) {
             if (conn) {
-                const total = conn.tong_uav || 21;
+                const total = conn.tong_uav || 28;
                 const a2g = conn.uav_ground_link || 0;
                 const fanet = conn.uav_fanet_relay || 0;
                 const leo = conn.uav_leo_satellite || 0;

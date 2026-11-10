@@ -123,6 +123,8 @@ class UAVAgent(BaseAgent):
         ho_so["direct_los"] = self.direct_los
         ho_so["relay_required"] = self.relay_required
         ho_so["relay_target_id"] = self.relay_target_id
+        ho_so["tuyen_ve_tram"] = list(getattr(self, "tuyen_ve_tram_cuc_bo", []))
+        ho_so["is_reserve"] = bool(getattr(self, "uav_state", None) == UAVState.STANDBY and self._dang_o_tai_tram())
         ho_so["so_nhiem_vu"] = self.so_nhiem_vu_da_nhan
         ho_so["vung_ban_giao_nhan"] = list(self._vung_tuan_tra_phu.keys())
         if self.toa_do_muc_tieu:
@@ -238,6 +240,13 @@ class UAVAgent(BaseAgent):
         self.waypoint_index = (self.waypoint_index + 1) % len(self.waypoints)
 
     async def _cap_nhat_duong_truyen(self):
+        if self._dang_o_tai_tram():
+            self.direct_los = True
+            self.relay_required = False
+            self.current_link = "GROUND_LINK"
+            self.relay_target_id = None
+            self.tuyen_ve_tram_cuc_bo = [self.ma_dinh_danh, "TRẠM_KIỂM_LÂM_SƠN_TRÀ"]
+            return
         cac_tram = [
             agent for agent in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()
             if agent.loai_tac_nhan == "TRẠM_MẶT_ĐẤT"
