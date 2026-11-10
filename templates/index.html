@@ -4,26 +4,42 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SAGSINS MAS — Bản đồ Chiến thuật</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
+    <script src="/static/vendor/leaflet/leaflet.js"></script>
     <style>
         :root {
-            --bg-dark: #090d16;
-            --bg-panel: #111827;
-            --bg-card: #1a2333;
-            --border-color: #26334d;
-            --text-main: #f1f5f9;
-            --text-muted: #94a3b8;
+            --bg-dark: #0d1117;
+            --bg-panel: #131922;
+            --bg-card: #192230;
+            --bg-elevated: #212c3d;
+            --border-color: #283447;
+            --border-strong: #384862;
+            --text-main: #e6edf3;
+            --text-secondary: #cbd5e1;
+            --text-muted: #8b9bb4;
             --accent-blue: #38bdf8;
-            --accent-green: #22c55e;
+            --accent-green: #00e676;
+            --accent-emerald: #22c55e;
             --accent-amber: #f59e0b;
             --accent-red: #ef4444;
+            --accent-rose: #f43f5e;
             --accent-purple: #a855f7;
             --accent-cyan: #06b6d4;
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+            --radius-sm: 5px;
+            --radius-md: 8px;
+            --radius-lg: 10px;
+            --shadow-float: 0 10px 28px -6px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.04);
         }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: var(--font-sans);
             background: var(--bg-dark);
             color: var(--text-main);
             height: 100vh;
@@ -31,62 +47,218 @@
             flex-direction: column;
             overflow: hidden;
             font-size: 12px;
+            line-height: 1.45;
+            color-scheme: dark;
+            -webkit-font-smoothing: antialiased;
         }
-        /* HEADER */
+
+        button, select, input {
+            font-family: inherit;
+        }
+
+        :focus-visible {
+            outline: 2px solid var(--accent-blue);
+            outline-offset: 2px;
+        }
+
+        /* HEADER / TOPBAR */
         .topbar {
-            height: 48px;
+            height: 52px;
             background: var(--bg-panel);
             border-bottom: 1px solid var(--border-color);
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 14px;
+            padding: 0 16px;
             flex-shrink: 0;
+            gap: 12px;
         }
-        .brand-nav { display: flex; align-items: center; gap: 14px; }
-        .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+
+        .brand-nav {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 700;
+            font-size: 14px;
+            letter-spacing: 0.4px;
+            color: var(--text-main);
+        }
+
+        .brand-badge {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--accent-green);
+            background: rgba(0, 230, 118, 0.1);
+            border: 1px solid rgba(0, 230, 118, 0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
         .ws-dot {
-            width: 9px; height: 9px; border-radius: 50%;
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
             background: var(--accent-red);
-            box-shadow: 0 0 6px var(--accent-red);
+            box-shadow: 0 0 8px var(--accent-red);
+            transition: background-color 0.25s ease, box-shadow 0.25s ease;
         }
-        .ws-dot.online { background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green); }
-        .nav-tabs { display: flex; gap: 4px; background: var(--bg-dark); padding: 3px; border-radius: 6px; border: 1px solid var(--border-color); }
+        .ws-dot.online {
+            background: var(--accent-green);
+            box-shadow: 0 0 10px var(--accent-green);
+        }
+
+        .nav-tabs {
+            display: flex;
+            gap: 4px;
+            background: var(--bg-dark);
+            padding: 3px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-color);
+        }
+
         .nav-link {
-            text-decoration: none; color: var(--text-muted); font-weight: 600; font-size: 12px;
-            padding: 5px 12px; border-radius: 4px; transition: 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            text-decoration: none;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 12px;
+            padding: 5px 12px;
+            border-radius: var(--radius-sm);
+            transition: all 0.18s ease;
         }
-        .nav-link:hover { color: var(--text-main); }
-        .nav-link.active { background: var(--accent-blue); color: #090d16; }
+        .nav-link:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.04);
+        }
+        .nav-link.active {
+            background: var(--accent-blue);
+            color: #090d16;
+            box-shadow: 0 1px 6px rgba(56, 189, 248, 0.35);
+        }
 
-        .kpi-strip { display: flex; gap: 16px; align-items: center; }
-        .kpi-pill { display: flex; align-items: center; gap: 6px; font-size: 12px; }
-        .kpi-pill span { color: var(--text-muted); }
-        .kpi-pill strong { font-size: 13px; color: var(--text-main); }
+        /* KPI STRIP (4 METRICS) */
+        .kpi-strip {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
 
-        .sim-controls { display: flex; align-items: center; gap: 5px; }
+        .kpi-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--bg-dark);
+            border: 1px solid var(--border-color);
+            padding: 5px 11px;
+            border-radius: var(--radius-md);
+            font-size: 11px;
+        }
+        .kpi-pill span {
+            color: var(--text-muted);
+            font-weight: 500;
+        }
+        .kpi-pill strong {
+            font-family: var(--font-mono);
+            font-variant-numeric: tabular-nums;
+            font-size: 12.5px;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        /* SIMULATION CONTROLS */
+        .sim-controls {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
         .btn {
-            background: var(--bg-card); color: var(--text-main);
-            border: 1px solid var(--border-color); border-radius: 5px;
-            padding: 5px 9px; font-size: 11px; font-weight: 600; cursor: pointer;
-            transition: 0.15s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            background: var(--bg-card);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            padding: 5px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.16s ease;
+            user-select: none;
+            white-space: nowrap;
         }
-        .btn:hover { border-color: var(--accent-blue); }
-        .btn.active { background: var(--accent-blue); color: #090d16; border-color: var(--accent-blue); }
-        .btn-danger { background: rgba(239,68,68,0.18); border-color: var(--accent-red); color: #fca5a5; }
-        .btn-danger.active { background: var(--accent-red); color: #fff; }
-        .btn-warn { background: rgba(245,158,11,0.16); border-color: var(--accent-amber); color: #fcd34d; }
-        .btn-ok { background: rgba(34,197,94,0.16); border-color: var(--accent-green); color: #86efac; }
+        .btn:hover {
+            border-color: var(--accent-blue);
+            background: var(--bg-elevated);
+        }
+        .btn.active {
+            background: var(--accent-blue);
+            color: #090d16;
+            border-color: var(--accent-blue);
+        }
+        .speed-btn {
+            font-family: var(--font-mono);
+            min-width: 32px;
+        }
 
-        /* MAIN WORKSPACE: MAP (76%) + SIDEBAR (24%) */
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.15);
+            border-color: rgba(239, 68, 68, 0.55);
+            color: #fca5a5;
+        }
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, 0.28);
+            border-color: var(--accent-red);
+            color: #ffffff;
+        }
+        .btn-danger.active {
+            background: var(--accent-red);
+            border-color: var(--accent-red);
+            color: #ffffff;
+            box-shadow: 0 0 12px rgba(239, 68, 68, 0.5);
+        }
+
+        .btn-warn {
+            background: rgba(245, 158, 11, 0.14);
+            border-color: rgba(245, 158, 11, 0.5);
+            color: #fcd34d;
+        }
+        .btn-warn:hover {
+            background: rgba(245, 158, 11, 0.26);
+            border-color: var(--accent-amber);
+        }
+
+        .btn-ok {
+            background: rgba(34, 197, 94, 0.14);
+            border-color: rgba(34, 197, 94, 0.5);
+            color: #86efac;
+        }
+        .btn-ok:hover {
+            background: rgba(34, 197, 94, 0.26);
+            border-color: var(--accent-emerald);
+        }
+
+        /* MAIN WORKSPACE: MAP + RIGHT SIDEBAR */
         .workspace {
             flex: 1;
             display: grid;
-            grid-template-columns: 1fr 330px;
+            grid-template-columns: 1fr 350px;
             grid-template-rows: 1fr;
             min-height: 0;
-            height: calc(100vh - 48px);
+            height: calc(100vh - 52px);
         }
+
         .map-wrap {
             position: relative;
             width: 100%;
@@ -94,71 +266,184 @@
             min-height: 0;
             overflow: hidden;
         }
+
         #map {
             position: absolute;
             inset: 0;
             width: 100%;
             height: 100%;
-            background: #0b1622;
+            background: #080d14;
             z-index: 1;
         }
 
-        /* FLOATING OVERLAYS ON MAP */
+        /* FLOATING PANELS ON MAP */
         .map-float {
-            position: absolute; z-index: 900;
-            background: rgba(17, 24, 39, 0.92);
-            backdrop-filter: blur(6px);
+            position: absolute;
+            z-index: 900;
+            background: rgba(19, 25, 34, 0.92);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
             border: 1px solid var(--border-color);
-            border-radius: 7px;
-            padding: 7px 10px;
-            display: flex; align-items: center; gap: 8px;
+            border-radius: var(--radius-md);
+            padding: 8px 11px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: var(--shadow-float);
         }
-        .float-top-left { top: 10px; left: 50px; }
-        .float-top-right { top: 10px; right: 10px; gap: 12px; }
-        .float-bottom-left { bottom: 12px; left: 12px; flex-direction: column; align-items: flex-start; gap: 6px; }
-        .float-bottom-right { bottom: 12px; right: 12px; gap: 10px; font-size: 11px; color: var(--text-muted); }
+
+        .float-top-left {
+            top: 12px;
+            left: 52px;
+        }
+
+        .float-bottom-left {
+            bottom: 14px;
+            left: 14px;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 6px;
+        }
+
+        .divider-v {
+            width: 1px;
+            height: 20px;
+            background: var(--border-color);
+        }
 
         .select-sm {
-            background: var(--bg-dark); color: var(--text-main);
-            border: 1px solid var(--border-color); border-radius: 4px;
-            padding: 4px 6px; font-size: 11px;
+            background: var(--bg-dark);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            padding: 4px 8px;
+            font-size: 11px;
+            font-family: var(--font-mono);
+            cursor: pointer;
         }
-        .chk-label { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); cursor: pointer; user-select: none; }
-        .chk-label:hover { color: var(--text-main); }
-        .chk-label input { accent-color: var(--accent-blue); cursor: pointer; }
+        .select-sm:hover {
+            border-color: var(--border-strong);
+        }
+
+        /* LAYER CONTROL PANEL */
         .layer-panel {
-            top: 10px; right: 10px;
-            flex-direction: column; align-items: stretch; gap: 6px;
-            min-width: 210px;
+            top: 12px;
+            right: 12px;
+            flex-direction: column;
+            align-items: stretch;
+            gap: 8px;
+            min-width: 235px;
         }
+
+        .layer-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .panel-title-sm {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 10px;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
         .layer-grid {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px;
-            padding-top: 4px; border-top: 1px solid var(--border-color);
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 12px;
+            padding-top: 6px;
+            border-top: 1px solid var(--border-color);
         }
+
+        .chk-label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            user-select: none;
+            transition: color 0.15s ease;
+        }
+        .chk-label:hover {
+            color: var(--text-main);
+        }
+        .chk-label input {
+            accent-color: var(--accent-blue);
+            cursor: pointer;
+            width: 13px;
+            height: 13px;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 3px;
+            display: inline-block;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+
+        /* ZONE LABELS ON MAP */
         .zone-map-label {
-            background: rgba(9, 13, 22, 0.78);
+            font-family: var(--font-mono);
+            background: rgba(13, 17, 23, 0.85);
             border: 1px solid rgba(74, 222, 128, 0.55);
             color: #bbf7d0;
-            font-weight: 800;
+            font-weight: 700;
             font-size: 10px;
-            padding: 1px 5px;
+            padding: 1px 6px;
             border-radius: 4px;
             pointer-events: none;
             white-space: nowrap;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
         }
 
         /* COMPACT 7-ZONE STRIP */
-        .zone-strip { display: flex; gap: 5px; }
-        .z-badge {
-            padding: 4px 8px; border-radius: 4px; font-weight: 700; font-size: 11px;
-            cursor: pointer; border: 1px solid var(--border-color); background: var(--bg-card);
-            display: flex; align-items: center; gap: 4px;
+        .zone-strip {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
         }
-        .z-badge.ok { border-color: var(--accent-green); color: #86efac; background: rgba(34,197,94,0.12); }
-        .z-badge.handover { border-color: var(--accent-amber); color: #fcd34d; background: rgba(245,158,11,0.15); }
-        .z-badge.gap { border-color: var(--accent-red); color: #fca5a5; background: rgba(239,68,68,0.18); }
 
-        .legend-dot { width: 10px; height: 3px; display: inline-block; border-radius: 2px; margin-right: 4px; }
+        .z-badge {
+            font-family: var(--font-mono);
+            font-variant-numeric: tabular-nums;
+            padding: 4px 9px;
+            border-radius: var(--radius-sm);
+            font-weight: 700;
+            font-size: 11px;
+            cursor: pointer;
+            border: 1px solid var(--border-color);
+            background: var(--bg-card);
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            transition: transform 0.15s ease, border-color 0.15s ease;
+        }
+        .z-badge:hover {
+            transform: translateY(-1px);
+        }
+        .z-badge.ok {
+            border-color: rgba(34, 197, 94, 0.55);
+            color: #86efac;
+            background: rgba(34, 197, 94, 0.12);
+        }
+        .z-badge.handover {
+            border-color: rgba(245, 158, 11, 0.6);
+            color: #fcd34d;
+            background: rgba(245, 158, 11, 0.15);
+        }
+        .z-badge.gap {
+            border-color: rgba(239, 68, 68, 0.65);
+            color: #fca5a5;
+            background: rgba(239, 68, 68, 0.18);
+        }
 
         /* RIGHT SIDEBAR */
         .sidebar {
@@ -168,66 +453,219 @@
             flex-direction: column;
             min-height: 0;
         }
+
         .side-block {
-            padding: 10px 12px;
+            padding: 11px 14px;
             border-bottom: 1px solid var(--border-color);
         }
+
         .block-head {
-            display: flex; justify-content: space-between; align-items: center;
-            font-size: 11px; font-weight: 700; text-transform: uppercase;
-            color: var(--text-muted); margin-bottom: 7px; letter-spacing: 0.4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 10.5px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 7px;
+            letter-spacing: 0.5px;
         }
+
+        .block-link {
+            color: var(--accent-blue);
+            text-decoration: none;
+            font-size: 10px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+        }
+        .block-link:hover {
+            text-decoration: underline;
+        }
+
         .mini-card {
-            background: var(--bg-card); border: 1px solid var(--border-color);
-            border-radius: 6px; padding: 8px; font-size: 11px; line-height: 1.45;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 9px 10px;
+            font-size: 11px;
+            line-height: 1.5;
         }
-        .route-pills { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+
+        .route-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            align-items: center;
+            margin-top: 2px;
+        }
+
         .r-pill {
-            background: rgba(56,189,248,0.14); border: 1px solid var(--accent-blue);
-            color: var(--text-main); padding: 2px 6px; border-radius: 4px; font-weight: 600; font-size: 10px;
+            font-family: var(--font-mono);
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.45);
+            color: var(--text-main);
+            padding: 2px 7px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 10px;
+        }
+
+        .r-arrow {
+            color: var(--accent-blue);
+            font-size: 10px;
+            font-weight: 700;
         }
 
         /* FILTER TABS FOR NODE LIST */
         .filter-bar {
-            display: grid; grid-template-columns: repeat(4, 1fr);
-            gap: 4px; padding: 8px 12px 4px;
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 4px;
+            padding: 8px 14px 6px;
         }
+
         .f-btn {
-            background: var(--bg-card); border: 1px solid var(--border-color);
-            color: var(--text-muted); font-size: 10px; font-weight: 600;
-            padding: 4px 0; border-radius: 4px; cursor: pointer; text-align: center;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+            font-size: 10px;
+            font-weight: 600;
+            padding: 5px 2px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.15s ease;
         }
-        .f-btn.active { background: var(--accent-blue); color: #090d16; border-color: var(--accent-blue); }
+        .f-btn:hover {
+            color: var(--text-main);
+            border-color: var(--border-strong);
+        }
+        .f-btn.active {
+            background: var(--accent-blue);
+            color: #090d16;
+            border-color: var(--accent-blue);
+            font-weight: 700;
+        }
 
+        /* NODE FLEET LIST */
         .node-list {
-            flex: 1; overflow-y: auto; padding: 6px 12px 12px;
-            display: flex; flex-direction: column; gap: 5px;
+            flex: 1;
+            overflow-y: auto;
+            padding: 6px 14px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
         }
-        .node-item {
-            background: var(--bg-card); border: 1px solid var(--border-color);
-            border-radius: 5px; padding: 6px 8px; cursor: pointer;
-            transition: border-color 0.12s;
-        }
-        .node-item:hover { border-color: var(--accent-blue); }
-        .node-item.offline { opacity: 0.55; border-color: var(--accent-red); }
-        .n-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px; }
-        .n-id { font-weight: 700; font-size: 11px; }
-        .n-badge { font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 700; background: #26334d; }
-        .n-sub { display: flex; justify-content: space-between; color: var(--text-muted); font-size: 10px; }
-        .bat-track { height: 3px; background: #090d16; border-radius: 2px; margin-top: 4px; overflow: hidden; }
-        .bat-fill { height: 100%; background: var(--accent-green); }
 
+        .node-list::-webkit-scrollbar {
+            width: 6px;
+        }
+        .node-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .node-list::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 3px;
+        }
+
+        .node-item {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 7px 10px;
+            cursor: pointer;
+            transition: border-color 0.15s ease, background-color 0.15s ease;
+        }
+        .node-item:hover {
+            border-color: var(--accent-blue);
+            background: var(--bg-elevated);
+        }
+        .node-item.selected {
+            border-color: var(--accent-blue);
+            background: rgba(56, 189, 248, 0.1);
+            box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.25);
+        }
+        .node-item.offline {
+            opacity: 0.6;
+            border-color: rgba(239, 68, 68, 0.55);
+        }
+
+        .n-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+
+        .n-id {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 11px;
+            color: var(--text-main);
+        }
+
+        .n-badge {
+            font-size: 9px;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-weight: 700;
+            background: var(--bg-elevated);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+
+        .n-sub {
+            display: flex;
+            justify-content: space-between;
+            color: var(--text-muted);
+            font-size: 10px;
+            font-family: var(--font-mono);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .bat-track {
+            height: 4px;
+            background: var(--bg-dark);
+            border-radius: 2px;
+            margin-top: 5px;
+            overflow: hidden;
+        }
+        .bat-fill {
+            height: 100%;
+            background: var(--accent-emerald);
+            transition: width 0.3s ease;
+        }
+
+        /* MAP MARKERS & TOOLTIPS */
         .node-label {
-            background: rgba(9, 13, 22, 0.86); border: 1px solid #334155;
-            color: #f8fafc; padding: 1px 4px; border-radius: 3px;
-            font-size: 9px; font-weight: 600; white-space: nowrap;
+            font-family: var(--font-mono);
+            background: rgba(13, 17, 23, 0.88);
+            border: 1px solid #334155;
+            color: #f8fafc;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 9px;
+            font-weight: 600;
+            white-space: nowrap;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.45);
         }
+
         .fire-pulse {
-            width: 20px; height: 20px; border-radius: 50%;
-            background: rgba(239, 68, 68, 0.85); border: 2px solid #fff;
-            box-shadow: 0 0 14px #ef4444; animation: pulse 1s infinite alternate;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: rgba(239, 68, 68, 0.88);
+            border: 2px solid #ffffff;
+            box-shadow: 0 0 16px #ef4444;
+            animation: pulse 0.95s infinite alternate;
         }
-        @keyframes pulse { from { transform: scale(0.9); } to { transform: scale(1.25); } }
+
+        @keyframes pulse {
+            from { transform: scale(0.9); }
+            to { transform: scale(1.25); }
+        }
 
         /* SMOOTH RADAR GLIDING FOR UAV MARKERS */
         .leaflet-marker-pane > .smooth-uav-marker {
@@ -237,11 +675,30 @@
         .map-zooming .leaflet-marker-pane > .smooth-uav-marker {
             transition: none !important;
         }
+
         .uav-reserve-badge {
-            position: absolute; bottom: -5px; right: -5px;
-            background: #0284c7; color: #fff; font-size: 7px; font-weight: 800;
-            padding: 1px 3px; border-radius: 3px; border: 1px solid #38bdf8;
-            line-height: 1; letter-spacing: 0.2px; pointer-events: none;
+            font-family: var(--font-mono);
+            position: absolute;
+            bottom: -5px;
+            right: -5px;
+            background: #0284c7;
+            color: #ffffff;
+            font-size: 7px;
+            font-weight: 800;
+            padding: 1px 3px;
+            border-radius: 3px;
+            border: 1px solid #38bdf8;
+            line-height: 1;
+            letter-spacing: 0.2px;
+            pointer-events: none;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, ::before, ::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
         }
     </style>
 </head>
@@ -250,25 +707,47 @@
     <header class="topbar">
         <div class="brand-nav">
             <div class="brand">
-                <div id="wsDot" class="ws-dot"></div>
+                <div id="wsDot" class="ws-dot" title="Trạng thái kết nối thời gian thực"></div>
                 <span>SAGSINS MAS</span>
+                <span class="brand-badge">28 UAV</span>
             </div>
-            <nav class="nav-tabs">
-                <a href="/" class="nav-link active">🗺️ Bản đồ</a>
-                <a href="/dashboard" class="nav-link">📊 Dashboard</a>
+            <nav class="nav-tabs" aria-label="Điều hướng chính">
+                <a href="/" class="nav-link active">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>
+                    <span>Bản đồ</span>
+                </a>
+                <a href="/dashboard" class="nav-link">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+                    <span>Dashboard</span>
+                </a>
             </nav>
         </div>
 
-        <div class="kpi-strip">
-            <div class="kpi-pill"><span>UAV:</span><strong id="kpiUav">0/28</strong></div>
-            <div class="kpi-pill"><span>7 Vùng:</span><strong id="kpiZones" style="color:var(--accent-green)">7/7</strong></div>
-            <div class="kpi-pill"><span>A2G/FANET/LEO:</span><strong id="kpiLinks" style="color:var(--accent-blue)">0/0/0</strong></div>
-            <div class="kpi-pill"><span>PDR:</span><strong id="kpiPdr">100%</strong></div>
-            <div class="kpi-pill"><span>Trễ:</span><strong id="kpiDelay">0 ms</strong></div>
+        <!-- 4 CORE KPIs (Removed A2G/FANET/LEO from Map Topbar) -->
+        <div class="kpi-strip" role="region" aria-label="Chỉ số vận hành chính">
+            <div class="kpi-pill">
+                <span>UAV kết nối</span>
+                <strong id="kpiUav">28/28</strong>
+            </div>
+            <div class="kpi-pill">
+                <span>7 Phân khu</span>
+                <strong id="kpiZones" style="color:var(--accent-green)">7/7</strong>
+            </div>
+            <div class="kpi-pill">
+                <span>PDR</span>
+                <strong id="kpiPdr" style="color:var(--accent-blue)">100.0%</strong>
+            </div>
+            <div class="kpi-pill">
+                <span>Trễ TB</span>
+                <strong id="kpiDelay">0 ms</strong>
+            </div>
         </div>
 
-        <div class="sim-controls">
-            <button id="btnPause" class="btn" onclick="togglePause()">⏸ Tạm dừng</button>
+        <div class="sim-controls" role="group" aria-label="Điều khiển thời gian mô phỏng">
+            <button id="btnPause" class="btn" onclick="togglePause()">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                <span>Tạm dừng</span>
+            </button>
             <button class="btn speed-btn active" data-speed="1" onclick="setSpeed(1)">1x</button>
             <button class="btn speed-btn" data-speed="2" onclick="setSpeed(2)">2x</button>
             <button class="btn speed-btn" data-speed="5" onclick="setSpeed(5)">5x</button>
@@ -283,48 +762,57 @@
 
             <!-- Top-left: Fire & Fault controls -->
             <div class="map-float float-top-left">
-                <button id="btnFireMode" class="btn btn-danger" onclick="toggleFireMode()">🔥 Báo cháy</button>
-                <button id="btnClearFire" class="btn" style="display:none;" onclick="clearFires()" title="Xoá các điểm báo cháy trên bản đồ">🧹 Xoá cháy</button>
-                <span style="color:var(--border-color)">|</span>
-                <select id="faultUavSelect" class="select-sm"></select>
+                <button id="btnFireMode" class="btn btn-danger" onclick="toggleFireMode()">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+                    <span>Báo cháy</span>
+                </button>
+                <button id="btnClearFire" class="btn" style="display:none;" onclick="clearFires()" title="Xoá các điểm báo cháy trên bản đồ">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                    <span>Xoá cháy</span>
+                </button>
+                <div class="divider-v" aria-hidden="true"></div>
+                <select id="faultUavSelect" class="select-sm" aria-label="Chọn UAV giả lập sự cố"></select>
                 <button class="btn btn-danger" onclick="injectBattery(0)" title="Sập nguồn 0%">Sập</button>
-                <button class="btn btn-warn" onclick="injectBattery(18)" title="Pin yếu 18%">Pin yếu</button>
-                <button class="btn btn-ok" onclick="injectBattery(100)" title="Sạc đầy 100%">Sạc</button>
+                <button class="btn btn-warn" onclick="injectBattery(18)" title="Pin yếu 18% (Kích hoạt RTB & Thay ca)">Pin yếu</button>
+                <button class="btn btn-ok" onclick="injectBattery(100)" title="Nạp đầy pin 100%">Sạc</button>
             </div>
 
-            <!-- Top-right: Base map & Granular Layer toggles with integrated legend -->
+            <!-- Top-right: Base map & Layer toggles (A2G, FANET, LEO disabled by default) -->
             <div class="map-float layer-panel">
-                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-                    <span style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;">🎛️ Lớp hiển thị</span>
-                    <select id="baseMapSelect" class="select-sm" onchange="switchBaseMap(this.value)">
-                        <option value="satellite" selected>🛰️ Ảnh vệ tinh</option>
-                        <option value="osm">🗺️ Bản đồ chuẩn</option>
-                        <option value="dark">🌑 Nền tối</option>
+                <div class="layer-panel-header">
+                    <span class="panel-title-sm">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+                        <span>Lớp hiển thị</span>
+                    </span>
+                    <select id="baseMapSelect" class="select-sm" onchange="switchBaseMap(this.value)" aria-label="Chọn nền bản đồ">
+                        <option value="satellite" selected>Ảnh vệ tinh</option>
+                        <option value="dark">Nền tối</option>
+                        <option value="osm">Bản đồ chuẩn</option>
                     </select>
                 </div>
                 <div class="layer-grid">
                     <label class="chk-label"><input type="checkbox" id="chkZones" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#4ade80"></i>7 Vùng (Z1–Z7)</label>
                     <label class="chk-label"><input type="checkbox" id="chkRfPackets" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#f43f5e"></i>Tia Gói tin (RF)</label>
-                    <label class="chk-label"><input type="checkbox" id="chkFanet" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#f59e0b"></i>Tia FANET</label>
-                    <label class="chk-label"><input type="checkbox" id="chkA2G" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#22c55e"></i>Tia A2G</label>
-                    <label class="chk-label"><input type="checkbox" id="chkLeo" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#a855f7"></i>Tia Vệ tinh</label>
                     <label class="chk-label"><input type="checkbox" id="chkE2E" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#38bdf8"></i>Tuyến E2E</label>
+                    <label class="chk-label"><input type="checkbox" id="chkLabels" checked onchange="toggleLabels()"><i class="legend-dot" style="background:#e2e8f0"></i>Nhãn tên</label>
+                    <label class="chk-label"><input type="checkbox" id="chkFanet" onchange="toggleLayers()"><i class="legend-dot" style="background:#f59e0b"></i>Tia FANET</label>
+                    <label class="chk-label"><input type="checkbox" id="chkA2G" onchange="toggleLayers()"><i class="legend-dot" style="background:#22c55e"></i>Tia A2G</label>
+                    <label class="chk-label"><input type="checkbox" id="chkLeo" onchange="toggleLayers()"><i class="legend-dot" style="background:#a855f7"></i>Tia Vệ tinh</label>
                     <label class="chk-label"><input type="checkbox" id="chkRoutes" onchange="toggleLayers()"><i class="legend-dot" style="background:#93c5fd"></i>Quỹ đạo</label>
-                    <label class="chk-label"><input type="checkbox" id="chkLabels" checked onchange="toggleLabels()">Nhãn tên</label>
                 </div>
-                <div style="display:flex;gap:4px;padding-top:2px;">
-                    <button class="btn" style="flex:1;padding:2px 6px;font-size:10px;" onclick="setAllLinkLayers(true)">Bật hết tia</button>
-                    <button class="btn" style="flex:1;padding:2px 6px;font-size:10px;" onclick="setAllLinkLayers(false)">Tắt hết tia</button>
+                <div style="display:flex;gap:5px;padding-top:2px;">
+                    <button class="btn" style="flex:1;padding:3px 6px;font-size:10px;" onclick="setAllLinkLayers(true)">Bật hết tia</button>
+                    <button class="btn" style="flex:1;padding:3px 6px;font-size:10px;" onclick="setAllLinkLayers(false)">Mặc định gọn</button>
                 </div>
-                <div id="focusNodeBar" style="display:none;justify-content:space-between;align-items:center;background:rgba(56,189,248,0.14);border:1px solid var(--accent-blue);border-radius:4px;padding:3px 6px;font-size:10px;">
-                    <span id="focusNodeText">🎯 Lọc: UAV_01</span>
-                    <button class="btn" style="padding:1px 5px;font-size:9px;" onclick="selectNode(null)">Bỏ lọc ✕</button>
+                <div id="focusNodeBar" style="display:none;justify-content:space-between;align-items:center;background:rgba(56,189,248,0.12);border:1px solid rgba(56,189,248,0.45);border-radius:5px;padding:4px 7px;font-size:10px;gap:6px;">
+                    <span id="focusNodeText" style="line-height:1.35;">Đang chọn: UAV_01</span>
+                    <button class="btn" style="padding:2px 6px;font-size:9px;flex-shrink:0;" onclick="selectNode(null)">Bỏ chọn ✕</button>
                 </div>
             </div>
 
             <!-- Bottom-left: Compact 7-zone badges -->
             <div class="map-float float-bottom-left">
-                <div style="font-size:10px;color:var(--text-muted);font-weight:700;">7 PHÂN KHU (BẤM ĐỂ ZOOM)</div>
+                <div class="panel-title-sm">7 Phân khu Sơn Trà (Bấm để phóng to)</div>
                 <div id="zoneStrip" class="zone-strip"></div>
             </div>
         </div>
@@ -335,10 +823,10 @@
             <div class="side-block">
                 <div class="block-head">
                     <span>Đấu thầu CNP gần nhất</span>
-                    <a href="/dashboard" style="color:var(--accent-blue);text-decoration:none;font-size:10px;">Chi tiết ➔</a>
+                    <a href="/dashboard" class="block-link">Chi tiết ➔</a>
                 </div>
                 <div id="cnpMiniBox" class="mini-card" style="color:var(--text-muted)">
-                    Chưa có sự kiện cháy. Bấm <b>🔥 Báo cháy</b> rồi click lên bản đồ.
+                    Chưa có sự kiện cháy. Bấm <strong style="color:#fca5a5;">Báo cháy</strong> rồi click lên bản đồ.
                 </div>
             </div>
 
@@ -346,18 +834,19 @@
             <div class="side-block">
                 <div class="block-head">
                     <span>Định tuyến E2E mới nhất</span>
-                    <span id="e2eMeta" style="color:var(--accent-cyan);font-size:10px;"></span>
+                    <span id="e2eMeta" style="font-family:var(--font-mono);color:var(--accent-blue);font-size:10.5px;"></span>
                 </div>
                 <div id="e2eMiniBox" class="mini-card" style="color:var(--text-muted)">
                     Đang chờ gói dữ liệu đa chặng...
                 </div>
             </div>
 
-            <!-- Fleet List -->
-            <div class="block-head" style="padding:10px 12px 0;margin:0;">
-                <span>Đội hình mạng (<span id="nodeCount">0</span>)</span>
+            <!-- Fleet List (28 UAVs + 3 LEO + 1 Station = 32 Nodes) -->
+            <div class="block-head" style="padding:11px 14px 0;margin:0;">
+                <span>Đội hình mạng (<span id="nodeCount" style="font-family:var(--font-mono);color:var(--text-main);">32</span>)</span>
+                <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--accent-green);">28 UAV</span>
             </div>
-            <div class="filter-bar" style="grid-template-columns: repeat(5, 1fr);">
+            <div class="filter-bar">
                 <button class="f-btn active" onclick="setNodeFilter('ALL', this)">Tất cả</button>
                 <button class="f-btn" onclick="setNodeFilter('PATROL', this)">Tuần tra (21)</button>
                 <button class="f-btn" onclick="setNodeFilter('RESERVE', this)">Dự bị (7)</button>
@@ -406,13 +895,15 @@
         map.on('zoomstart', () => map.getContainer().classList.add('map-zooming'));
         map.on('zoomend', () => map.getContainer().classList.remove('map-zooming'));
 
+        // Mặc định chỉ bật: 7 Vùng, Tuyến E2E, Tia Gói tin RF.
+        // Các lớp A2G, FANET, Vệ tinh LEO và Quỹ đạo được tắt mặc định để giao diện gọn mượt.
         const zoneLayer = L.layerGroup().addTo(map);
-        const patrolLayer = L.layerGroup(); // Mặc định ẩn quỹ đạo để tránh rối mắt
-        const a2gLinkLayer = L.layerGroup().addTo(map);
-        const fanetLinkLayer = L.layerGroup().addTo(map);
-        const leoLinkLayer = L.layerGroup().addTo(map);
+        const patrolLayer = L.layerGroup();
+        const a2gLinkLayer = L.layerGroup();
+        const fanetLinkLayer = L.layerGroup();
+        const leoLinkLayer = L.layerGroup();
         const e2eLayer = L.layerGroup().addTo(map);
-        const rfPacketLayer = L.layerGroup().addTo(map); // Lớp hiển thị tia truyền gói tin tức thời (RF_LINK)
+        const rfPacketLayer = L.layerGroup().addTo(map);
         const focusLayer = L.layerGroup().addTo(map);
         const fireLayer = L.layerGroup().addTo(map);
         const nodeLayer = L.layerGroup().addTo(map);
@@ -448,10 +939,20 @@
         }
 
         function setAllLinkLayers(enable) {
-            ['chkRfPackets', 'chkA2G', 'chkFanet', 'chkLeo', 'chkE2E', 'chkRoutes'].forEach(id => {
-                const el = document.getElementById(id);
-                if (el) el.checked = enable;
-            });
+            if (enable) {
+                ['chkRfPackets', 'chkA2G', 'chkFanet', 'chkLeo', 'chkE2E', 'chkRoutes'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.checked = true;
+                });
+            } else {
+                // Chế độ mặc định gọn: bật RF + E2E, tắt A2G/FANET/LEO/Quỹ đạo
+                document.getElementById('chkRfPackets').checked = true;
+                document.getElementById('chkE2E').checked = true;
+                ['chkA2G', 'chkFanet', 'chkLeo', 'chkRoutes'].forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el) el.checked = false;
+                });
+            }
             toggleLayers();
         }
 
@@ -474,19 +975,19 @@
                 if (n) {
                     let routeDesc = '';
                     if (n.is_reserve) {
-                        routeDesc = '🛡️ Dự bị trực chiến tại Trạm (Pin 100%)';
+                        routeDesc = 'Dự bị trực chiến tại Trạm (Pin 100%)';
                     } else if (n.current_link === 'GROUND_LINK') {
-                        routeDesc = `🟢 Trực tiếp A2G ➔ TRẠM (${n.direct_los ? 'Tầm nhìn thẳng LoS' : 'Trong tầm phủ'})`;
+                        routeDesc = `Trực tiếp A2G ➔ TRẠM (${n.direct_los ? 'LoS' : 'Trong tầm phủ'})`;
                     } else if (n.current_link === 'FANET_RELAY') {
                         const rlName = (n.relay_target_id || '').replace('MÁY_BAY_', '');
-                        routeDesc = `🟠 Chuyển tiếp đa chặng FANET: ${shortId} ➔ ${rlName} ➔ TRẠM`;
+                        routeDesc = `Chuyển tiếp FANET: ${shortId} ➔ ${rlName} ➔ TRẠM`;
                     } else if (n.current_link === 'LEO_SATELLITE') {
-                        routeDesc = `🟣 Qua Vệ tinh LEO ➔ TRẠM (Space Backhaul)`;
+                        routeDesc = `Qua Vệ tinh LEO ➔ TRẠM`;
                     }
-                    txt.innerHTML = `🎯 <b>${shortId}</b> (${n.zone_id || ''}) · ${routeDesc}`;
+                    txt.innerHTML = `<strong style="color:var(--accent-blue);font-family:var(--font-mono);">${shortId}</strong> ${n.zone_id ? `<span style="color:var(--text-muted)">(${n.zone_id})</span>` : ''} · ${routeDesc}`;
                     if (pan) map.flyTo([n.vi_do, n.kinh_do], 14);
                 } else {
-                    txt.textContent = `🎯 Đang chọn: ${shortId}`;
+                    txt.textContent = `Đang chọn: ${shortId}`;
                 }
             } else {
                 bar.style.display = 'none';
@@ -498,7 +999,7 @@
             if (node.loai === 'TRẠM_MẶT_ĐẤT') {
                 return L.divIcon({
                     className: '',
-                    html: `<div style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.9);border:2px solid #22c55e;border-radius:6px;box-shadow:0 0 10px #22c55e;">
+                    html: `<div style="width:26px;height:26px;display:flex;align-items:center;justify-content:center;background:rgba(13,17,23,0.92);border:2px solid #22c55e;border-radius:6px;box-shadow:0 0 10px #22c55e;">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.2"><path d="M12 2a10 10 0 0 1 10 10"/><path d="M12 6a6 6 0 0 1 6 6"/><circle cx="12" cy="12" r="2"/><path d="M12 14v8"/><path d="M8 22h8"/></svg>
                     </div>`,
                     iconSize: [26, 26], iconAnchor: [13, 13]
@@ -507,7 +1008,7 @@
             if (node.loai && node.loai.includes('VỆ_TINH')) {
                 return L.divIcon({
                     className: '',
-                    html: `<div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.9);border:2px solid #a855f7;border-radius:50%;box-shadow:0 0 12px #a855f7;">
+                    html: `<div style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:rgba(13,17,23,0.92);border:2px solid #a855f7;border-radius:50%;box-shadow:0 0 12px #a855f7;">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d8b4fe" stroke-width="2"><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M4 9h4v6H4zM16 9h4v6h-4z"/><path d="M12 15v5"/></svg>
                     </div>`,
                     iconSize: [28, 28], iconAnchor: [14, 14]
@@ -523,7 +1024,7 @@
             const reserveBadge = node.is_reserve ? `<span class="uav-reserve-badge">DỰ BỊ</span>` : '';
             return L.divIcon({
                 className: 'smooth-uav-marker',
-                html: `<div style="position:relative;width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,0.9);border:1.8px solid ${color};border-radius:50%;box-shadow:${ring};">
+                html: `<div style="position:relative;width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:rgba(13,17,23,0.92);border:1.8px solid ${color};border-radius:50%;box-shadow:${ring};">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><path d="M5 5l4 4M19 5l-4 4M5 19l4-4M19 19l-4-4"/><circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/></svg>
                     ${reserveBadge}
                 </div>`,
@@ -543,7 +1044,7 @@
                     const zId = feat.properties.zone_id;
                     const shortName = zId.replace('ZONE_0', 'Z');
                     const geo = L.geoJSON(feat, {
-                        style: { color: '#4ade80', weight: 2.0, fillColor: '#22c55e', fillOpacity: 0.14 }
+                        style: { color: '#4ade80', weight: 2.0, fillColor: '#22c55e', fillOpacity: 0.12 }
                     }).addTo(zoneLayer);
                     const b = geo.getBounds();
                     zonePolygons.set(zId, geo);
@@ -664,7 +1165,6 @@
                 if (selectedNodeId && n.id !== selectedNodeId && n.relay_target_id !== selectedNodeId) return;
 
                 if (n.loai === 'MÁY_BAY') {
-                    // Nếu là UAV dự bị hoặc đang sạc tại Trạm Kiểm Lâm (cự ly < 100m) -> Không vẽ tia A2G tự nối chính nó
                     const st = stations[0];
                     if (n.is_reserve || (st && Math.hypot(n.vi_do - st.vi_do, n.kinh_do - st.kinh_do) < 0.001)) {
                         return;
@@ -727,10 +1227,10 @@
             box.innerHTML = filtered.map(n => {
                 const batColor = n.pin_pct < 25 ? '#ef4444' : (n.pin_pct < 50 ? '#f59e0b' : '#22c55e');
                 const linkTxt = n.is_reserve ? 'DỰ BỊ TRẠM' : (n.current_link ? n.current_link.replace('_LINK', '').replace('_SATELLITE', '') : n.loai);
-                const activeBorder = selectedNodeId === n.id ? 'border-color:var(--accent-blue);background:rgba(56,189,248,0.1);' : '';
-                const reserveTag = n.is_reserve ? '<span style="color:#0ea5e9;font-weight:700;">[DỰ BỊ] </span>' : '';
+                const selectedCls = selectedNodeId === n.id ? 'selected' : '';
+                const reserveTag = n.is_reserve ? '<span style="color:#38bdf8;font-weight:700;">[DỰ BỊ] </span>' : '';
                 return `
-                    <div class="node-item ${n.state === 'OFFLINE' ? 'offline' : ''}" style="${activeBorder}" onclick="selectNode('${n.id}', true)">
+                    <div class="node-item ${n.state === 'OFFLINE' ? 'offline' : ''} ${selectedCls}" onclick="selectNode('${n.id}', true)">
                         <div class="n-top">
                             <span class="n-id">${reserveTag}${n.id.replace('MÁY_BAY_', '')}</span>
                             <span class="n-badge">${n.is_reserve ? 'DỰ BỊ' : n.trang_thai}</span>
@@ -760,17 +1260,17 @@
             if (!auc) return;
             const box = document.getElementById('cnpMiniBox');
             if (!auc.thanh_cong) {
-                box.innerHTML = `<span style="color:var(--accent-red);font-weight:700;">❌ Thất bại</span> — Không UAV nào đủ pin khứ hồi (>25%).`;
+                box.innerHTML = `<span style="color:var(--accent-red);font-weight:700;">Thất bại</span> — Không UAV nào đủ pin khứ hồi (&gt;25%).`;
                 return;
             }
             const w = auc.winner || {};
             box.innerHTML = `
-                <div style="display:flex;justify-content:space-between;">
-                    <span style="color:var(--accent-green);font-weight:700;">🏆 ${auc.winner_id.replace('MÁY_BAY_', '')}</span>
-                    <span style="color:var(--text-muted)">${auc.thoi_gian || ''}</span>
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span style="color:var(--accent-green);font-weight:700;font-family:var(--font-mono);">★ ${auc.winner_id.replace('MÁY_BAY_', '')}</span>
+                    <span style="color:var(--text-muted);font-family:var(--font-mono);font-size:10px;">${auc.thoi_gian || ''}</span>
                 </div>
-                <div style="margin-top:3px;color:var(--text-muted);">
-                    Cự ly: <b>${((w.khoang_cach_m || 0)/1000).toFixed(2)} km</b> · Pin dự kiến: <b>${w.pin_du_kien_pct || 0}%</b> · Báo giá: <b>${(auc.proposals || []).length}</b>
+                <div style="margin-top:4px;color:var(--text-secondary);font-family:var(--font-mono);font-size:10.5px;">
+                    Cự ly: <b>${((w.khoang_cach_m || 0)/1000).toFixed(2)} km</b> · Pin: <b>${w.pin_du_kien_pct || 0}%</b> · Thầu: <b>${(auc.proposals || []).length}</b>
                 </div>
             `;
         }
@@ -781,21 +1281,20 @@
             const box = document.getElementById('e2eMiniBox');
             box.innerHTML = `
                 <div class="route-pills">
-                    ${data.lo_trinh_hop.map(h => `<span class="r-pill">${h.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '')}</span>`).join('<span>➔</span>')}
+                    ${data.lo_trinh_hop.map(h => `<span class="r-pill">${h.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '')}</span>`).join('<span class="r-arrow">➔</span>')}
                 </div>
             `;
             e2eLayer.clearLayers();
             const byId = new Map(nodesCache.map(n => [n.id, n]));
             const coords = data.lo_trinh_hop.map(id => byId.get(id)).filter(Boolean).map(n => [n.vi_do, n.kinh_do]);
             if (coords.length >= 2) {
-                L.polyline(coords, { color: '#38bdf8', weight: 3.5, opacity: 0.9 }).addTo(e2eLayer);
+                L.polyline(coords, { color: '#38bdf8', weight: 3.5, opacity: 0.92 }).addTo(e2eLayer);
             }
         }
 
         function updateKpis(net, conn) {
             if (conn) {
-                document.getElementById('kpiUav').textContent = `${conn.uav_ket_noi || 0}/${conn.tong_uav || 21}`;
-                document.getElementById('kpiLinks').textContent = `${conn.uav_ground_link || 0}/${conn.uav_fanet_relay || 0}/${conn.uav_leo_satellite || 0}`;
+                document.getElementById('kpiUav').textContent = `${conn.uav_ket_noi || 0}/${conn.tong_uav || 28}`;
             }
             if (net) {
                 const sent = net.tong_goi_tin_phat || 0;
@@ -810,7 +1309,9 @@
             fireMode = !fireMode;
             const btn = document.getElementById('btnFireMode');
             btn.classList.toggle('active', fireMode);
-            btn.textContent = fireMode ? '🎯 Click lên bản đồ...' : '🔥 Báo cháy';
+            btn.innerHTML = fireMode
+                ? `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg><span>Click lên bản đồ...</span>`
+                : `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg><span>Báo cháy</span>`;
         }
 
         function clearFires() {
@@ -832,6 +1333,7 @@
 
             const shortKind = kind
                 .replace('CFP_FIRE_ALERT', 'CFP')
+                .replace('CFP_FIRE_EVENT', 'CFP')
                 .replace('PROPOSE_BID', 'BID')
                 .replace('ACCEPT_PROPOSAL', 'AWARD')
                 .replace('REJECT_PROPOSAL', 'REJECT')
@@ -851,7 +1353,7 @@
                 zIndexOffset: 800,
                 icon: L.divIcon({
                     className: '',
-                    html: `<div style="background:rgba(9,13,22,0.92);border:1px solid ${color};color:${color};font-size:9px;font-weight:800;padding:1px 4px;border-radius:3px;white-space:nowrap;box-shadow:0 0 8px ${color};">⚡ ${shortKind}</div>`,
+                    html: `<div style="font-family:var(--font-mono);background:rgba(13,17,23,0.92);border:1px solid ${color};color:${color};font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;white-space:nowrap;box-shadow:0 0 8px ${color};">${shortKind}</div>`,
                     iconSize: [46, 16],
                     iconAnchor: [23, 8]
                 })
@@ -868,7 +1370,7 @@
             toggleFireMode();
             const { lat, lng } = e.latlng;
             L.marker([lat, lng], { icon: L.divIcon({ className: '', html: '<div class="fire-pulse"></div>', iconSize: [20, 20], iconAnchor: [10, 10] }) }).addTo(fireLayer);
-            document.getElementById('btnClearFire').style.display = 'inline-block';
+            document.getElementById('btnClearFire').style.display = 'inline-flex';
             try {
                 const res = await fetch('/api/su-co', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -897,7 +1399,9 @@
             const d = await res.json();
             isPaused = d.paused;
             const btn = document.getElementById('btnPause');
-            btn.textContent = isPaused ? '▶ Tiếp tục' : '⏸ Tạm dừng';
+            btn.innerHTML = isPaused
+                ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg><span>Tiếp tục</span>`
+                : `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg><span>Tạm dừng</span>`;
             btn.classList.toggle('active', isPaused);
         }
 
