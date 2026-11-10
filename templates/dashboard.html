@@ -4,24 +4,39 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SAGSINS MAS — Dashboard Điều phối</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-dark: #090d16;
-            --bg-panel: #111827;
-            --bg-card: #1a2333;
-            --border-color: #26334d;
-            --text-main: #f1f5f9;
-            --text-muted: #94a3b8;
+            --bg-dark: #0d1117;
+            --bg-panel: #131922;
+            --bg-card: #192230;
+            --bg-elevated: #212c3d;
+            --border-color: #283447;
+            --border-strong: #384862;
+            --text-main: #e6edf3;
+            --text-secondary: #cbd5e1;
+            --text-muted: #8b9bb4;
             --accent-blue: #38bdf8;
-            --accent-green: #22c55e;
+            --accent-green: #00e676;
+            --accent-emerald: #22c55e;
             --accent-amber: #f59e0b;
             --accent-red: #ef4444;
+            --accent-rose: #f43f5e;
             --accent-purple: #a855f7;
             --accent-cyan: #06b6d4;
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+            --radius-sm: 5px;
+            --radius-md: 8px;
+            --radius-lg: 10px;
         }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: var(--font-sans);
             background: var(--bg-dark);
             color: var(--text-main);
             height: 100vh;
@@ -29,93 +44,244 @@
             flex-direction: column;
             overflow: hidden;
             font-size: 12px;
+            line-height: 1.45;
+            color-scheme: dark;
+            -webkit-font-smoothing: antialiased;
         }
+
+        button, select, input {
+            font-family: inherit;
+        }
+
+        :focus-visible {
+            outline: 2px solid var(--accent-blue);
+            outline-offset: 2px;
+        }
+
         /* TOP BAR */
         .topbar {
-            height: 48px;
+            height: 52px;
             background: var(--bg-panel);
             border-bottom: 1px solid var(--border-color);
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 14px;
+            padding: 0 16px;
             flex-shrink: 0;
+            gap: 12px;
         }
-        .brand-nav { display: flex; align-items: center; gap: 14px; }
-        .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
-        .ws-dot {
-            width: 9px; height: 9px; border-radius: 50%;
-            background: var(--accent-red); box-shadow: 0 0 6px var(--accent-red);
-        }
-        .ws-dot.online { background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green); }
-        .nav-tabs { display: flex; gap: 4px; background: var(--bg-dark); padding: 3px; border-radius: 6px; border: 1px solid var(--border-color); }
-        .nav-link {
-            text-decoration: none; color: var(--text-muted); font-weight: 600; font-size: 12px;
-            padding: 5px 12px; border-radius: 4px; transition: 0.15s;
-        }
-        .nav-link:hover { color: var(--text-main); }
-        .nav-link.active { background: var(--accent-blue); color: #090d16; }
 
-        .sim-controls { display: flex; align-items: center; gap: 6px; }
-        .btn {
-            background: var(--bg-card); color: var(--text-main);
-            border: 1px solid var(--border-color); border-radius: 5px;
-            padding: 5px 10px; font-size: 11px; font-weight: 600; cursor: pointer;
-            text-decoration: none;
+        .brand-nav {
+            display: flex;
+            align-items: center;
+            gap: 16px;
         }
-        .btn:hover { border-color: var(--accent-blue); }
-        .btn.active { background: var(--accent-blue); color: #090d16; border-color: var(--accent-blue); }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 700;
+            font-size: 14px;
+            letter-spacing: 0.4px;
+            color: var(--text-main);
+        }
+
+        .brand-badge {
+            font-family: var(--font-mono);
+            font-size: 10px;
+            font-weight: 600;
+            color: var(--accent-green);
+            background: rgba(0, 230, 118, 0.1);
+            border: 1px solid rgba(0, 230, 118, 0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .ws-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: var(--accent-red);
+            box-shadow: 0 0 8px var(--accent-red);
+            transition: background-color 0.25s ease, box-shadow 0.25s ease;
+        }
+        .ws-dot.online {
+            background: var(--accent-green);
+            box-shadow: 0 0 10px var(--accent-green);
+        }
+
+        .nav-tabs {
+            display: flex;
+            gap: 4px;
+            background: var(--bg-dark);
+            padding: 3px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border-color);
+        }
+
+        .nav-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            text-decoration: none;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 12px;
+            padding: 5px 12px;
+            border-radius: var(--radius-sm);
+            transition: all 0.18s ease;
+        }
+        .nav-link:hover {
+            color: var(--text-main);
+            background: rgba(255, 255, 255, 0.04);
+        }
+        .nav-link.active {
+            background: var(--accent-blue);
+            color: #090d16;
+            box-shadow: 0 1px 6px rgba(56, 189, 248, 0.35);
+        }
+
+        .sim-controls {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 5px;
+            background: var(--bg-card);
+            color: var(--text-main);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            padding: 5px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.16s ease;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .btn:hover {
+            border-color: var(--accent-blue);
+            background: var(--bg-elevated);
+        }
+        .btn.active {
+            background: var(--accent-blue);
+            color: #090d16;
+            border-color: var(--accent-blue);
+        }
+        .speed-btn {
+            font-family: var(--font-mono);
+            min-width: 32px;
+        }
 
         /* DASHBOARD CONTAINER */
         .dash-wrap {
             flex: 1;
-            padding: 12px 14px;
+            padding: 14px 16px;
             display: flex;
             flex-direction: column;
-            gap: 12px;
+            gap: 14px;
             min-height: 0;
         }
 
-        /* ROW 1: KPI CARDS */
+        /* ROW 1: 6 KPI CARDS */
         .kpi-row {
             display: grid;
             grid-template-columns: repeat(6, 1fr);
-            gap: 10px;
+            gap: 12px;
             flex-shrink: 0;
         }
+
         .kpi-card {
             background: var(--bg-panel);
             border: 1px solid var(--border-color);
-            border-radius: 7px;
-            padding: 10px 12px;
+            border-radius: var(--radius-md);
+            padding: 11px 14px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+            overflow: hidden;
         }
-        .k-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; margin-bottom: 4px; }
-        .k-val { font-size: 18px; font-weight: 700; }
-        .k-sub { font-size: 10px; color: var(--text-muted); margin-top: 3px; }
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: var(--card-accent, var(--accent-blue));
+            opacity: 0.75;
+        }
+
+        .k-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.4px;
+            margin-bottom: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .k-val {
+            font-family: var(--font-mono);
+            font-variant-numeric: tabular-nums;
+            font-size: 19px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+        }
+
+        .k-sub {
+            font-family: var(--font-mono);
+            font-variant-numeric: tabular-nums;
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
         .tier-bar {
-            height: 6px; border-radius: 3px; background: #090d16;
-            display: flex; overflow: hidden; margin-top: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background: var(--bg-dark);
+            display: flex;
+            overflow: hidden;
+            margin-top: 7px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .tier-bar > div {
+            transition: width 0.3s ease;
         }
 
         /* ROW 2: 3-COLUMN ANALYTICS GRID */
         .main-grid {
             flex: 1;
             display: grid;
-            grid-template-columns: 1.15fr 1.15fr 1fr;
-            gap: 12px;
+            grid-template-columns: 1.1fr 1.25fr 1fr;
+            gap: 14px;
             min-height: 0;
         }
+
         .panel {
             background: var(--bg-panel);
             border: 1px solid var(--border-color);
-            border-radius: 7px;
+            border-radius: var(--radius-md);
             display: flex;
             flex-direction: column;
             min-height: 0;
             overflow: hidden;
         }
+
         .panel-head {
-            padding: 9px 12px;
+            padding: 10px 14px;
             border-bottom: 1px solid var(--border-color);
             display: flex;
             justify-content: space-between;
@@ -123,59 +289,248 @@
             font-size: 11px;
             font-weight: 700;
             text-transform: uppercase;
-            color: var(--text-muted);
-            background: rgba(26, 35, 51, 0.5);
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            background: rgba(25, 34, 48, 0.65);
         }
+
+        .panel-head-title {
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+        }
+
         .panel-body {
             flex: 1;
-            padding: 10px 12px;
+            padding: 12px 14px;
             overflow-y: auto;
         }
 
+        .panel-body::-webkit-scrollbar {
+            width: 6px;
+        }
+        .panel-body::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .panel-body::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 3px;
+        }
+
+        .section-subhead {
+            font-weight: 700;
+            color: var(--text-muted);
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
         /* CNP TABLE */
-        .tbl { width: 100%; border-collapse: collapse; font-size: 11px; margin-top: 6px; }
-        .tbl th, .tbl td { padding: 5px 6px; border-bottom: 1px solid var(--border-color); text-align: left; }
-        .tbl th { color: var(--text-muted); font-size: 10px; text-transform: uppercase; }
-        .tbl tr.win { background: rgba(34, 197, 94, 0.14); color: #86efac; font-weight: 600; }
-        .tbl tr.refuse { color: #fca5a5; opacity: 0.8; }
+        .tbl {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+            margin-top: 8px;
+            font-family: var(--font-mono);
+            font-variant-numeric: tabular-nums;
+        }
+        .tbl th, .tbl td {
+            padding: 6px 7px;
+            border-bottom: 1px solid var(--border-color);
+            text-align: left;
+        }
+        .tbl th {
+            font-family: var(--font-sans);
+            color: var(--text-muted);
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            background: rgba(13, 17, 23, 0.45);
+        }
+        .tbl tr.win {
+            background: rgba(0, 230, 118, 0.12);
+            color: #86efac;
+            font-weight: 600;
+        }
+        .tbl tr.refuse {
+            color: #fca5a5;
+            opacity: 0.85;
+        }
+
+        .status-pill {
+            display: inline-block;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 9.5px;
+            font-weight: 700;
+        }
+        .status-pill.win {
+            background: rgba(0, 230, 118, 0.2);
+            border: 1px solid rgba(0, 230, 118, 0.5);
+            color: var(--accent-green);
+        }
+        .status-pill.lose {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            color: var(--text-muted);
+        }
+        .status-pill.refuse {
+            background: rgba(239, 68, 68, 0.18);
+            border: 1px solid rgba(239, 68, 68, 0.45);
+            color: #fca5a5;
+        }
 
         /* E2E CHAIN */
-        .e2e-chain { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+        .e2e-chain {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            margin-top: 8px;
+        }
         .hop-box {
-            background: var(--bg-card); border: 1px solid var(--accent-blue);
-            border-radius: 5px; padding: 4px 8px; font-weight: 600; font-size: 11px;
+            font-family: var(--font-mono);
+            background: rgba(56, 189, 248, 0.12);
+            border: 1px solid rgba(56, 189, 248, 0.5);
+            border-radius: var(--radius-sm);
+            padding: 4px 9px;
+            font-weight: 600;
+            font-size: 11px;
+            color: var(--text-main);
+        }
+        .hop-arrow {
+            color: var(--accent-blue);
+            font-weight: 700;
         }
 
-        /* 7 ZONES MATRIX */
-        .zone-matrix { display: flex; flex-direction: column; gap: 7px; }
+        /* 7 ZONES MATRIX & 28 UAVs */
+        .zone-matrix {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
         .z-row {
-            background: var(--bg-card); border: 1px solid var(--border-color);
-            border-left: 3px solid var(--accent-green); border-radius: 5px;
-            padding: 7px 9px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-left: 3px solid var(--accent-emerald);
+            border-radius: var(--radius-md);
+            padding: 8px 10px;
         }
-        .z-row.handover { border-left-color: var(--accent-amber); }
-        .z-row.gap { border-left-color: var(--accent-red); }
-        .z-head { display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 5px; font-size: 11px; }
-        .z-uavs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+        .z-row.handover {
+            border-left-color: var(--accent-amber);
+        }
+        .z-row.gap {
+            border-left-color: var(--accent-red);
+        }
+        .z-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 700;
+            margin-bottom: 6px;
+            font-size: 11px;
+            font-family: var(--font-mono);
+        }
+        .z-status-tag {
+            font-family: var(--font-sans);
+            font-size: 10px;
+            font-weight: 600;
+            padding: 1px 7px;
+            border-radius: 4px;
+            background: rgba(34, 197, 94, 0.12);
+            color: #86efac;
+            border: 1px solid rgba(34, 197, 94, 0.35);
+        }
+        .z-row.handover .z-status-tag {
+            background: rgba(245, 158, 11, 0.14);
+            color: #fcd34d;
+            border-color: rgba(245, 158, 11, 0.4);
+        }
+        .z-row.gap .z-status-tag {
+            background: rgba(239, 68, 68, 0.16);
+            color: #fca5a5;
+            border-color: rgba(239, 68, 68, 0.45);
+        }
+
+        .z-uavs {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 6px;
+        }
         .u-chip {
-            background: rgba(9, 13, 22, 0.65); border: 1px solid var(--border-color);
-            border-radius: 4px; padding: 4px 6px; font-size: 10px;
+            background: rgba(13, 17, 23, 0.65);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            padding: 5px 7px;
+            font-size: 10px;
+            font-family: var(--font-mono);
+            font-variant-numeric: tabular-nums;
         }
-        .u-top { display: flex; justify-content: space-between; font-weight: 600; }
-        .u-bar { height: 3px; background: #090d16; border-radius: 2px; margin-top: 3px; overflow: hidden; }
-        .u-fill { height: 100%; background: var(--accent-green); }
+        .u-chip.reserve {
+            border-color: rgba(56, 189, 248, 0.35);
+            background: rgba(2, 132, 199, 0.08);
+        }
+        .u-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 700;
+        }
+        .u-meta {
+            color: var(--text-muted);
+            font-size: 9px;
+            margin-top: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .u-bar {
+            height: 3px;
+            background: var(--bg-dark);
+            border-radius: 2px;
+            margin-top: 4px;
+            overflow: hidden;
+        }
+        .u-fill {
+            height: 100%;
+            background: var(--accent-emerald);
+            transition: width 0.3s ease;
+        }
 
         /* LOG STREAM */
         .log-item {
-            font-family: 'JetBrains Mono', Consolas, monospace;
-            font-size: 11px; padding: 5px 7px; border-radius: 4px;
-            background: rgba(9, 13, 22, 0.55); border-left: 3px solid var(--accent-blue);
-            margin-bottom: 5px; line-height: 1.4;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            padding: 6px 8px;
+            border-radius: var(--radius-sm);
+            background: rgba(13, 17, 23, 0.6);
+            border: 1px solid rgba(40, 52, 71, 0.7);
+            border-left: 3px solid var(--accent-blue);
+            margin-bottom: 6px;
+            line-height: 1.45;
+            word-break: break-word;
         }
         .log-item.WARN { border-left-color: var(--accent-amber); }
-        .log-item.ALERT { border-left-color: var(--accent-red); }
-        .log-item.WIN, .log-item.CNP { border-left-color: var(--accent-green); }
-        .log-item.ROUTE { border-left-color: var(--accent-purple); }
+        .log-item.ALERT, .log-item.ERROR { border-left-color: var(--accent-red); }
+        .log-item.WIN, .log-item.CNP, .log-item.SUCCESS { border-left-color: var(--accent-green); }
+        .log-item.ROUTE, .log-item.RELAY { border-left-color: var(--accent-purple); }
+
+        @media (max-width: 1280px) {
+            .kpi-row { grid-template-columns: repeat(3, 1fr); }
+            .main-grid { grid-template-columns: 1fr 1fr; }
+            .z-uavs { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, ::before, ::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
     </style>
 </head>
 <body>
@@ -183,18 +538,31 @@
     <header class="topbar">
         <div class="brand-nav">
             <div class="brand">
-                <div id="wsDot" class="ws-dot"></div>
+                <div id="wsDot" class="ws-dot" title="Trạng thái kết nối thời gian thực"></div>
                 <span>SAGSINS MAS</span>
+                <span class="brand-badge">28 UAV</span>
             </div>
-            <nav class="nav-tabs">
-                <a href="/" class="nav-link">🗺️ Bản đồ</a>
-                <a href="/dashboard" class="nav-link active">📊 Dashboard</a>
+            <nav class="nav-tabs" aria-label="Điều hướng chính">
+                <a href="/" class="nav-link">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>
+                    <span>Bản đồ</span>
+                </a>
+                <a href="/dashboard" class="nav-link active">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>
+                    <span>Dashboard</span>
+                </a>
             </nav>
         </div>
 
-        <div class="sim-controls">
-            <a href="/api/xuat-csv" class="btn">📥 Xuất CSV</a>
-            <button id="btnPause" class="btn" onclick="togglePause()">⏸ Tạm dừng</button>
+        <div class="sim-controls" role="group" aria-label="Điều khiển mô phỏng và xuất dữ liệu">
+            <a href="/api/xuat-csv" class="btn" title="Tải xuống dữ liệu thực nghiệm CSV">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <span>Xuất CSV</span>
+            </a>
+            <button id="btnPause" class="btn" onclick="togglePause()">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+                <span>Tạm dừng</span>
+            </button>
             <button class="btn speed-btn active" data-speed="1" onclick="setSpeed(1)">1x</button>
             <button class="btn speed-btn" data-speed="2" onclick="setSpeed(2)">2x</button>
             <button class="btn speed-btn" data-speed="5" onclick="setSpeed(5)">5x</button>
@@ -204,37 +572,37 @@
     <!-- DASHBOARD BODY -->
     <main class="dash-wrap">
         <!-- ROW 1: 6 KPI CARDS -->
-        <section class="kpi-row">
-            <div class="kpi-card">
+        <section class="kpi-row" aria-label="Chỉ số hiệu năng toàn mạng">
+            <div class="kpi-card" style="--card-accent: var(--accent-green);">
                 <div class="k-label">UAV Kết nối</div>
-                <div id="kUav" class="k-val" style="color:var(--accent-green)">0 / 28</div>
+                <div id="kUav" class="k-val" style="color:var(--accent-green)">28 / 28</div>
                 <div id="kAvail" class="k-sub">Khả dụng: 100%</div>
             </div>
-            <div class="kpi-card">
+            <div class="kpi-card" style="--card-accent: var(--accent-blue);">
                 <div class="k-label">Liên kết 3 tầng (A2G / FANET / LEO)</div>
                 <div id="kTiers" class="k-val" style="color:var(--accent-blue)">0 / 0 / 0</div>
-                <div class="tier-bar">
-                    <div id="barA2G" style="width:100%;background:var(--accent-green)"></div>
+                <div class="tier-bar" title="Tỷ lệ phân bổ liên kết: Xanh lá (A2G) · Vàng cam (FANET) · Tím (LEO)">
+                    <div id="barA2G" style="width:100%;background:var(--accent-emerald)"></div>
                     <div id="barFanet" style="width:0%;background:var(--accent-amber)"></div>
                     <div id="barLeo" style="width:0%;background:var(--accent-purple)"></div>
                 </div>
             </div>
-            <div class="kpi-card">
+            <div class="kpi-card" style="--card-accent: var(--accent-cyan);">
                 <div class="k-label">Tỷ lệ nhận gói (PDR)</div>
                 <div id="kPdr" class="k-val" style="color:var(--accent-cyan)">100.0%</div>
-                <div id="kPackets" class="k-sub">0 / 0 gói</div>
+                <div id="kPackets" class="k-sub">0 / 0 gói thành công</div>
             </div>
-            <div class="kpi-card">
+            <div class="kpi-card" style="--card-accent: var(--text-secondary);">
                 <div class="k-label">Độ trễ TB</div>
                 <div id="kDelay" class="k-val">0.0 ms</div>
                 <div id="kDrops" class="k-sub">Rớt PER: 0 · Mất LoS: 0</div>
             </div>
-            <div class="kpi-card">
+            <div class="kpi-card" style="--card-accent: var(--accent-amber);">
                 <div class="k-label">Năng lượng toàn mạng</div>
                 <div id="kEnergy" class="k-val" style="color:var(--accent-amber)">0 J</div>
-                <div class="k-sub">RF Tx/Rx + Động cơ</div>
+                <div class="k-sub">RF Tx/Rx + Động cơ bay</div>
             </div>
-            <div class="kpi-card">
+            <div class="kpi-card" style="--card-accent: var(--accent-purple);">
                 <div class="k-label">Đấu thầu CNP hoàn tất</div>
                 <div id="kMissions" class="k-val" style="color:var(--accent-purple)">0</div>
                 <div id="kSatStatus" class="k-sub">3 Vệ tinh LEO hoạt động</div>
@@ -246,16 +614,19 @@
             <!-- COLUMN 1: CNP AUCTION & E2E ROUTE -->
             <div class="panel">
                 <div class="panel-head">
-                    <span>1. Đấu thầu CNP & Định tuyến E2E</span>
-                    <span id="cnpTime" style="color:var(--accent-green)"></span>
+                    <span class="panel-head-title">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                        <span>1. Đấu thầu CNP &amp; Định tuyến E2E</span>
+                    </span>
+                    <span id="cnpTime" style="font-family:var(--font-mono);color:var(--accent-green);font-size:10.5px;"></span>
                 </div>
                 <div class="panel-body">
-                    <div style="font-weight:700;color:var(--text-muted);font-size:10px;text-transform:uppercase;">Phiên đấu thầu CNP gần nhất</div>
-                    <div id="cnpDetail" style="margin-top:6px;margin-bottom:14px;color:var(--text-muted);">
-                        Chưa có phiên đấu thầu nào. Hãy báo cháy trên trang Bản đồ.
+                    <div class="section-subhead">Phiên đấu thầu FIPA-CNP gần nhất</div>
+                    <div id="cnpDetail" style="margin-top:6px;margin-bottom:16px;color:var(--text-muted);">
+                        Chưa có phiên đấu thầu nào. Hãy bấm <b>Báo cháy</b> trên trang Bản đồ.
                     </div>
 
-                    <div style="font-weight:700;color:var(--text-muted);font-size:10px;text-transform:uppercase;border-top:1px solid var(--border-color);padding-top:10px;">
+                    <div class="section-subhead" style="border-top:1px solid var(--border-color);padding-top:12px;">
                         Chuỗi định tuyến đa chặng E2E mới nhất
                     </div>
                     <div id="e2eDetail" style="margin-top:6px;color:var(--text-muted);">
@@ -264,11 +635,14 @@
                 </div>
             </div>
 
-            <!-- COLUMN 2: 7-ZONE MATRIX & 21 UAV FLEET -->
+            <!-- COLUMN 2: 7-ZONE MATRIX & 28 UAV FLEET -->
             <div class="panel">
                 <div class="panel-head">
-                    <span>2. Ma trận 7 Phân khu & 21 UAV</span>
-                    <span id="zoneSummary" style="color:var(--accent-green)">7/7 An toàn</span>
+                    <span class="panel-head-title">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                        <span>2. Ma trận 7 Phân khu &amp; 28 UAV</span>
+                    </span>
+                    <span id="zoneSummary" style="font-family:var(--font-mono);color:var(--accent-green);font-size:10.5px;">7/7 An toàn</span>
                 </div>
                 <div class="panel-body">
                     <div id="zoneMatrix" class="zone-matrix"></div>
@@ -278,8 +652,11 @@
             <!-- COLUMN 3: PROTOCOL EVENT LOGS -->
             <div class="panel">
                 <div class="panel-head">
-                    <span>3. Nhật ký giao thức MAS</span>
-                    <button class="btn" style="padding:2px 6px;font-size:10px;" onclick="document.getElementById('logStream').innerHTML=''">Xóa</button>
+                    <span class="panel-head-title">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                        <span>3. Nhật ký giao thức MAS</span>
+                    </span>
+                    <button class="btn" style="padding:2px 8px;font-size:10px;" onclick="document.getElementById('logStream').innerHTML=''">Xoá</button>
                 </div>
                 <div id="logStream" class="panel-body"></div>
             </div>
@@ -323,8 +700,8 @@
             const props = auc.proposals || [];
             const refs = auc.refusals || [];
             const header = auc.thanh_cong
-                ? `<div style="color:var(--accent-green);font-weight:700;margin-bottom:4px;">🏆 Thắng thầu: ${auc.winner_id} (${auc.vi_do?.toFixed(4)}, ${auc.kinh_do?.toFixed(4)})</div>`
-                : `<div style="color:var(--accent-red);font-weight:700;margin-bottom:4px;">❌ Không UAV nào đủ pin khứ hồi (>25%)</div>`;
+                ? `<div style="color:var(--accent-green);font-weight:700;margin-bottom:6px;font-family:var(--font-mono);">★ Thắng thầu: ${auc.winner_id.replace('MÁY_BAY_', '')} (${auc.vi_do?.toFixed(4)}, ${auc.kinh_do?.toFixed(4)})</div>`
+                : `<div style="color:var(--accent-red);font-weight:700;margin-bottom:6px;">Thất bại — Không UAV nào đủ pin khứ hồi (&gt;25%)</div>`;
 
             const rows = [
                 ...props.map((p, i) => `
@@ -333,7 +710,7 @@
                         <td>${((p.khoang_cach_m || 0) / 1000).toFixed(2)} km</td>
                         <td>${p.pin_du_kien_pct ?? '-'}%</td>
                         <td>${p.chi_phi}</td>
-                        <td>${i === 0 ? 'WIN' : 'LOSE'}</td>
+                        <td><span class="status-pill ${i === 0 ? 'win' : 'lose'}">${i === 0 ? 'WIN' : 'LOSE'}</span></td>
                     </tr>
                 `),
                 ...refs.slice(0, 6).map(r => `
@@ -342,7 +719,7 @@
                         <td>${((r.khoang_cach_m || 0) / 1000).toFixed(2)} km</td>
                         <td>${r.pin_du_kien_pct ?? '-'}%</td>
                         <td>—</td>
-                        <td>REFUSE</td>
+                        <td><span class="status-pill refuse">REFUSE</span></td>
                     </tr>
                 `)
             ].join('');
@@ -360,11 +737,11 @@
             if (!data || !data.lo_trinh_hop) return;
             const box = document.getElementById('e2eDetail');
             box.innerHTML = `
-                <div style="font-size:11px;margin-bottom:4px;">
-                    Gói: <b>${data.loai_du_lieu || 'TELEMETRY'}</b> · Tổng trễ: <b style="color:var(--accent-cyan)">${data.tong_do_tre_ms} ms</b> · Băng thông: <b>${data.dung_luong_min_mbps} Mbps</b>
+                <div style="font-size:11px;margin-bottom:6px;font-family:var(--font-mono);color:var(--text-secondary);">
+                    Gói: <b>${data.loai_du_lieu || 'TELEMETRY'}</b> · Tổng trễ: <b style="color:var(--accent-blue)">${data.tong_do_tre_ms} ms</b> · Băng thông: <b>${data.dung_luong_min_mbps} Mbps</b>
                 </div>
                 <div class="e2e-chain">
-                    ${data.lo_trinh_hop.map(h => `<span class="hop-box">${h.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '')}</span>`).join('<span>➔</span>')}
+                    ${data.lo_trinh_hop.map(h => `<span class="hop-box">${h.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '')}</span>`).join('<span class="hop-arrow">➔</span>')}
                 </div>
             `;
         }
@@ -392,19 +769,20 @@
                     <div class="z-row ${cls}">
                         <div class="z-head">
                             <span>${zId} (${z.uav_hoat_dong}/${z.tong_uav} UAV)</span>
-                            <span style="color:var(--text-muted);font-weight:600;">${tag}</span>
+                            <span class="z-status-tag">${tag}</span>
                         </div>
                         <div class="z-uavs">
                             ${uavs.map(u => {
                                 const c = u.pin_pct < 25 ? '#ef4444' : (u.pin_pct < 50 ? '#f59e0b' : '#22c55e');
-                                const linkShort = (u.current_link || '').replace('_LINK', '').replace('_SATELLITE', '');
+                                const linkShort = u.is_reserve ? 'DỰ BỊ' : (u.current_link || '').replace('_LINK', '').replace('_SATELLITE', '');
+                                const resClass = u.is_reserve ? 'reserve' : '';
                                 return `
-                                    <div class="u-chip">
+                                    <div class="u-chip ${resClass}">
                                         <div class="u-top">
                                             <span>${u.id.replace('MÁY_BAY_', '')}</span>
                                             <span style="color:${c}">${u.pin_pct}%</span>
                                         </div>
-                                        <div style="color:var(--text-muted);font-size:9px;margin-top:2px;">${u.state} · ${linkShort}</div>
+                                        <div class="u-meta">${u.is_reserve ? 'TRỰC CHIẾN' : u.state} · ${linkShort}</div>
                                         <div class="u-bar"><div class="u-fill" style="width:${u.pin_pct}%;background:${c}"></div></div>
                                     </div>
                                 `;
@@ -413,7 +791,9 @@
                     </div>
                 `;
             }).join('');
-            document.getElementById('zoneSummary').textContent = `${okCount}/${keys.length} An toàn`;
+            const summaryEl = document.getElementById('zoneSummary');
+            summaryEl.textContent = `${okCount}/${keys.length} An toàn`;
+            summaryEl.style.color = okCount === keys.length ? 'var(--accent-green)' : 'var(--accent-amber)';
         }
 
         function appendLog(capDo, noiDung, timeStr) {
@@ -434,7 +814,9 @@
             const d = await res.json();
             isPaused = d.paused;
             const btn = document.getElementById('btnPause');
-            btn.textContent = isPaused ? '▶ Tiếp tục' : '⏸ Tạm dừng';
+            btn.innerHTML = isPaused
+                ? `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg><span>Tiếp tục</span>`
+                : `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg><span>Tạm dừng</span>`;
             btn.classList.toggle('active', isPaused);
         }
 
