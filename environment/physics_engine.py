@@ -11,8 +11,8 @@ EARTH_RADIUS_M = 6371000.0            # Bán kính trung bình Trái Đất (m)
 BOLTZMANN_CONST = 1.380649e-23        # Hằng số Boltzmann (J/K)
 SYSTEM_TEMP_K = 290.0                 # Nhiệt độ nhiễu hệ thống tiêu chuẩn (K)
 
-# Ngưỡng cự ly truyền dẫn theo phân tầng địa hình SAGSINS Sơn Trà
-MAX_A2G_DIRECT_LOS_M = 4200.0         # Cự ly trực xạ Không-Đất (A2G) tối đa trước khi bị núi Sơn Trà che khuất
+# Ngưỡng cự ly liên kết giả định cho mô phỏng; chưa tính che khuất bằng dữ liệu địa hình.
+MAX_A2G_DIRECT_LOS_M = 4200.0         # Cự ly tối đa cho liên kết Không-Đất (A2G)
 MAX_A2A_FANET_LOS_M = 7000.0          # Cự ly trực xạ Không-Không (A2A FANET) giữa các UAV ở độ cao tuần tra
 
 # Tọa độ tâm khu vực giám sát (Bán đảo Sơn Trà, Đà Nẵng)
@@ -147,7 +147,7 @@ class PhysicsEngine:
         Phân biệt rõ:
         - ISL (Vệ tinh - Vệ tinh): Không bị Trái Đất/tầng khí quyển thấp (< 50km) che khuất.
         - A2S / S2G (Vệ tinh - UAV/Mặt đất): Góc ngẩng >= goc_ngang_toi_thieu_deg (mặc định 5 độ).
-        - A2G (UAV - Trạm mặt đất): Giới hạn 4.2 km do địa hình núi Sơn Trà che khuất tầm thấp.
+        - A2G (UAV - Trạm mặt đất): Giới hạn cự ly giả định 4.2 km; chưa truy vấn địa hình.
         - A2A (UAV - UAV FANET): Giới hạn 7.0 km ở độ cao tuần tra.
         """
         alt1 = float(pos1["do_cao"])

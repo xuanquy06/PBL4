@@ -1,6 +1,7 @@
 import asyncio
 import heapq
 import json
+import math
 import random
 import time
 from typing import Any, Dict, List, TYPE_CHECKING, Optional
@@ -57,7 +58,7 @@ class MessageBroker:
             3
         )
 
-    def tim_tuyen_den_tram_mat_dat(
+    def _tim_tuyen_toan_cuc_tham_chieu(
         self,
         ma_bat_dau: str,
         kich_thuoc_kb: float = 250.0,
@@ -173,6 +174,154 @@ class MessageBroker:
             bat_dau.chi_phi_ve_tram_cuc_bo = float("inf")
         return None
 
+    def tim_tuyen_den_tram_mat_dat(
+        self,
+        ma_bat_dau: str,
+        kich_thuoc_kb: float = 250.0,
+        loai_tru: Optional[set[str]] = None
+    ) -> Optional[dict[str, Any]]:
+        """Chọn tuyến từ quảng bá sink của các láng giềng 1-hop, không quét toàn đồ thị."""
+        bat_dau = self.danh_sach_tac_nhan.get(ma_bat_dau)
+        if not bat_dau:
+            return None
+        if bat_dau.loai_tac_nhan == "TRẠM_MẶT_ĐẤT":
+            return {
+                "nodes": [ma_bat_dau],
+                "channels": [],
+                "cost": 0.0,
+                "energy_j": 0.0,
+                "delay_ms": 0.0,
+                "capacity_mbps": float("inf")
+            }
+
+        excluded = loai_tru or set()
+        now = time.time()
+        candidates = []
+        for neighbor_id, info in bat_dau.bang_lang_gieng.items():
+            neighbor = self.danh_sach_tac_nhan.get(neighbor_id)
+            if (
+                not neighbor
+                or neighbor_id in excluded
+                or now - info.get("thoi_diem_cap_nhat", 0.0)
+                > getattr(bat_dau, "NEIGHBOR_TIMEOUT_SEC", 15.0)
+                or info.get("trang_thai") in (
+                    "NGẮT_KẾT_NỐI",
+                    "ĐANG_ĐẤU_GIÁ",
+                    "ĐANG_SẠC"
+                )
+                or (
+                    info.get("loai_tac_nhan") in ("MÁY_BAY", "VỆ_TINH_LEO")
+                    and info.get("pin_pct", 0.0) < getattr(neighbor, "nguong_pin_yeu_pct", 20.0)
+                )
+            ):
+                continue
+
+            if info.get("loai_tac_nhan") == "TRẠM_MẶT_ĐẤT":
+                downstream_path = [neighbor_id]
+                downstream_cost = 0.0
+                downstream_energy = 0.0
+                downstream_delay = 0.0
+                downstream_capacity = float("inf")
+            else:
+                downstream_path = list(info.get("path_to_sink", []))
+                if (
+                    not downstream_path
+                    or downstream_path[0] != neighbor_id
+                    or ma_bat_dau in downstream_path
+                    or excluded.intersection(downstream_path)
+                    or len(downstream_path) != len(set(downstream_path))
+                    or downstream_path[-1] not in self.danh_sach_tac_nhan
+                    or self.danh_sach_tac_nhan[downstream_path[-1]].loai_tac_nhan
+                    != "TRẠM_MẶT_ĐẤT"
+                ):
+                    continue
+                downstream_cost = float(info.get("cost_to_sink", float("inf")))
+                downstream_energy = float(info.get("energy_to_sink_j", 0.0))
+                downstream_delay = float(info.get("delay_to_sink_ms", 0.0))
+                downstream_capacity = float(info.get("capacity_to_sink_mbps", 0.0))
+                if not math.isfinite(downstream_cost):
+                    continue
+
+            if (
+                bat_dau.loai_tac_nhan == "MÁY_BAY"
+                and bat_dau.trang_thai.value == "ĐANG_SẠC"
+                and info.get("loai_tac_nhan") == "TRẠM_MẶT_ĐẤT"
+                and self.physics.tinh_khoang_cach_3d(bat_dau.toa_do, neighbor.toa_do) <= 1.0
+            ):
+                channel = {
+                    "kha_dung": True,
+                    "do_tre_ms": 0.0,
+                    "dung_luong_mbps": max(
+                        0.5,
+                        bat_dau.radio_config["bang_thong_hz"] / 1_000_000.0
+                    ),
+                    "per": 0.0,
+                    "snr_db": 100.0
+                }
+            else:
+                channel = self.physics.danh_gia_chat_luong_kenh_truyen(
+                    pos1=bat_dau.toa_do,
+                    pos2=neighbor.toa_do,
+                    tan_so_hz=bat_dau.radio_config["tan_so_hz"],
+                    cong_suat_phat_dbm=bat_dau.radio_config["cong_suat_phat_dbm"],
+                    bang_thong_hz=bat_dau.radio_config["bang_thong_hz"]
+                )
+            if (
+                not channel["kha_dung"]
+                or channel["per"] >= 0.25
+                or channel["dung_luong_mbps"] <= 0
+            ):
+                continue
+
+            energy_j = self._uoc_tinh_nang_luong_truyen(bat_dau, kich_thuoc_kb)
+            link_cost = (
+                channel["do_tre_ms"]
+                + 40.0 / max(0.5, channel["dung_luong_mbps"])
+                + energy_j
+                + float(info.get("tai_hang_doi_pct", 0.0)) * 0.05
+            )
+            if info.get("loai_tac_nhan") == "MÁY_BAY":
+                link_cost += (100.0 - float(info.get("pin_pct", 100.0))) * 0.08
+            elif info.get("loai_tac_nhan") == "VỆ_TINH_LEO":
+                link_cost += 18.0
+
+            path = [ma_bat_dau, *downstream_path]
+            if len(path) != len(set(path)):
+                continue
+            capacity = min(channel["dung_luong_mbps"], downstream_capacity)
+            candidates.append((
+                link_cost + downstream_cost,
+                neighbor_id,
+                {
+                    "nodes": path,
+                    "channels": [{
+                        **channel,
+                        "energy_j": energy_j,
+                        "dung_luong_mbps": capacity
+                    }],
+                    "cost": round(link_cost + downstream_cost, 3),
+                    "energy_j": round(energy_j + downstream_energy, 3),
+                    "delay_ms": round(channel["do_tre_ms"] + downstream_delay, 3),
+                    "capacity_mbps": capacity
+                }
+            ))
+
+        if not candidates:
+            bat_dau.tuyen_ve_tram_cuc_bo = []
+            bat_dau.chi_phi_ve_tram_cuc_bo = float("inf")
+            bat_dau.nang_luong_ve_tram_cuc_bo = 0.0
+            bat_dau.do_tre_ve_tram_cuc_bo_ms = 0.0
+            bat_dau.dung_luong_ve_tram_cuc_bo_mbps = 0.0
+            return None
+
+        _, _, route = min(candidates, key=lambda item: (item[0], item[1]))
+        bat_dau.tuyen_ve_tram_cuc_bo = list(route["nodes"])
+        bat_dau.chi_phi_ve_tram_cuc_bo = route["cost"]
+        bat_dau.nang_luong_ve_tram_cuc_bo = route["energy_j"]
+        bat_dau.do_tre_ve_tram_cuc_bo_ms = route["delay_ms"]
+        bat_dau.dung_luong_ve_tram_cuc_bo_mbps = route["capacity_mbps"]
+        return route
+
     @staticmethod
     def _uoc_tinh_nang_luong_truyen(agent, kich_thuoc_kb: float) -> float:
         cong_suat_w = 10.0 ** ((agent.radio_config["cong_suat_phat_dbm"] - 30.0) / 10.0)
@@ -213,6 +362,47 @@ class MessageBroker:
             "do_tre_du_kien_ms": round(tong_tre, 3),
             "dung_luong_du_kien_mbps": round(bw_nut_that_co_chai, 3)
         }
+
+    async def gui_chang_tiep_ve_tram(
+        self,
+        ma_node: str,
+        thong_diep: dict[str, Any],
+        lo_trinh_da_di: Optional[list[str]] = None
+    ) -> Optional[dict[str, Any]]:
+        """Gửi một chặng kế tiếp; khi chặng lỗi, thử các láng giềng thay thế còn khả dụng."""
+        kich_thuoc_kb = float(thong_diep.get("kich_thuoc_kb", 12.0))
+        lo_trinh = list(lo_trinh_da_di or thong_diep.get("lo_trinh_di_qua", []))
+        if not lo_trinh or lo_trinh[-1] != ma_node:
+            if ma_node in lo_trinh:
+                lo_trinh = lo_trinh[:lo_trinh.index(ma_node) + 1]
+            else:
+                lo_trinh.append(ma_node)
+
+        da_thu = set()
+        for _ in range(len(self.danh_sach_tac_nhan)):
+            loai_tru = (set(lo_trinh) - {ma_node}) | da_thu
+            tuyen = self.tim_tuyen_den_tram_mat_dat(
+                ma_node,
+                kich_thuoc_kb=kich_thuoc_kb,
+                loai_tru=loai_tru
+            )
+            if not tuyen or len(tuyen["nodes"]) < 2:
+                return None
+
+            ma_ke_tiep = tuyen["nodes"][1]
+            da_gui = await self.gui_don_huong(
+                ma_node,
+                ma_ke_tiep,
+                {
+                    **thong_diep,
+                    "lo_trinh_di_qua": [*lo_trinh, ma_ke_tiep],
+                    "tuyen_du_kien": list(tuyen["nodes"])
+                }
+            )
+            if da_gui:
+                return tuyen
+            da_thu.add(ma_ke_tiep)
+        return None
 
     # =========================================================================
     # 1. CƠ CHẾ TRUYỀN GÓI TIN QUA KÊNH VẬT LÝ (UNICAST & BROADCAST)
@@ -322,6 +512,13 @@ class MessageBroker:
             "zone_id": getattr(nguoi_gui, "zone_id", None),
             "cost_to_sink": getattr(nguoi_gui, "chi_phi_ve_tram_cuc_bo", float("inf")),
             "path_to_sink": list(getattr(nguoi_gui, "tuyen_ve_tram_cuc_bo", [])),
+            "energy_to_sink_j": getattr(nguoi_gui, "nang_luong_ve_tram_cuc_bo", 0.0),
+            "delay_to_sink_ms": getattr(nguoi_gui, "do_tre_ve_tram_cuc_bo_ms", 0.0),
+            "capacity_to_sink_mbps": getattr(
+                nguoi_gui,
+                "dung_luong_ve_tram_cuc_bo_mbps",
+                float("inf")
+            ),
             "thoi_diem_gui": thong_diep.get("thoi_diem_gui", time.time()),
             "thong_so_kenh": thong_so_kenh
         })
@@ -384,31 +581,55 @@ class MessageBroker:
     async def gui_goi_tin_da_chang_ve_tram(self, ma_nguon: str, thong_diep: dict) -> bool:
         """
         Định tuyến và truyền gói tin đa chặng (Multi-hop E2E) từ UAV nguồn về Trạm mặt đất:
-        - Tìm lộ trình tối ưu qua Dijkstra (A2G trực tiếp, FANET Relay hoặc Vệ tinh LEO).
+        - Chọn từng chặng từ quảng bá láng giềng và thử tuyến thay thế khi truyền thất bại.
         - Phát từng chặng qua `gui_don_huong` để kích hoạt hiệu ứng tia `RF_LINK` và thống kê QoS.
         - Phát sự kiện `E2E_ROUTE_COMPLETED` khi gói tin tới Trạm mặt đất.
         """
-        kich_thuoc_kb = float(thong_diep.get("kich_thuoc_kb", 12.0))
-        loai_tin = thong_diep.get("loai_tin") or thong_diep.get("loai_thong_diep") or "TELEMETRY_REPORT"
-        tuyen = self.tim_tuyen_den_tram_mat_dat(ma_nguon, kich_thuoc_kb=kich_thuoc_kb)
-        if not tuyen or len(tuyen.get("nodes", [])) < 2:
+        source = self.danh_sach_tac_nhan.get(ma_nguon)
+        if not source or source.loai_tac_nhan == "TRẠM_MẶT_ĐẤT":
             return False
 
-        nodes = list(tuyen["nodes"])
-        channels = list(tuyen.get("channels", []))
-        for idx in range(len(nodes) - 1):
-            hop_msg = {
-                **thong_diep,
-                "loai_tin": loai_tin,
-                "kich_thuoc_kb": kich_thuoc_kb,
-                "lo_trinh_di_qua": nodes[: idx + 2],
-            }
-            ok = await self.gui_don_huong(nodes[idx], nodes[idx + 1], hop_msg)
-            if not ok:
+        kich_thuoc_kb = float(thong_diep.get("kich_thuoc_kb", 12.0))
+        loai_tin = thong_diep.get("loai_tin") or thong_diep.get("loai_thong_diep") or "TELEMETRY_REPORT"
+        nodes = [ma_nguon]
+        channels = []
+        current_id = ma_nguon
+        ground_station = None
+
+        for _ in range(len(self.danh_sach_tac_nhan)):
+            current = self.danh_sach_tac_nhan.get(current_id)
+            if not current:
+                return False
+            if current.loai_tac_nhan == "TRẠM_MẶT_ĐẤT":
+                ground_station = current
+                break
+
+            selected_route = await self.gui_chang_tiep_ve_tram(
+                current_id,
+                {
+                    **thong_diep,
+                    "loai_tin": loai_tin,
+                    "kich_thuoc_kb": kich_thuoc_kb
+                },
+                nodes
+            )
+            if not selected_route:
                 return False
 
+            next_id = selected_route["nodes"][1]
+            if next_id in nodes:
+                return False
+            nodes.append(next_id)
+            if selected_route.get("channels"):
+                channels.append(selected_route["channels"][0])
+            current_id = next_id
+
+        if not ground_station:
+            return False
+
         last_ch = channels[-1] if channels else {}
-        tong_tre_ms = round(float(tuyen.get("delay_ms", 0.0)), 2)
+        tong_tre_ms = round(sum(float(channel.get("do_tre_ms", 0.0)) for channel in channels), 2)
+        tong_nang_luong = round(sum(float(channel.get("energy_j", 0.0)) for channel in channels), 3)
         ket_qua_e2e = {
             "ma_phien": thong_diep.get("ma_phien_dau_gia", "TELEM"),
             "loai_su_co": loai_tin,
@@ -419,7 +640,7 @@ class MessageBroker:
             "tong_do_tre_ms": tong_tre_ms,
             "snr_chang_cuoi_db": last_ch.get("snr_db", 0.0),
             "dung_luong_chang_cuoi_mbps": last_ch.get("dung_luong_mbps", 0.0),
-            "nang_luong_du_kien_joule": round(float(tuyen.get("energy_j", 0.0)), 3),
+            "nang_luong_du_kien_joule": tong_nang_luong,
             "thoi_gian": time.strftime("%H:%M:%S"),
             "trang_thai_phu_song": "KET_NOI",
         }

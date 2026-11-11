@@ -75,6 +75,9 @@ class BaseAgent(ABC):
         self.chi_phi_ve_tram_cuc_bo: float = (
             0.0 if self.loai_tac_nhan == "TRẠM_MẶT_ĐẤT" else float("inf")
         )
+        self.nang_luong_ve_tram_cuc_bo = 0.0
+        self.do_tre_ve_tram_cuc_bo_ms = 0.0
+        self.dung_luong_ve_tram_cuc_bo_mbps = float("inf")
 
         self.thong_ke = {
             "goi_tin_da_gui": 0,
@@ -133,6 +136,18 @@ class BaseAgent(ABC):
             "zone_id": thong_diep.get("zone_id", hien_co.get("zone_id")),
             "cost_to_sink": float(thong_diep.get("cost_to_sink", hien_co.get("cost_to_sink", float("inf")))),
             "path_to_sink": list(thong_diep.get("path_to_sink", hien_co.get("path_to_sink", []))),
+            "energy_to_sink_j": float(
+                thong_diep.get("energy_to_sink_j", hien_co.get("energy_to_sink_j", 0.0))
+            ),
+            "delay_to_sink_ms": float(
+                thong_diep.get("delay_to_sink_ms", hien_co.get("delay_to_sink_ms", 0.0))
+            ),
+            "capacity_to_sink_mbps": float(
+                thong_diep.get(
+                    "capacity_to_sink_mbps",
+                    hien_co.get("capacity_to_sink_mbps", float("inf"))
+                )
+            ),
             "snr_db": float(thong_so_kenh.get("snr_db", hien_co.get("snr_db", 20.0))),
             "do_tre_ms": float(thong_so_kenh.get("do_tre_ms", hien_co.get("do_tre_ms", 5.0))),
             "dung_luong_mbps": float(thong_so_kenh.get("dung_luong_mbps", hien_co.get("dung_luong_mbps", 20.0))),
@@ -233,10 +248,9 @@ class BaseAgent(ABC):
     async def lang_nghe_lien_tuc(self):
         """Vòng lặp Bất đồng bộ (Async Event Loop) xử lý hàng đợi gói tin đến của Tác nhân"""
         while self.dang_hoat_dong:
+            thong_diep = await self.hang_doi_thong_diep.get()
             try:
-                thong_diep = await self.hang_doi_thong_diep.get()
                 if self.trang_thai == AgentState.OFFLINE:
-                    self.hang_doi_thong_diep.task_done()
                     continue
 
                 # Khấu trừ năng lượng mạch thu (Rx) khi nhận gói tin
@@ -248,11 +262,12 @@ class BaseAgent(ABC):
 
                 # Gọi hàm xử lý chuyên biệt của từng loại Tác nhân (Đa hình)
                 await self.xu_ly_thong_diep(thong_diep)
-                self.hang_doi_thong_diep.task_done()
             except asyncio.CancelledError:
-                break
+                raise
             except Exception as e:
                 print(f"[LỖI TÁC NHÂN {self.ma_dinh_danh}] {e}")
+            finally:
+                self.hang_doi_thong_diep.task_done()
 
     @abstractmethod
     async def cap_nhat_vat_ly(self, dt_giay: float):

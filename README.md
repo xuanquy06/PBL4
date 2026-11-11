@@ -19,18 +19,19 @@ Hệ thống bao gồm **32 tác nhân tự trị (Autonomous Agents)** giao ti�
 ## 2. Các Thuật toán & Cơ chế Cốt lõi
 
 ### 2.1. Giao thức Đấu thầu Phân tán FIPA-CNP (Contract Net Protocol)
-Khi người dùng kích hoạt một điểm cháy trên bản đồ:
-1. **Phát lệnh gọi thầu (`CFP_FIRE_EVENT`):** Trạm Kiểm Lâm phát quảng bá tọa độ đám cháy tới toàn bộ đội hình UAV.
-2. **Đánh giá & Báo giá (`PROPOSE` / `REFUSE`):**
+Khi người dùng kích hoạt một điểm cháy trên bản đồ, ứng dụng dùng vị trí đó làm **sự kiện phát hiện giả lập** (chưa tích hợp cảm biến camera/nhiệt thực):
+1. **Báo cáo phát hiện (`FIRE_DETECTION_REPORT`):** UAV gần điểm cháy nhất có thể truyền sẽ gửi tọa độ về trạm qua broker, theo tuyến nhiều chặng nếu cần. Nếu UAV gần nhất không có tuyến khả dụng, hệ thống thử UAV kế tiếp.
+2. **Phát lệnh gọi thầu (`CFP_FIRE_EVENT`):** Sau khi báo cáo được chuyển tới trạm, hệ thống mở phiên CNP và mời các UAV phù hợp tham gia đấu thầu.
+3. **Đánh giá & Báo giá (`PROPOSE` / `REFUSE`):**
    - Mỗi UAV tự tính năng lượng bay khứ hồi $E_{\text{khứ hồi}}$ dựa trên khoảng cách 3D và công suất động cơ.
    - **Ràng buộc an toàn:** Chỉ các UAV có mức pin dự kiến sau khi bay tới điểm cháy và quay về $> 25\%$ mới được phép nộp hồ sơ thầu (`PROPOSE`); ngược lại tự động gửi bản tin từ chối (`REFUSE`).
    - **Hàm chi phí đa mục tiêu:** Ưu tiên UAV thuộc đúng phân khu đang cháy, khoảng cách gần nhất, mức pin cao nhất và cân bằng số nhiệm vụ đã nhận.
-3. **Trao thầu (`ACCEPT_PROPOSAL`) & Cơ động hiện trường:** UAV có chi phí thấp nhất thắng thầu, lập tức tách khỏi vòng tuần tra để bay tới tâm cháy, gửi gói tin báo cáo sự cố về trạm và bay lượn 1 vòng nhỏ ($\sim 130\text{m}$) khoanh vùng đám cháy trước khi quay lại quỹ đạo tuần tra gốc.
+4. **Trao thầu (`ACCEPT_PROPOSAL`) & Cơ động hiện trường:** UAV có chi phí thấp nhất thắng thầu, lập tức tách khỏi vòng tuần tra để bay tới tâm cháy, gửi gói dữ liệu hiện trường về trạm và bay lượn 1 vòng nhỏ ($\sim 130\text{m}$) khoanh vùng đám cháy trước khi quay lại quỹ đạo tuần tra gốc.
 
-### 2.2. Định tuyến Đa chặng E2E qua Mạng FANET (Multi-Objective Dijkstra)
-* **Bài toán địa hình Sơn Trà:** Các UAV ở phân khu gần trạm (`Z1`, `Z2`, `Z3`) có tầm nhìn thẳng (LoS $\le 4.2\text{ km}$) nên truyền trực tiếp Không – Đất (**A2G**) về Trạm Kiểm Lâm. Ngược lại, các UAV ở sườn Đông/Bắc (`Z5`, `Z6`, `Z7`) bị đỉnh núi Sơn Trà che khuất không thể truyền thẳng về trạm.
-* **Giải pháp:** Hệ thống sử dụng thuật toán **Dijkstra đa mục tiêu** ([`core/message_broker.py`](core/message_broker.py)) kết hợp mô hình vật lý kênh truyền (suy hao không gian tự do FSPL, tỷ số tín hiệu trên nhiễu SNR, dung lượng kênh Shannon-Hartley và tỷ lệ lỗi gói PER) để tìm chuỗi bắc cầu qua các UAV trung gian (**FANET Relay**) hoặc qua **Vệ tinh LEO** về trạm.
-* **Tự hồi phục đường truyền (Self-Healing Routing):** Nếu một UAV trung gian bất ngờ hết pin hoặc sập nguồn giữa lúc đang chuyển tiếp gói tin, UAV trước đó tự động chạy lại Dijkstra để bẻ lái gói tin sang nhánh UAV khác.
+### 2.2. Định tuyến phân tán theo thông tin láng giềng
+* **Mô hình liên kết:** Các ngưỡng A2G (4,2 km) và A2A (7 km) được dùng như giả định cự ly truyền dẫn trong mô phỏng; hiện chưa có dữ liệu địa hình/DEM để xác định che khuất thực tế theo từng vị trí.
+* **Chọn tuyến:** Mỗi UAV và vệ tinh quảng bá tuyến tới trạm cùng các chỉ số chi phí qua beacon. Nút nguồn chỉ xét bảng láng giềng 1-hop, kiểm tra chất lượng chặng đầu bằng mô hình kênh truyền (FSPL, SNR, dung lượng và PER), rồi chọn tuyến khả dụng có chi phí thấp nhất; không chạy tìm kiếm Dijkstra trên toàn đồ thị trong luồng định tuyến vận hành. Bộ định tuyến toàn cục còn lại trong mã chỉ phục vụ tham chiếu/kiểm thử.
+* **Phục hồi:** Khi tuyến đang dùng không còn khả dụng, nút gửi có thể chọn tuyến thay thế từ các quảng bá láng giềng còn hạn. Khả năng hội tụ phụ thuộc vào beacon và trạng thái láng giềng mà node đã nhận được.
 
 ### 2.3. Cơ chế Thay ca Tại chỗ ("Người mới tới nơi – Người cũ mới về" / In-Zone Hot-Swap)
 Để giải quyết bài toán khoảng cách từ Trạm tới các phân khu khác nhau (`Z1` gần, `Z7` xa gần $8\text{ km}$) mà vẫn đảm bảo **mỗi phân khu luôn duy trì đủ 3 UAV hoạt động 24/7**:
@@ -42,7 +43,7 @@ Khi người dùng kích hoạt một điểm cháy trên bản đồ:
 
 ## 3. Giao diện Điều hành & Giám sát Thời gian thực
 
-Hệ thống cung cấp 2 giao diện Web thời gian thực qua WebSocket:
+Hệ thống cung cấp 2 giao diện Web thời gian thực, cùng sử dụng endpoint WebSocket dashboard `/ws/mophong`. Telemetry của UAV đi qua broker mạng trước khi được phát thành sự kiện cho giao diện:
 
 1. **Trang Bản đồ Chiến thuật (`/` — [`templates/index.html`](templates/index.html)):**
    - Bản đồ vệ tinh 7 phân khu (`Z1`–`Z7`) bán đảo Sơn Trà.
@@ -66,10 +67,10 @@ PBL4/
 │   └── ground_station.py       # Tác nhân Trạm Kiểm Lâm Mặt Đất
 ├── core/                       # Lõi giao tiếp và định tuyến mạng
 │   ├── base_agent.py           # Lớp cơ sở của mọi tác nhân (Pin, hàng đợi thông điệp, FSM)
-│   ├── message_broker.py       # Bộ định tuyến Dijkstra đa mục tiêu & đồng bộ WebSocket
-│   └── ground_station_server.py# Máy chủ thu thập Telemetry & điều phối phiên thầu CNP
+│   ├── message_broker.py       # Định tuyến theo beacon láng giềng, kênh vô tuyến & WebSocket dashboard
+│   └── ground_station_server.py# Điều phối phiên đấu thầu CNP tại Trạm mặt đất
 ├── environment/                # Động cơ vật lý & quản lý kịch bản
-│   ├── physics_engine.py       # Tính toán 3D ECEF, tầm nhìn thẳng LoS, FSPL, SNR, Shannon, PER
+│   ├── physics_engine.py       # Tính toán 3D ECEF, ngưỡng cự ly LoS giả định, FSPL, SNR, Shannon, PER
 │   ├── scenario_manager.py     # Khởi tạo 7 vùng Geofence Sơn Trà, 28 UAV & ghi log CSV
 │   └── simulation_loop.py      # Vòng lặp đồng hồ vật lý trung tâm (World Clock)
 ├── api/                        # Các REST API & WebSocket Endpoints (FastAPI)

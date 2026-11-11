@@ -1,22 +1,13 @@
 """UAV patrol, energy-aware scheduling, and CNP mission behavior."""
 import asyncio
-import json
 import math
-import os
 import time
 import uuid
 from enum import Enum
-from typing import Dict, List, Optional, Protocol
-from urllib.parse import quote
-import websockets
-from websockets.exceptions import WebSocketException
+from typing import Dict, List, Optional
 from core.base_agent import AgentState, BaseAgent
 
 LOW_BATTERY_THRESHOLD = 25.0
-
-
-class WebSocketConnection(Protocol):
-    async def close(self) -> None: ...
 
 
 class UAVState(str, Enum):
@@ -34,7 +25,6 @@ class UAVAgent(BaseAgent):
         waypoints: Optional[List[dict]] = None,
         cong_suat_bay_w: float = 80.0,
         zone_id: Optional[str] = None,
-        ws_server_url: Optional[str] = None,
         **kwargs
     ):
         kwargs.setdefault("loai_tac_nhan", "MÁY_BAY")
@@ -68,34 +58,12 @@ class UAVAgent(BaseAgent):
         self._relay_uav_id: Optional[str] = None
         self.relay_target_id: Optional[str] = None
         self._relay_requesters: set[str] = set()
-        self.ws_server_url = (
-            ws_server_url
-            or os.getenv("SAGSINS_UAV_WS_URL")
-        )
-        self._websocket: Optional[WebSocketConnection] = None
-        self._satellite_websocket: Optional[WebSocketConnection] = None
-        self._websocket_receiver_task: Optional[asyncio.Task] = None
-        self._satellite_uplink_task: Optional[asyncio.Task] = None
-        self._pending_satellite_payload: Optional[dict] = None
-        self._websocket_send_lock: Optional[asyncio.Lock] = None
-        self._websocket_connect_lock: Optional[asyncio.Lock] = None
-        self._websocket_retry_after = {"uav": 0.0, "satellite": 0.0}
-        self._websocket_error_reported: set[str] = set()
+        self._thoi_gian_beacon_tich_luy = 0.0
         if self._dang_o_tai_tram():
             self.chuyen_trang_thai(AgentState.IDLE)
             self.uav_state = UAVState.STANDBY
         else:
             self.chuyen_trang_thai(AgentState.PATROLLING)
-
-    def _get_send_lock(self) -> asyncio.Lock:
-        if self._websocket_send_lock is None:
-            self._websocket_send_lock = asyncio.Lock()
-        return self._websocket_send_lock
-
-    def _get_connect_lock(self) -> asyncio.Lock:
-        if self._websocket_connect_lock is None:
-            self._websocket_connect_lock = asyncio.Lock()
-        return self._websocket_connect_lock
 
     def _get_den_muc_tieu_event(self) -> asyncio.Event:
         if self._den_muc_tieu is None:
@@ -146,6 +114,30 @@ class UAVAgent(BaseAgent):
         self.waypoints = lo_trinh_moi
         self.waypoint_index = self.waypoint_index % max(1, len(self.waypoints))
 
+    async def dat_pin_gia_lap(self, phan_tram_pin: float):
+        """Áp dụng sự cố pin qua hành vi của UAV thay vì để API sửa trực tiếp FSM."""
+        self.pin_hien_tai = self.pin_toi_da * phan_tram_pin / 100.0
+        if self.pin_hien_tai <= 0.0:
+            self._giai_phong_uav_chuyen_tiep()
+            self.chuyen_trang_thai(AgentState.OFFLINE)
+            await self._phat_yeu_cau_ban_giao_vung()
+        elif phan_tram_pin < self.nguong_pin_yeu_pct:
+            self.chuyen_trang_thai(AgentState.LOW_BATTERY_RTB)
+            await self._phat_yeu_cau_ban_giao_vung()
+        else:
+            self._yeu_cau_ban_giao_da_phat = False
+            self._waiting_for_relief_id = None
+            if self.waypoints_goc:
+                self._khoi_phuc_quy_dao_tuan_tra_goc()
+            await self._phat_thong_bao_khoi_phuc_vung()
+            if self._dang_o_tai_tram():
+                self.chuyen_trang_thai(
+                    AgentState.CHARGING if phan_tram_pin < 100.0 else AgentState.IDLE
+                )
+                self.uav_state = UAVState.STANDBY
+            else:
+                self.chuyen_trang_thai(AgentState.PATROLLING)
+
     async def cap_nhat_vat_ly(self, dt_giay: float):
         await self.update(dt_giay)
 
@@ -154,7 +146,24 @@ class UAVAgent(BaseAgent):
             return
         self.don_dep_lang_gieng_het_han()
         await self._cap_nhat_duong_truyen()
-        await self._gui_telemetry_websocket()
+        self._thoi_gian_beacon_tich_luy += dt_giay
+        if (
+            self._thoi_gian_beacon_tich_luy >= 4.0
+            and len(self.tuyen_ve_tram_cuc_bo) > 1
+        ):
+            self._thoi_gian_beacon_tich_luy = 0.0
+            await self.bo_dinh_tuyen.phat_song_quang_ba(
+                self.ma_dinh_danh,
+                {
+                    "loai_tin": "HELLO_BEACON",
+                    "cost_to_sink": self.chi_phi_ve_tram_cuc_bo,
+                    "path_to_sink": list(self.tuyen_ve_tram_cuc_bo),
+                    "energy_to_sink_j": self.nang_luong_ve_tram_cuc_bo,
+                    "delay_to_sink_ms": self.do_tre_ve_tram_cuc_bo_ms,
+                    "capacity_to_sink_mbps": self.dung_luong_ve_tram_cuc_bo_mbps,
+                    "kich_thuoc_kb": 1.0
+                }
+            )
         if self.trang_thai == AgentState.CHARGING or (
             self.uav_state == UAVState.STANDBY and self._dang_o_tai_tram()
         ):
@@ -290,11 +299,31 @@ class UAVAgent(BaseAgent):
 
     async def _cap_nhat_duong_truyen(self):
         if self._dang_o_tai_tram():
+            tram = next(
+                (
+                    agent for agent in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()
+                    if agent.loai_tac_nhan == "TRẠM_MẶT_ĐẤT"
+                    and self._khoang_cach_m(
+                        self.toa_do["vi_do"],
+                        self.toa_do["kinh_do"],
+                        agent.toa_do["vi_do"],
+                        agent.toa_do["kinh_do"]
+                    ) <= 1.0
+                ),
+                None
+            )
             self.direct_los = True
             self.relay_required = False
             self.current_link = "GROUND_LINK"
             self.relay_target_id = None
-            self.tuyen_ve_tram_cuc_bo = [self.ma_dinh_danh, "TRẠM_KIỂM_LÂM_SƠN_TRÀ"]
+            self.tuyen_ve_tram_cuc_bo = (
+                [self.ma_dinh_danh, tram.ma_dinh_danh]
+                if tram else [self.ma_dinh_danh]
+            )
+            self.chi_phi_ve_tram_cuc_bo = 0.0
+            self.nang_luong_ve_tram_cuc_bo = 0.0
+            self.do_tre_ve_tram_cuc_bo_ms = 0.0
+            self.dung_luong_ve_tram_cuc_bo_mbps = float("inf")
             return
         cac_tram = [
             agent for agent in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()
@@ -303,7 +332,7 @@ class UAVAgent(BaseAgent):
         if not cac_tram:
             self.direct_los = False
             self.relay_required = True
-            self.current_link = "LEO_SATELLITE"
+            self.current_link = "OUT_OF_LOS"
             self.relay_target_id = None
             return
         tram = min(
@@ -338,9 +367,12 @@ class UAVAgent(BaseAgent):
         Đánh giá và lựa chọn đường truyền tối ưu về Trạm mặt đất:
         - GROUND_LINK: Nếu chặng kế tiếp là Trạm mặt đất trực tiếp (A2G LoS <= 4.2 km).
         - FANET_RELAY: Nếu chặng kế tiếp là một UAV khác làm trung chuyển.
-        - LEO_SATELLITE: Nếu chặng kế tiếp là vệ tinh LEO hoặc mất tuyến mặt đất.
+        - LEO_SATELLITE: Nếu chặng kế tiếp là vệ tinh LEO.
+        - OUT_OF_LOS: Chưa có tuyến khả dụng trong bảng láng giềng cục bộ.
         """
-        tuyen_dijkstra = self.bo_dinh_tuyen.tim_tuyen_den_tram_mat_dat(self.ma_dinh_danh)
+        tuyen_dijkstra = self.bo_dinh_tuyen.tim_tuyen_den_tram_mat_dat(
+            self.ma_dinh_danh
+        )
         if tuyen_dijkstra and len(tuyen_dijkstra.get("nodes", [])) >= 2:
             ma_ke_tiep = tuyen_dijkstra["nodes"][1]
             tac_nhan_ke_tiep = self.bo_dinh_tuyen.lay_tac_nhan(ma_ke_tiep)
@@ -376,11 +408,11 @@ class UAVAgent(BaseAgent):
                 self.relay_target_id = ma_ke_tiep
                 return self.current_link
 
-        # Fallback khi không tìm được tuyến khả dụng: Chuyển sang vệ tinh LEO
+        # Không gán nhãn LEO nếu bảng định tuyến chưa có tuyến qua vệ tinh.
         self._giai_phong_uav_chuyen_tiep()
         self.direct_los = False
         self.relay_required = True
-        self.current_link = "LEO_SATELLITE"
+        self.current_link = "OUT_OF_LOS"
         self.relay_target_id = None
         return self.current_link
 
@@ -419,169 +451,6 @@ class UAVAgent(BaseAgent):
                 neighbor.toa_do["kinh_do"]
             )
         )
-
-    def _telemetry_payload(self) -> dict:
-        return {
-            **self.xuat_ho_so_trang_thai(),
-            "direct_los": self.direct_los,
-            "relay_required": self.relay_required,
-            "relay_target_id": self.relay_target_id,
-        }
-
-    async def _gui_telemetry_websocket(self):
-        if not self.ws_server_url:
-            return
-        payload = self._telemetry_payload()
-        if self.direct_los:
-            if await self._ensure_websocket_connection():
-                await self._send_websocket_json(self._websocket, payload)
-            return
-        if self.current_link == "FANET_RELAY" and self.relay_target_id:
-            relay = self.bo_dinh_tuyen.lay_tac_nhan(self.relay_target_id)
-            if isinstance(relay, UAVAgent) and await relay._ensure_websocket_connection():
-                relay_packet = {
-                    "type": "RELAY",
-                    "source_id": self.ma_dinh_danh,
-                    "relay_target_id": relay.ma_dinh_danh,
-                    "payload": payload,
-                }
-                if await relay._send_websocket_json(relay._websocket, relay_packet):
-                    return
-            self.current_link = "LEO_SATELLITE"
-            self.relay_target_id = None
-            payload = self._telemetry_payload()
-        self._pending_satellite_payload = payload
-        if not self._satellite_uplink_task or self._satellite_uplink_task.done():
-            self._satellite_uplink_task = asyncio.create_task(
-                self._gui_qua_ve_tinh_sau_do_tre()
-            )
-
-    async def _ensure_websocket_connection(self, satellite: bool = False) -> bool:
-        async with self._get_connect_lock():
-            return await self._open_websocket_connection(satellite)
-
-    async def _open_websocket_connection(self, satellite: bool = False) -> bool:
-        if not self.ws_server_url:
-            return False
-        attribute = "_satellite_websocket" if satellite else "_websocket"
-        channel = "satellite" if satellite else "uav"
-        existing = getattr(self, attribute)
-        if existing:
-            is_closed = getattr(existing, "closed", None)
-            is_open = getattr(getattr(existing, "state", None), "name", None) == "OPEN"
-            if is_closed is False or is_open:
-                return True
-            setattr(self, attribute, None)
-        now = time.monotonic()
-        if now < self._websocket_retry_after[channel]:
-            return False
-        server_base = self.ws_server_url.rstrip("/")
-        path = "satellite" if satellite else "uav"
-        url = f"{server_base.rsplit('/', 1)[0]}/{path}/{quote(self.ma_dinh_danh, safe='')}"
-        try:
-            websocket = await asyncio.wait_for(
-                websockets.connect(url, open_timeout=0.5),
-                timeout=0.75
-            )
-        except (OSError, asyncio.TimeoutError, WebSocketException) as error:
-            self._websocket_retry_after[channel] = now + 2.0
-            if channel not in self._websocket_error_reported:
-                self._websocket_error_reported.add(channel)
-                await self.bo_dinh_tuyen.gui_log_ra_web(
-                    "WARN",
-                    f"[{self.ma_dinh_danh}] Không kết nối được WebSocket "
-                    f"{'vệ tinh' if satellite else 'trạm'}: {error}"
-                )
-            return False
-
-        setattr(self, attribute, websocket)
-        self._websocket_error_reported.discard(channel)
-        if not satellite:
-            self._websocket_receiver_task = asyncio.create_task(
-                self._nhan_lenh_websocket(websocket)
-            )
-        return True
-
-    async def _send_websocket_json(self, websocket, payload: dict) -> bool:
-        if not websocket:
-            return False
-        is_closed = getattr(websocket, "closed", None)
-        is_open = getattr(getattr(websocket, "state", None), "name", None) == "OPEN"
-        if is_closed is True or (is_closed is None and not is_open):
-            return False
-        try:
-            async with self._get_send_lock():
-                await websocket.send(json.dumps(payload, ensure_ascii=False))
-            return True
-        except (OSError, WebSocketException) as error:
-            if websocket is self._websocket:
-                self._websocket = None
-            elif websocket is self._satellite_websocket:
-                self._satellite_websocket = None
-            await self.bo_dinh_tuyen.gui_log_ra_web(
-                "WARN", f"[{self.ma_dinh_danh}] Lỗi gửi WebSocket: {error}"
-            )
-            return False
-
-    async def _nhan_lenh_websocket(self, websocket):
-        try:
-            async for raw_message in websocket:
-                try:
-                    packet = json.loads(raw_message)
-                except (TypeError, json.JSONDecodeError) as error:
-                    await self.bo_dinh_tuyen.gui_log_ra_web(
-                        "WARN", f"[{self.ma_dinh_danh}] Bỏ qua lệnh WebSocket sai JSON: {error}"
-                    )
-                    continue
-                if packet.get("type") != "COMMAND" or not isinstance(packet.get("data"), dict):
-                    continue
-                try:
-                    self.hang_doi_thong_diep.put_nowait(packet["data"])
-                except asyncio.QueueFull:
-                    await self.bo_dinh_tuyen.gui_log_ra_web(
-                        "WARN", f"[{self.ma_dinh_danh}] Hàng đợi đầy, bỏ qua lệnh từ GroundStationServer."
-                    )
-        except (OSError, WebSocketException) as error:
-            await self.bo_dinh_tuyen.gui_log_ra_web(
-                "WARN", f"[{self.ma_dinh_danh}] Kết nối WebSocket đã gián đoạn: {error}"
-            )
-        finally:
-            if self._websocket is websocket:
-                self._websocket = None
-
-    async def _gui_qua_ve_tinh_sau_do_tre(self):
-        while self._pending_satellite_payload:
-            payload = self._pending_satellite_payload
-            self._pending_satellite_payload = None
-            await asyncio.sleep(2.0)
-            if not await self._ensure_websocket_connection(satellite=True):
-                continue
-            await self._send_websocket_json(
-                self._satellite_websocket,
-                {
-                    "type": "SATELLITE_UPLINK",
-                    "id": self.ma_dinh_danh,
-                    "payload": payload
-                }
-            )
-
-    async def dong_ket_noi_websocket(self):
-        for websocket in (self._websocket, self._satellite_websocket):
-            if websocket:
-                await websocket.close()
-        background_tasks = [
-            task for task in (
-                self._websocket_receiver_task,
-                self._satellite_uplink_task
-            )
-            if task and not task.done()
-        ]
-        for task in background_tasks:
-            task.cancel()
-        if background_tasks:
-            await asyncio.gather(*background_tasks, return_exceptions=True)
-        self._websocket = None
-        self._satellite_websocket = None
 
     @staticmethod
     def _khoang_cach_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -1134,19 +1003,11 @@ class UAVAgent(BaseAgent):
             }, set(cac_uav_cung_vung))
 
     async def _phat_lenh_quang_ba(self, thong_diep: dict, recipient_ids: set[str]):
-        server = getattr(self.bo_dinh_tuyen, "ground_station_server", None)
-        da_gui_qua_ws = (
-            await server.broadcast_command(thong_diep, recipient_ids)
-            if server
-            else set()
+        await self.bo_dinh_tuyen.phat_song_quang_ba(
+            self.ma_dinh_danh,
+            thong_diep,
+            danh_sach_nguoi_nhan=recipient_ids
         )
-        recipients_not_reached = recipient_ids - da_gui_qua_ws
-        if recipients_not_reached:
-            await self.bo_dinh_tuyen.phat_song_quang_ba(
-                self.ma_dinh_danh,
-                thong_diep,
-                danh_sach_nguoi_nhan=recipients_not_reached
-            )
 
     def nhan_vung_tuan_tra(self, ma_uav_nguon: str, waypoints: List[dict]):
         if ma_uav_nguon in self._vung_tuan_tra_phu:
@@ -1172,88 +1033,41 @@ class UAVAgent(BaseAgent):
         (Trực tiếp A2G, qua UAV FANET Relay, hoặc qua Vệ tinh LEO).
         """
         kich_thuoc_kb = float(su_co.get("kich_thuoc_kb", 250.0))
-        tuyen_dijkstra = self.bo_dinh_tuyen.tim_tuyen_den_tram_mat_dat(
-            self.ma_dinh_danh, kich_thuoc_kb
-        )
-
-        if not tuyen_dijkstra or len(tuyen_dijkstra.get("nodes", [])) < 2:
-            await self.bo_dinh_tuyen.gui_log_ra_web(
-                "WARN", f"[{self.ma_dinh_danh}] Không tìm thấy tuyến khả dụng tới trạm mặt đất."
-            )
-            return
-
-        tuyen_nodes = tuyen_dijkstra["nodes"]
-        ma_ke_tiep = tuyen_nodes[1]
-        chi_phi = tuyen_dijkstra.get("cost", 0.0)
-
-        await self.bo_dinh_tuyen.gui_log_ra_web(
-            "INFO",
-            f"[{self.ma_dinh_danh}] Tuyến truyền dữ liệu sự cố: {' ➔ '.join(tuyen_nodes)} "
-            f"(Chi phí: {chi_phi}). Đang phát gói dữ liệu..."
-        )
-
         goi_tin = {
             "loai_tin": "GIAO_NHIEM_VU_DU_LIEU",
             "ma_phien_dau_gia": su_co.get("ma_phien_dau_gia", str(uuid.uuid4())),
             "loai_su_co": su_co.get("loai_su_co", "CHÁY_RỪNG"),
             "toa_do_su_co": {"vi_do": su_co["vi_do"], "kinh_do": su_co["kinh_do"]},
             "thoi_diem_khoi_tao": time.time(),
-            "lo_trinh_di_qua": [self.ma_dinh_danh],
-            "tuyen_du_kien": tuyen_nodes,
-            "nang_luong_du_kien_joule": tuyen_dijkstra.get("energy_j", 0.0),
             "kich_thuoc_kb": kich_thuoc_kb
         }
-
-        da_gui = await self.bo_dinh_tuyen.gui_don_huong(
-            self.ma_dinh_danh, ma_ke_tiep, goi_tin
+        tuyen = await self.bo_dinh_tuyen.gui_chang_tiep_ve_tram(
+            self.ma_dinh_danh,
+            goi_tin,
+            [self.ma_dinh_danh]
         )
-        if da_gui:
+        if tuyen:
+            ma_ke_tiep = tuyen["nodes"][1]
             await self.bo_dinh_tuyen.gui_log_ra_web(
                 "RELAY", f"[{self.ma_dinh_danh}] Đã truyền gói tin sự cố tới [{ma_ke_tiep}]."
             )
         else:
             await self.bo_dinh_tuyen.gui_log_ra_web(
-                "WARN", f"[{self.ma_dinh_danh}] Truyền gói tin sự cố tới [{ma_ke_tiep}] thất bại."
+                "WARN", f"[{self.ma_dinh_danh}] Không tìm được tuyến truyền gói tin sự cố tới trạm mặt đất."
             )
 
     async def _chuyen_tiep_du_lieu(self, thong_diep: dict):
-        tuyen = list(thong_diep.get("tuyen_du_kien", []))
-        lo_trinh = list(thong_diep.get("lo_trinh_di_qua", []))
-        if self.ma_dinh_danh not in lo_trinh:
-            lo_trinh.append(self.ma_dinh_danh)
-        if self.ma_dinh_danh not in tuyen or tuyen.index(self.ma_dinh_danh) + 1 >= len(tuyen):
-            tuyen_moi = self.bo_dinh_tuyen.tim_tuyen_den_tram_mat_dat(
-                self.ma_dinh_danh,
-                float(thong_diep.get("kich_thuoc_kb", 250.0)),
-                loai_tru=set(lo_trinh[:-1])
+        tuyen = await self.bo_dinh_tuyen.gui_chang_tiep_ve_tram(
+            self.ma_dinh_danh,
+            thong_diep
+        )
+        if not tuyen:
+            await self.bo_dinh_tuyen.gui_log_ra_web(
+                "WARN", f"[{self.ma_dinh_danh}] Không còn tuyến relay khả dụng tới trạm mặt đất."
             )
-            tuyen = tuyen_moi["nodes"] if tuyen_moi else []
-        for _ in range(2):
-            if self.ma_dinh_danh not in tuyen or tuyen.index(self.ma_dinh_danh) + 1 >= len(tuyen):
-                break
-            ma_ke_tiep = tuyen[tuyen.index(self.ma_dinh_danh) + 1]
-            da_gui = await self.bo_dinh_tuyen.gui_don_huong(
-                self.ma_dinh_danh,
-                ma_ke_tiep,
-                {
-                    **thong_diep,
-                    "loai_tin": thong_diep.get("loai_tin", "GIAO_NHIEM_VU_DU_LIEU"),
-                    "lo_trinh_di_qua": lo_trinh,
-                    "tuyen_du_kien": tuyen
-                }
-            )
-            if da_gui:
-                self.thong_ke["goi_tin_chuyen_tiep"] += 1
-                await self.bo_dinh_tuyen.gui_log_ra_web(
-                    "RELAY", f"📡 [{self.ma_dinh_danh}] Chuyển tiếp FANET tới {ma_ke_tiep}."
-                )
-                return
-            tuyen_moi = self.bo_dinh_tuyen.tim_tuyen_den_tram_mat_dat(
-                self.ma_dinh_danh,
-                float(thong_diep.get("kich_thuoc_kb", 250.0)),
-                loai_tru=set(lo_trinh[:-1])
-            )
-            tuyen = tuyen_moi["nodes"] if tuyen_moi else []
+            return
+
+        self.thong_ke["goi_tin_chuyen_tiep"] += 1
         await self.bo_dinh_tuyen.gui_log_ra_web(
-            "WARN", f"[{self.ma_dinh_danh}] Không còn tuyến relay khả dụng tới trạm mặt đất."
+            "RELAY", f"📡 [{self.ma_dinh_danh}] Chuyển tiếp FANET tới {tuyen['nodes'][1]}."
         )

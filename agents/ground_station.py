@@ -16,6 +16,8 @@ class GroundStationAgent(BaseAgent):
         super().__init__(bo_dinh_tuyen=bo_dinh_tuyen, **kwargs)
         self.chuyen_trang_thai(AgentState.IDLE)
         self.lich_su_goi_tin_thanh_cong = []
+        self.bao_cao_phat_hien_chay: dict[str, dict] = {}
+        self.telemetry_uav_moi_nhat = {}
         self._thoi_gian_beacon_tich_luy = 0.0
 
     async def cap_nhat_vat_ly(self, dt_giay: float):
@@ -32,6 +34,9 @@ class GroundStationAgent(BaseAgent):
                     "loai_tin": "HELLO_BEACON",
                     "cost_to_sink": 0.0,
                     "path_to_sink": [self.ma_dinh_danh],
+                    "energy_to_sink_j": 0.0,
+                    "delay_to_sink_ms": 0.0,
+                    "capacity_to_sink_mbps": float("inf"),
                     "kich_thuoc_kb": 1.0
                 }
             )
@@ -42,6 +47,88 @@ class GroundStationAgent(BaseAgent):
         thong_so_kenh = thong_diep.get("thong_so_kenh", {})
 
         if loai_tin == "HELLO_BEACON":
+            return
+
+        if loai_tin == "FIRE_DETECTION_REPORT":
+            ma_su_co = thong_diep.get("ma_su_co")
+            uav_phat_hien = thong_diep.get("uav_phat_hien")
+            lo_trinh = thong_diep.get("lo_trinh_di_qua", [])
+            try:
+                vi_do = float(thong_diep["vi_do"])
+                kinh_do = float(thong_diep["kinh_do"])
+            except (KeyError, TypeError, ValueError):
+                vi_do = kinh_do = None
+
+            if (
+                not isinstance(ma_su_co, str)
+                or not ma_su_co
+                or not isinstance(uav_phat_hien, str)
+                or not uav_phat_hien
+                or vi_do is None
+                or kinh_do is None
+                or not isinstance(lo_trinh, list)
+                or not all(isinstance(node_id, str) for node_id in lo_trinh)
+            ):
+                await self.bo_dinh_tuyen.gui_log_ra_web(
+                    "WARN", f"[FIRE DETECTION] Bỏ qua báo cáo không hợp lệ từ {nguoi_gui}."
+                )
+                return
+
+            bao_cao = {
+                "ma_su_co": ma_su_co,
+                "uav_phat_hien": uav_phat_hien,
+                "nguoi_gui_truc_tiep": nguoi_gui,
+                "loai_su_co": thong_diep.get("loai_su_co", "CHÁY_RỪNG"),
+                "vi_do": vi_do,
+                "kinh_do": kinh_do,
+                "thoi_diem_phat_hien": thong_diep.get("thoi_diem_phat_hien"),
+                "lo_trinh": list(lo_trinh),
+                "thoi_gian_nhan": time.time()
+            }
+            self.bao_cao_phat_hien_chay[ma_su_co] = bao_cao
+            await self.bo_dinh_tuyen.phat_su_kien_ra_web(
+                "FIRE_DETECTION_RECEIVED",
+                bao_cao
+            )
+            await self.bo_dinh_tuyen.gui_log_ra_web(
+                "EVENT",
+                f"[FIRE DETECTION] Nhận báo cáo sự cố từ UAV [{uav_phat_hien}] "
+                f"qua {max(0, len(lo_trinh) - 1)} chặng."
+            )
+            return
+
+        if loai_tin == "TELEMETRY_REPORT":
+            telemetry = thong_diep.get("noi_dung")
+            if (
+                not isinstance(nguoi_gui, str)
+                or not nguoi_gui.strip()
+                or not isinstance(telemetry, dict)
+            ):
+                await self.bo_dinh_tuyen.gui_log_ra_web(
+                    "WARN", f"[TELEMETRY] Bỏ qua dữ liệu không hợp lệ từ {nguoi_gui}."
+                )
+                return
+
+            lo_trinh = thong_diep.get("lo_trinh_di_qua", [])
+            if not isinstance(lo_trinh, list) or not all(
+                isinstance(node_id, str) for node_id in lo_trinh
+            ):
+                await self.bo_dinh_tuyen.gui_log_ra_web(
+                    "WARN", f"[TELEMETRY] Lộ trình không hợp lệ từ {nguoi_gui}."
+                )
+                return
+
+            bao_cao = {
+                **telemetry,
+                "uav_id": nguoi_gui,
+                "lo_trinh": list(lo_trinh),
+                "thoi_gian_nhan": time.time()
+            }
+            self.telemetry_uav_moi_nhat[nguoi_gui] = bao_cao
+            await self.bo_dinh_tuyen.phat_su_kien_ra_web(
+                "UAV_TELEMETRY_RECEIVED",
+                bao_cao
+            )
             return
 
         # 1. Trạm mặt đất báo giá nếu UAV gọi CFP_GOI_THAU trực tiếp trong tầm A2G

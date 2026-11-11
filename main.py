@@ -1,6 +1,6 @@
-import os
 from contextlib import asynccontextmanager
 from io import TextIOWrapper
+from pathlib import Path
 import sys
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
@@ -15,6 +15,8 @@ if sys.platform == "win32":
 from environment.simulation_loop import SimulationLoop
 from api.routes import tao_bo_dinh_tuyen_api
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -26,10 +28,6 @@ async def lifespan(_: FastAPI):
         await sim_loop.dung()
 
 
-os.makedirs("static", exist_ok=True)
-os.makedirs("templates", exist_ok=True)
-os.makedirs("data", exist_ok=True)
-
 app = FastAPI(
     title="SAGSINS - Hệ đa tác nhân giám sát cháy rừng",
     description="Mô phỏng MAS điều phối UAV, Vệ tinh LEO và Trạm mặt đất trong mạng SAGSINS.",
@@ -37,13 +35,10 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
+app.mount("/static", StaticFiles(directory=PROJECT_ROOT / "static"), name="static")
+templates = Jinja2Templates(directory=PROJECT_ROOT / "templates")
 
-sim_loop = SimulationLoop(
-    tick_interval_sec=1.0,
-    uav_ws_server_url=os.getenv("SAGSINS_UAV_WS_URL")
-)
+sim_loop = SimulationLoop(tick_interval_sec=1.0)
 
 app.include_router(tao_bo_dinh_tuyen_api(sim_loop))
 

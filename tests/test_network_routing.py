@@ -4,10 +4,10 @@ import os
 import sys
 import unittest
 import tempfile
+import time
 from io import TextIOWrapper
 from typing import Any
 from unittest.mock import AsyncMock, patch
-from fastapi import WebSocketDisconnect
 
 if sys.platform == "win32":
     for stream in (sys.stdout, sys.stderr):
@@ -17,6 +17,7 @@ if sys.platform == "win32":
 from core.base_agent import AgentState
 from core.ground_station_server import GroundStationServer
 from core.message_broker import MessageBroker
+from agents.ground_station import GroundStationAgent
 from agents.uav_agent import LOW_BATTERY_THRESHOLD, UAVAgent, UAVState
 from environment.scenario_manager import ScenarioManager
 from environment.simulation_loop import SimulationLoop
@@ -62,7 +63,14 @@ class FakeAgent:
         self.pin_toi_da = 50000.0
         self.pin_hien_tai = self.pin_toi_da * battery / 100
         self.nguong_pin_yeu_pct = 20.0
+        self.NEIGHBOR_TIMEOUT_SEC = 15.0
         self.tai_hang_doi_pct = 0.0
+        self.bang_lang_gieng = {}
+        self.tuyen_ve_tram_cuc_bo = []
+        self.chi_phi_ve_tram_cuc_bo = float("inf")
+        self.nang_luong_ve_tram_cuc_bo = 0.0
+        self.do_tre_ve_tram_cuc_bo_ms = 0.0
+        self.dung_luong_ve_tram_cuc_bo_mbps = 0.0
         self.cong_suat_bay_w = 80.0
         self.so_nhiem_vu_da_nhan = 0
         self.xu_ly_thong_diep: Any = None
@@ -88,28 +96,6 @@ class FakeAgent:
         self.trang_thai = trang_thai
 
 
-class FakeWebSocket:
-    def __init__(self, incoming=None):
-        self.sent = []
-        self.accepted = False
-        self.closed_with = None
-        self.incoming = list(incoming or [])
-
-    async def accept(self):
-        self.accepted = True
-
-    async def close(self, code=None, reason=None):
-        self.closed_with = (code, reason)
-
-    async def send_json(self, payload):
-        self.sent.append(payload)
-
-    async def receive_json(self):
-        if self.incoming:
-            return self.incoming.pop(0)
-        raise WebSocketDisconnect(code=1000)
-
-
 def reliable_link(delay=10.0, bandwidth=20.0):
     return {
         "kha_dung": True,
@@ -117,6 +103,23 @@ def reliable_link(delay=10.0, bandwidth=20.0):
         "dung_luong_mbps": bandwidth,
         "per": 0.001,
         "snr_db": 20.0
+    }
+
+
+def advertise_route(agent, neighbor, path, *, status=None, cost=0.0):
+    agent.bang_lang_gieng[neighbor.ma_dinh_danh] = {
+        "ma_dinh_danh": neighbor.ma_dinh_danh,
+        "loai_tac_nhan": neighbor.loai_tac_nhan,
+        "toa_do": dict(neighbor.toa_do),
+        "pin_pct": neighbor.phan_tram_pin,
+        "tai_hang_doi_pct": 0.0,
+        "trang_thai": status or neighbor.trang_thai.value,
+        "path_to_sink": list(path),
+        "cost_to_sink": cost,
+        "energy_to_sink_j": 2.0,
+        "delay_to_sink_ms": 20.0,
+        "capacity_to_sink_mbps": 35.0,
+        "thoi_diem_cap_nhat": time.time()
     }
 
 
@@ -141,13 +144,18 @@ class NetworkRoutingTests(unittest.TestCase):
         }
 
     def test_finds_satellite_relay_route_to_ground_station(self):
-        route = self.broker.tim_tuyen_den_tram_mat_dat("source")
+        route = self.broker._tim_tuyen_toan_cuc_tham_chieu("source")
 
         self.assertIsNotNone(route)
         self.assertEqual(route["nodes"], ["source", "satellite", "station"])
         self.assertEqual(route["delay_ms"], 35.0)
 
     def test_offer_includes_energy_and_route_metrics(self):
+        advertise_route(
+            self.satellite,
+            self.station,
+            [self.station.ma_dinh_danh]
+        )
         offer = self.broker.tao_bao_gia(
             "satellite",
             "source",
@@ -163,16 +171,55 @@ class NetworkRoutingTests(unittest.TestCase):
     def test_route_rejects_low_battery_relay(self):
         self.satellite.pin_hien_tai = 10.0
 
-        self.assertIsNone(self.broker.tim_tuyen_den_tram_mat_dat("source"))
+        self.assertIsNone(self.broker._tim_tuyen_toan_cuc_tham_chieu("source"))
 
     def test_route_excludes_already_visited_nodes(self):
-        route = self.broker.tim_tuyen_den_tram_mat_dat(
+        route = self.broker._tim_tuyen_toan_cuc_tham_chieu(
             "satellite",
             loai_tru={"source"}
         )
 
         self.assertEqual(route["nodes"], ["satellite", "station"])
         self.assertNotIn("source", route["nodes"])
+
+    def test_local_route_uses_neighbor_advertisement_not_global_graph_search(self):
+        self.source.bang_lang_gieng["satellite"] = {
+            "ma_dinh_danh": "satellite",
+            "loai_tac_nhan": "VỆ_TINH_LEO",
+            "toa_do": self.satellite.toa_do,
+            "pin_pct": 100.0,
+            "tai_hang_doi_pct": 0.0,
+            "trang_thai": AgentState.IDLE.value,
+            "path_to_sink": ["satellite", "station"],
+            "cost_to_sink": 20.0,
+            "energy_to_sink_j": 2.0,
+            "delay_to_sink_ms": 20.0,
+            "capacity_to_sink_mbps": 35.0,
+            "thoi_diem_cap_nhat": time.time()
+        }
+
+        route = self.broker.tim_tuyen_den_tram_mat_dat("source")
+
+        self.assertIsNotNone(route)
+        self.assertEqual(route["nodes"], ["source", "satellite", "station"])
+        self.assertEqual(self.source.tuyen_ve_tram_cuc_bo, route["nodes"])
+
+    def test_local_route_rejects_stale_and_looping_advertisements(self):
+        self.source.bang_lang_gieng.update({
+            "satellite": {
+                "loai_tac_nhan": "VỆ_TINH_LEO",
+                "path_to_sink": ["satellite", "source", "station"],
+                "cost_to_sink": 1.0,
+                "thoi_diem_cap_nhat": time.time()
+            },
+            "station": {
+                "loai_tac_nhan": "TRẠM_MẶT_ĐẤT",
+                "path_to_sink": ["station"],
+                "thoi_diem_cap_nhat": time.time() - 30.0
+            }
+        })
+
+        self.assertIsNone(self.broker.tim_tuyen_den_tram_mat_dat("source"))
 
     def test_charging_uav_remains_connected_through_docking_link(self):
         charging_uav = FakeAgent("charging-uav", "MÁY_BAY")
@@ -183,6 +230,7 @@ class NetworkRoutingTests(unittest.TestCase):
             charging_uav.ma_dinh_danh: charging_uav,
             station.ma_dinh_danh: station
         }
+        advertise_route(charging_uav, station, [station.ma_dinh_danh])
 
         route = self.broker.tim_tuyen_den_tram_mat_dat(charging_uav.ma_dinh_danh)
 
@@ -191,70 +239,6 @@ class NetworkRoutingTests(unittest.TestCase):
 
 
 class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
-    async def test_ground_station_tracks_active_uavs_and_broadcasts_commands(self):
-        broker = MessageBroker(FakePhysics({}), scenario_manager=object())
-        uav = UAVAgent(
-            bo_dinh_tuyen=broker,
-            ma_dinh_danh="uav-client",
-            waypoints=[]
-        )
-        server = GroundStationServer(broker)
-        websocket = FakeWebSocket()
-
-        self.assertTrue(await asyncio.wait_for(server.connect(uav.ma_dinh_danh, websocket), timeout=5.0))
-        delivered = await asyncio.wait_for(
-            server.broadcast_command({"loai_tin": "CFP_GOI_THAU"}, {uav.ma_dinh_danh}),
-            timeout=5.0
-        )
-
-        self.assertTrue(websocket.accepted)
-        self.assertEqual(delivered, {uav.ma_dinh_danh})
-        self.assertEqual(websocket.sent[0]["type"], "COMMAND")
-        self.assertEqual(websocket.sent[0]["data"]["loai_tin"], "CFP_GOI_THAU")
-        await asyncio.wait_for(server.disconnect(uav.ma_dinh_danh, websocket), timeout=5.0)
-        self.assertNotIn(uav.ma_dinh_danh, server.clients)
-
-    async def test_ground_station_accepts_relayed_telemetry_only_from_valid_relay(self):
-        broker = MessageBroker(FakePhysics({}), scenario_manager=object())
-        station = FakeAgent("station", "TRẠM_MẶT_ĐẤT")
-        station.toa_do.update({"vi_do": 0.0, "kinh_do": 0.0})
-        broker.danh_sach_tac_nhan[station.ma_dinh_danh] = station
-        source = UAVAgent(
-            bo_dinh_tuyen=broker,
-            ma_dinh_danh="source",
-            vi_do=0.0,
-            kinh_do=0.1,
-            waypoints=[]
-        )
-        relay = UAVAgent(
-            bo_dinh_tuyen=broker,
-            ma_dinh_danh="relay",
-            vi_do=0.0,
-            kinh_do=0.06,
-            waypoints=[]
-        )
-        relay.evaluate_communication_link(0.0, 0.0)
-        source.evaluate_communication_link(0.0, 0.0)
-        telemetry = source._telemetry_payload()
-        websocket = FakeWebSocket([{
-            "type": "RELAY",
-            "source_id": source.ma_dinh_danh,
-            "relay_target_id": relay.ma_dinh_danh,
-            "payload": telemetry
-        }])
-        server = GroundStationServer(broker)
-
-        await asyncio.wait_for(server.receive_telemetry(relay.ma_dinh_danh, websocket), timeout=5.0)
-
-        self.assertEqual(
-            server.latest_telemetry[source.ma_dinh_danh]["relay_target_id"],
-            relay.ma_dinh_danh
-        )
-        self.assertEqual(
-            server.latest_telemetry[source.ma_dinh_danh]["current_link"],
-            "FANET_RELAY"
-        )
-
     async def test_communication_link_selects_ground_fanet_and_leo_fallback(self):
         broker = MessageBroker(FakePhysics({}), scenario_manager=object())
         station = FakeAgent("station", "TRẠM_MẶT_ĐẤT")
@@ -276,6 +260,13 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
             do_cao=1000.0,
             waypoints=[]
         )
+        advertise_route(relay_uav, station, [station.ma_dinh_danh])
+        advertise_route(
+            uav,
+            relay_uav,
+            [relay_uav.ma_dinh_danh, station.ma_dinh_danh]
+        )
+        advertise_route(uav, station, [station.ma_dinh_danh])
         relay_uav.evaluate_communication_link(0.0, 0.0)
 
         self.assertEqual(
@@ -294,75 +285,171 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
 
         uav.toa_do.update({"vi_do": 0.0, "kinh_do": 0.1})
         relay_uav.chuyen_trang_thai(AgentState.OFFLINE)
+        uav.bang_lang_gieng.pop(relay_uav.ma_dinh_danh, None)
         self.assertEqual(
             uav.evaluate_communication_link(0.0, 0.0),
-            "LEO_SATELLITE"
+            "OUT_OF_LOS"
         )
         self.assertFalse(uav.direct_los)
         self.assertTrue(uav.relay_required)
         self.assertIsNone(uav.relay_target_id)
 
-    async def test_los_gap_sends_telemetry_via_relay_socket(self):
+    async def test_telemetry_uses_broker_route_and_is_recorded_at_ground_station(self):
         broker = MessageBroker(FakePhysics({}), scenario_manager=object())
-        station = FakeAgent("station", "TRẠM_MẶT_ĐẤT")
-        station.toa_do.update({"vi_do": 0.0, "kinh_do": 0.0})
-        broker.danh_sach_tac_nhan[station.ma_dinh_danh] = station
-        source = UAVAgent(
+        station = GroundStationAgent(
             bo_dinh_tuyen=broker,
-            ma_dinh_danh="source",
+            ma_dinh_danh="station",
             vi_do=0.0,
-            kinh_do=0.1,
-            do_cao=1000.0,
-            ws_server_url="ws://localhost:8016/ws/uav",
-            waypoints=[]
+            kinh_do=0.0,
+            do_cao=25.0
         )
-        relay = UAVAgent(
-            bo_dinh_tuyen=broker,
-            ma_dinh_danh="relay",
-            vi_do=0.0,
-            kinh_do=0.06,
-            do_cao=1000.0,
-            ws_server_url="ws://localhost:8016/ws/uav",
-            waypoints=[]
-        )
-        relay.evaluate_communication_link(0.0, 0.0)
-        source.evaluate_communication_link(0.0, 0.0)
-        relay._websocket = object()
-
-        with (
-            patch.object(relay, "_ensure_websocket_connection", new_callable=AsyncMock, return_value=True),
-            patch.object(relay, "_send_websocket_json", new_callable=AsyncMock, return_value=True) as send
-        ):
-            await asyncio.wait_for(source._gui_telemetry_websocket(), timeout=5.0)
-
-        send.assert_awaited_once()
-        packet = send.await_args.args[1]
-        self.assertEqual(packet["type"], "RELAY")
-        self.assertEqual(packet["source_id"], "source")
-        self.assertEqual(packet["relay_target_id"], "relay")
-        self.assertEqual(packet["payload"]["current_link"], "FANET_RELAY")
-
-    async def test_satellite_fallback_waits_two_seconds_before_uplink(self):
-        broker = MessageBroker(FakePhysics({}), scenario_manager=object())
         uav = UAVAgent(
             bo_dinh_tuyen=broker,
-            ma_dinh_danh="satellite-uav",
-            ws_server_url="ws://localhost:8016/ws/uav",
+            ma_dinh_danh="telemetry-uav",
+            vi_do=0.0,
+            kinh_do=0.01,
             waypoints=[]
         )
-        uav._pending_satellite_payload = uav._telemetry_payload()
-        uav._satellite_websocket = object()
+        advertise_route(uav, station, [station.ma_dinh_danh])
 
-        with (
-            patch.object(uav, "_ensure_websocket_connection", new_callable=AsyncMock, return_value=True),
-            patch.object(uav, "_send_websocket_json", new_callable=AsyncMock, return_value=True) as send,
-            patch("agents.uav_agent.asyncio.sleep", new_callable=AsyncMock) as sleep
+        delivered = await broker.gui_goi_tin_da_chang_ve_tram(
+            uav.ma_dinh_danh,
+            {
+                "loai_tin": "TELEMETRY_REPORT",
+                "kich_thuoc_kb": 1.0,
+                "noi_dung": {"pin_pct": 81.0, "trang_thai": "ĐANG_TUẦN_TRA"}
+            }
+        )
+        self.assertTrue(delivered)
+        station_message = await station.hang_doi_thong_diep.get()
+        await station.xu_ly_thong_diep(station_message)
+
+        self.assertEqual(
+            station.telemetry_uav_moi_nhat[uav.ma_dinh_danh]["pin_pct"],
+            81.0
+        )
+        self.assertEqual(
+            station.telemetry_uav_moi_nhat[uav.ma_dinh_danh]["lo_trinh"],
+            [uav.ma_dinh_danh, station.ma_dinh_danh]
+        )
+
+    async def test_fire_detection_report_uses_broker_route_and_is_recorded_at_station(self):
+        broker = MessageBroker(FakePhysics({}), scenario_manager=object())
+        station = GroundStationAgent(
+            bo_dinh_tuyen=broker,
+            ma_dinh_danh="station",
+            vi_do=0.0,
+            kinh_do=0.0,
+            do_cao=25.0
+        )
+        uav = FakeAgent("reporting-uav", "MÁY_BAY")
+        uav.toa_do.update({"node": uav.ma_dinh_danh, "kinh_do": 0.01})
+        broker.danh_sach_tac_nhan[uav.ma_dinh_danh] = uav
+        advertise_route(uav, station, [station.ma_dinh_danh])
+
+        delivered = await broker.gui_goi_tin_da_chang_ve_tram(
+            uav.ma_dinh_danh,
+            {
+                "loai_tin": "FIRE_DETECTION_REPORT",
+                "ma_su_co": "fire-1",
+                "uav_phat_hien": uav.ma_dinh_danh,
+                "loai_su_co": "CHÁY_RỪNG",
+                "vi_do": 0.0,
+                "kinh_do": 0.02,
+                "thoi_diem_phat_hien": time.time(),
+                "kich_thuoc_kb": 1.0
+            }
+        )
+        self.assertTrue(delivered)
+        station_message = await station.hang_doi_thong_diep.get()
+        await station.xu_ly_thong_diep(station_message)
+
+        self.assertEqual(
+            station.bao_cao_phat_hien_chay["fire-1"]["uav_phat_hien"],
+            uav.ma_dinh_danh
+        )
+        self.assertEqual(
+            station.bao_cao_phat_hien_chay["fire-1"]["lo_trinh"],
+            [uav.ma_dinh_danh, station.ma_dinh_danh]
+        )
+
+    async def test_multihop_delivery_rejects_unknown_or_station_source(self):
+        broker = MessageBroker(FakePhysics({}), scenario_manager=object())
+        station = FakeAgent("station", "TRẠM_MẶT_ĐẤT")
+        broker.danh_sach_tac_nhan[station.ma_dinh_danh] = station
+
+        self.assertFalse(await broker.gui_goi_tin_da_chang_ve_tram(
+            "unknown-uav",
+            {"loai_tin": "TELEMETRY_REPORT"}
+        ))
+        self.assertFalse(await broker.gui_goi_tin_da_chang_ve_tram(
+            station.ma_dinh_danh,
+            {"loai_tin": "TELEMETRY_REPORT"}
+        ))
+
+    async def test_ground_station_ignores_invalid_telemetry_sender_and_route(self):
+        broker = MessageBroker(FakePhysics({}), scenario_manager=object())
+        station = GroundStationAgent(
+            bo_dinh_tuyen=broker,
+            ma_dinh_danh="station",
+            vi_do=0.0,
+            kinh_do=0.0,
+            do_cao=25.0
+        )
+
+        for message in (
+            {"loai_tin": "TELEMETRY_REPORT", "noi_dung": {"pin_pct": 80.0}},
+            {
+                "loai_tin": "TELEMETRY_REPORT",
+                "nguoi_gui": "uav",
+                "noi_dung": {"pin_pct": 80.0},
+                "lo_trinh_di_qua": "not-a-route"
+            }
         ):
-            await asyncio.wait_for(uav._gui_qua_ve_tinh_sau_do_tre(), timeout=5.0)
+            await station.xu_ly_thong_diep(message)
 
-        sleep.assert_awaited_once_with(2.0)
-        self.assertEqual(send.await_args.args[1]["type"], "SATELLITE_UPLINK")
-        self.assertEqual(send.await_args.args[1]["id"], uav.ma_dinh_danh)
+        self.assertEqual(station.telemetry_uav_moi_nhat, {})
+
+    async def test_multihop_delivery_retries_with_an_alternate_route(self):
+        failed_link = {
+            **reliable_link(),
+            "kha_dung": False,
+            "per": 1.0
+        }
+        physics = FakePhysics({
+            ("source", "relay-a"): reliable_link(delay=1.0),
+            ("source", "relay-b"): reliable_link(delay=5.0),
+            ("relay-a", "station"): failed_link,
+            ("relay-a", "relay-b"): reliable_link(delay=1.0),
+            ("relay-b", "station"): reliable_link(delay=1.0)
+        })
+        broker = MessageBroker(physics, scenario_manager=object())
+        source = FakeAgent("source", "MÁY_BAY")
+        relay_a = FakeAgent("relay-a", "MÁY_BAY")
+        relay_b = FakeAgent("relay-b", "MÁY_BAY")
+        station = FakeAgent("station", "TRẠM_MẶT_ĐẤT")
+        broker.danh_sach_tac_nhan = {
+            agent.ma_dinh_danh: agent
+            for agent in (source, relay_a, relay_b, station)
+        }
+        advertise_route(source, relay_a, ["relay-a", "station"], cost=0.0)
+        advertise_route(source, relay_b, ["relay-b", "station"], cost=0.0)
+        advertise_route(relay_a, station, ["station"], cost=0.0)
+        advertise_route(relay_a, relay_b, ["relay-b", "station"], cost=0.0)
+        advertise_route(relay_b, station, ["station"], cost=0.0)
+
+        with patch("core.message_broker.random.random", return_value=1.0):
+            delivered = await broker.gui_goi_tin_da_chang_ve_tram(
+                source.ma_dinh_danh,
+                {"loai_tin": "TELEMETRY_REPORT", "kich_thuoc_kb": 1.0}
+            )
+
+        self.assertTrue(delivered)
+        received = await station.hang_doi_thong_diep.get()
+        self.assertEqual(
+            received["lo_trinh_di_qua"],
+            ["source", "relay-a", "relay-b", "station"]
+        )
 
     async def test_standby_uav_charges_at_station_and_reports_fsm_state(self):
         broker = MessageBroker(FakePhysics({}), scenario_manager=object())
@@ -544,7 +631,7 @@ class UavEnergyTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(uav.ma_dinh_danh, other_zone_uav._vung_tuan_tra_phu)
 
 
-class ScenarioDeploymentTests(unittest.TestCase):
+class ScenarioDeploymentTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def _point_in_ring(latitude, longitude, ring):
         inside = False
@@ -770,6 +857,7 @@ class MissionDispatchTests(unittest.IsolatedAsyncioTestCase):
         })
         broker = MessageBroker(simulation.physics, scenario_manager=object())
         broker.dang_ky_tac_nhan(uav)
+        broker.gui_goi_tin_da_chang_ve_tram = AsyncMock(return_value=True)
         simulation.broker = broker
         simulation.ground_station_server = GroundStationServer(broker)
         broker.ground_station_server = simulation.ground_station_server
@@ -817,8 +905,12 @@ class MissionDispatchTests(unittest.IsolatedAsyncioTestCase):
             [message["loai_tin"] for message in bid_messages],
             ["CFP_FIRE_EVENT", "ACCEPT_PROPOSAL"]
         )
+        report_args = broker.gui_goi_tin_da_chang_ve_tram.await_args.kwargs
+        self.assertEqual(report_args["ma_nguon"], uav.ma_dinh_danh)
+        self.assertEqual(report_args["thong_diep"]["loai_tin"], "FIRE_DETECTION_REPORT")
         self.assertGreater(distance_km, 15.5)
         self.assertTrue(result["thanh_cong"], result)
+        self.assertEqual(result["uav_phat_hien"], uav.ma_dinh_danh)
         self.assertEqual(result["uav_dieu_dong"], uav.ma_dinh_danh)
 
     async def test_low_energy_mission_reports_nearest_uav_and_required_reserve(self):
@@ -826,6 +918,7 @@ class MissionDispatchTests(unittest.IsolatedAsyncioTestCase):
         simulation.physics = FakePhysics({})
         nearest_uav = FakeAgent("MÁY_BAY_UAV_01", "MÁY_BAY", battery=20.0)
         nearest_uav.trang_thai = AgentState.PATROLLING
+        nearest_uav.xu_ly_thong_diep = AsyncMock()
         nearest_uav.toa_do.update({
             "vi_do": 16.0748,
             "kinh_do": 108.152,
@@ -837,7 +930,8 @@ class MissionDispatchTests(unittest.IsolatedAsyncioTestCase):
             (),
             {
                 "danh_sach_tac_nhan": {nearest_uav.ma_dinh_danh: nearest_uav},
-                "gui_log_ra_web": AsyncMock()
+                "gui_log_ra_web": AsyncMock(),
+                "gui_goi_tin_da_chang_ve_tram": AsyncMock(return_value=True)
             }
         )()
 
@@ -861,18 +955,27 @@ class FleetAvailabilityTests(unittest.IsolatedAsyncioTestCase):
             agent for agent in simulation.broker.danh_sach_tac_nhan.values()
             if agent.loai_tac_nhan == "MÁY_BAY"
         ]
+        listeners = [
+            asyncio.create_task(agent.lang_nghe_lien_tuc())
+            for agent in simulation.broker.danh_sach_tac_nhan.values()
+        ]
 
         async def _run_patrol():
-            for _ in range(1200):
+            for _ in range(60):
                 await asyncio.gather(*(uav.cap_nhat_vat_ly(1.0) for uav in uavs))
 
-        await asyncio.wait_for(_run_patrol(), timeout=15.0)
-
-        disconnected = [
-            uav.ma_dinh_danh for uav in uavs
-            if simulation.broker.tim_tuyen_den_tram_mat_dat(uav.ma_dinh_danh) is None
-        ]
-        self.assertEqual(disconnected, [])
+        try:
+            with patch.object(simulation.scenario, "ghi_log_thuc_nghiem_qos"):
+                await asyncio.wait_for(_run_patrol(), timeout=15.0)
+            disconnected = [
+                uav.ma_dinh_danh for uav in uavs
+                if simulation.broker.tim_tuyen_den_tram_mat_dat(uav.ma_dinh_danh) is None
+            ]
+            self.assertEqual(disconnected, [])
+        finally:
+            for listener in listeners:
+                listener.cancel()
+            await asyncio.gather(*listeners, return_exceptions=True)
 
 
 if __name__ == "__main__":

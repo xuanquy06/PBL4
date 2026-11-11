@@ -1,6 +1,7 @@
 import asyncio
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from environment.physics_engine import PhysicsEngine
 from environment.scenario_manager import ScenarioManager
@@ -21,8 +22,7 @@ class SimulationLoop:
     """
     def __init__(
         self,
-        tick_interval_sec: float = 1.0,
-        uav_ws_server_url: Optional[str] = None
+        tick_interval_sec: float = 1.0
     ):
         self.tick_interval = tick_interval_sec
         self.time_scale = 1.0
@@ -30,14 +30,14 @@ class SimulationLoop:
         self.tam_dung = False
         self.so_buoc_thoi_gian = 0
 
-        self.scenario: Any = ScenarioManager(data_dir="data")
+        project_data_dir = Path(__file__).resolve().parents[1] / "data"
+        self.scenario: Any = ScenarioManager(data_dir=project_data_dir)
         self.physics: Any = PhysicsEngine()
         self.broker: Any = MessageBroker(physics_engine=self.physics, scenario_manager=self.scenario)
         self.ground_station_server: Any = GroundStationServer(self.broker)
         setattr(self.broker, "ground_station_server", self.ground_station_server)
         setattr(self.broker, "simulation_loop", self)
         self._active_fire_missions: Dict[str, dict] = {}
-        self.uav_ws_server_url = uav_ws_server_url
 
         self._cac_tac_vu_nen: List[asyncio.Task] = []
         self.ban_do_waypoints_uav: Dict[str, List[dict]] = {}
@@ -98,7 +98,6 @@ class SimulationLoop:
                 UAVAgent(
                     **node_cfg,
                     waypoints=waypoints,
-                    ws_server_url=self.uav_ws_server_url,
                     bo_dinh_tuyen=self.broker
                 )
 
@@ -134,13 +133,54 @@ class SimulationLoop:
         self.dang_chay = False
         for agent in self.broker.danh_sach_tac_nhan.values():
             setattr(agent, "_dang_lang_nghe", False)
-            if isinstance(agent, UAVAgent):
-                await agent.dong_ket_noi_websocket()
         for task in self._cac_tac_vu_nen:
             task.cancel()
         if self._cac_tac_vu_nen:
             await asyncio.gather(*self._cac_tac_vu_nen, return_exceptions=True)
         self._cac_tac_vu_nen.clear()
+
+    async def dieu_khien_thoi_gian(
+        self,
+        time_scale: Optional[float] = None,
+        tam_dung: Optional[bool] = None
+    ) -> dict:
+        if time_scale is not None:
+            self.time_scale = time_scale
+        if tam_dung is not None:
+            self.tam_dung = tam_dung
+
+        trang_thai = (
+            "TẠM DỪNG"
+            if self.tam_dung
+            else f"ĐANG CHẠY ({self.time_scale}x)"
+        )
+        await self.broker.gui_log_ra_web(
+            "INFO",
+            f"⏱️ Điều chỉnh đồng hồ mô phỏng: {trang_thai}"
+        )
+        return {
+            "time_scale": self.time_scale,
+            "paused": self.tam_dung
+        }
+
+    async def cap_nhat_pin_uav(self, ma_uav: str, phan_tram_pin: float) -> dict:
+        agent = self.broker.lay_tac_nhan(ma_uav)
+        if not isinstance(agent, UAVAgent):
+            raise ValueError(f"Không tìm thấy UAV {ma_uav}")
+
+        await agent.dat_pin_gia_lap(phan_tram_pin)
+        for node in self.broker.danh_sach_tac_nhan.values():
+            if isinstance(node, UAVAgent):
+                node.evaluate_communication_link()
+        await self._kiem_tra_lien_lac_lien_tuc(0.0)
+
+        thong_bao = (
+            f"🔋 Đã cập nhật năng lượng [{ma_uav}] ➔ {agent.phan_tram_pin}% "
+            f"(Trạng thái FSM: {agent.trang_thai.value})"
+        )
+        await self.broker.gui_log_ra_web("WARN", thong_bao)
+        await self.broker.dong_bo_trang_thai_toan_mang()
+        return {"thanh_cong": True, "thong_bao": thong_bao}
 
     async def _vong_lap_vat_ly_chinh(self):
         """Cập nhật vị trí tác tử, pin và trạng thái mạng qua WebSocket."""
@@ -258,32 +298,31 @@ class SimulationLoop:
         self.broker.thong_ke_toan_mang["nang_luong_tieu_hao_joule"] = tong_nang_luong
         self.scenario.ghi_log_lien_lac_lien_tuc(self._chi_so_lien_lac)
 
-        # Phát gói tin Telemetry đa chặng luân phiên từ các UAV (ưu tiên UAV đa chặng FANET/LEO) để trực quan hóa tia truyền gói tin E2E
+        # Luân phiên gửi telemetry qua broker để đường truyền và QoS phản ánh cùng một mô hình.
         uav_ung_vien = [
-            u for u in cac_uav
-            if u.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY, AgentState.CHARGING)
-            and getattr(u, "current_link", "") in ("FANET_RELAY", "LEO_SATELLITE")
-        ] or [
             u for u in cac_uav
             if u.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY, AgentState.CHARGING)
         ]
         if uav_ung_vien:
             idx_chon = (self.so_buoc_thoi_gian // 5) % len(uav_ung_vien)
             uav_phat = uav_ung_vien[idx_chon]
-            asyncio.create_task(
-                self.broker.gui_goi_tin_da_chang_ve_tram(
-                    ma_nguon=uav_phat.ma_dinh_danh,
-                    thong_diep={
-                        "loai_thong_diep": "TELEMETRY_REPORT",
-                        "kich_thuoc_kb": 12.0,
-                        "noi_dung": {
-                            "zone_id": getattr(uav_phat, "zone_id", None),
-                            "pin_pct": round(uav_phat.phan_tram_pin, 1),
-                            "trang_thai": uav_phat.trang_thai.value,
-                        },
+            da_gui_telemetry = await self.broker.gui_goi_tin_da_chang_ve_tram(
+                ma_nguon=uav_phat.ma_dinh_danh,
+                thong_diep={
+                    "loai_tin": "TELEMETRY_REPORT",
+                    "kich_thuoc_kb": 12.0,
+                    "noi_dung": {
+                        "zone_id": getattr(uav_phat, "zone_id", None),
+                        "pin_pct": round(uav_phat.phan_tram_pin, 1),
+                        "trang_thai": uav_phat.trang_thai.value,
                     },
-                )
+                },
             )
+            if not da_gui_telemetry:
+                await self.broker.gui_log_ra_web(
+                    "WARN",
+                    f"[TELEMETRY] Không chuyển được dữ liệu {uav_phat.ma_dinh_danh} về trạm."
+                )
 
     async def _lap_lich_ban_giao_vung(self, cac_uav: list):
         """Đồng bộ trạng thái bàn giao vùng giữa các UAV trong cùng phân khu."""
@@ -471,14 +510,69 @@ class SimulationLoop:
             "pin_du_kien_pct": round(pin_du_kien_pct, 2)
         }
 
+    async def _gui_bao_cao_phat_hien_chay(
+        self,
+        ma_phien: str,
+        loai_su_co: str,
+        vi_do: float,
+        kinh_do: float
+    ) -> Optional[str]:
+        """Chọn UAV gần nhất có thể truyền báo cáo sự cố về trạm qua broker."""
+        target = {"vi_do": vi_do, "kinh_do": kinh_do, "do_cao": 0.0}
+        uavs_phat_hien = [
+            agent
+            for agent in self.broker.danh_sach_tac_nhan.values()
+            if agent.loai_tac_nhan == "MÁY_BAY"
+            and agent.trang_thai != AgentState.OFFLINE
+            and agent.pin_hien_tai > 0.0
+        ]
+        uavs_phat_hien.sort(
+            key=lambda agent: self.physics.tinh_khoang_cach_3d(agent.toa_do, target)
+        )
+
+        for uav in uavs_phat_hien:
+            bao_cao = {
+                "loai_tin": "FIRE_DETECTION_REPORT",
+                "ma_su_co": ma_phien,
+                "ma_phien_dau_gia": ma_phien,
+                "uav_phat_hien": uav.ma_dinh_danh,
+                "loai_su_co": loai_su_co,
+                "vi_do": vi_do,
+                "kinh_do": kinh_do,
+                "thoi_diem_phat_hien": time.time(),
+                "kich_thuoc_kb": 1.0
+            }
+            if await self.broker.gui_goi_tin_da_chang_ve_tram(
+                ma_nguon=uav.ma_dinh_danh,
+                thong_diep=bao_cao
+            ):
+                return uav.ma_dinh_danh
+        return None
+
     async def kich_hoat_su_co_khan_cap(self, loai_su_co: str, vi_do: float, kinh_do: float) -> dict:
         """
-        Khởi tạo giao thức Contract Net Protocol (CNP) phân tán chuẩn FIPA:
+        Mô phỏng UAV báo cáo sự cố về trạm, sau đó khởi tạo Contract Net Protocol (CNP):
+        - UAV gần nhất có tuyến khả dụng gửi FIRE_DETECTION_REPORT qua broker về trạm.
         - Phát sóng CFP_FIRE_EVENT tới các UAV đang tuần tra/chờ lệnh.
         - Thu thập PROPOSE và REFUSE trong cửa sổ đấu giá.
         - Trao hợp đồng ACCEPT_PROPOSAL cho UAV có chi phí đa mục tiêu thấp nhất.
         """
         ma_phien = str(uuid.uuid4())
+        uav_phat_hien = await self._gui_bao_cao_phat_hien_chay(
+            ma_phien,
+            loai_su_co,
+            float(vi_do),
+            float(kinh_do)
+        )
+        if not uav_phat_hien:
+            thong_bao = "Không có UAV nào gửi được báo cáo phát hiện về trạm qua mạng."
+            await self.broker.gui_log_ra_web("WARN", f"⚠️ {thong_bao}")
+            return {
+                "thanh_cong": False,
+                "ma_phien": ma_phien,
+                "thong_bao": thong_bao
+            }
+
         fire_zone_id = None
         scenario = getattr(self, "scenario", None)
         if scenario and hasattr(scenario, "patrol_zones") and isinstance(scenario.patrol_zones, dict):
@@ -524,28 +618,29 @@ class SimulationLoop:
                     f"{thong_tin_uav['nang_luong_du_tru_yeu_cau_joule']} J dự trữ."
                 )
             await self.broker.gui_log_ra_web("WARN", f"⚠️ {thong_bao}")
-            return {"thanh_cong": False, "thong_bao": thong_bao, **thong_tin_uav}
+            return {
+                "thanh_cong": False,
+                "ma_phien": ma_phien,
+                "uav_phat_hien": uav_phat_hien,
+                "thong_bao": thong_bao,
+                **thong_tin_uav
+            }
 
         await self.broker.gui_log_ra_web(
             "EVENT",
-            f"🔥 Phát hiện sự cố [{loai_su_co}] tại ({vi_do:.4f}, {kinh_do:.4f}). "
+            f"🔥 [{uav_phat_hien}] báo cáo sự cố [{loai_su_co}] tại "
+            f"({vi_do:.4f}, {kinh_do:.4f}). "
             f"Phát quảng bá CFP_FIRE_EVENT tới {len(uavs_kha_dung)} UAV."
         )
 
         if not hasattr(self, "ground_station_server") or self.ground_station_server is None:
             self.ground_station_server = GroundStationServer(self.broker)
 
-        recipient_ids = {uav.ma_dinh_danh for uav in uavs_kha_dung}
         for uav in uavs_kha_dung:
             if getattr(uav, "_dang_lang_nghe", False):
                 await uav.hang_doi_thong_diep.put(thong_diep_cfp.copy())
             else:
-                await uav.hang_doi_thong_diep.put(thong_diep_cfp.copy())
-                if hasattr(uav, "xu_ly_thong_diep"):
-                    await uav.xu_ly_thong_diep(thong_diep_cfp.copy())
-
-        if self.ground_station_server.clients:
-            await self.ground_station_server.broadcast_command(thong_diep_cfp, recipient_ids)
+                await uav.xu_ly_thong_diep(thong_diep_cfp.copy())
 
         ket_qua_dau_gia = await self.ground_station_server.mo_phien_dau_gia_chay_rung(
             ma_phien=ma_phien,
@@ -565,6 +660,7 @@ class SimulationLoop:
             return {
                 "thanh_cong": False,
                 "ma_phien": ma_phien,
+                "uav_phat_hien": uav_phat_hien,
                 "thong_bao": thong_bao,
                 "auction_detail": getattr(self.broker, "phien_dau_gia_gan_nhat", None),
                 **thong_tin_uav
@@ -597,6 +693,7 @@ class SimulationLoop:
         return {
             "thanh_cong": True,
             "ma_phien": ma_phien,
+            "uav_phat_hien": uav_phat_hien,
             "uav_dieu_dong": winner_id,
             "khoang_cach_tiep_can_km": khoang_cach_km,
             "chi_phi": chi_phi,
