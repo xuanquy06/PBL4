@@ -3,17 +3,59 @@ import csv
 import json
 import math
 import random
+from dataclasses import dataclass
 from datetime import datetime
 from skyfield.api import load
+
+
+@dataclass
+class HeatNode:
+    """
+    Điểm nhiệt môi trường rừng Sơn Trà (HeatNode):
+    - lat, lon: Tọa độ địa lý nằm gọn trong ranh giới đa giác vùng Z1-Z7.
+    - risk_score: Chỉ số nguy cơ cháy rừng từ 0.05 (thấp) đến 1.0 (điểm nóng cực đại).
+    - zone_id: Mã phân khu (ZONE_01 .. ZONE_07).
+    """
+    lat: float
+    lon: float
+    risk_score: float = 0.05
+    zone_id: str = "ZONE_01"
+
+    def __post_init__(self):
+        self.lat = round(float(self.lat), 6)
+        self.lon = round(float(self.lon), 6)
+        self.risk_score = round(min(1.0, max(0.05, float(self.risk_score))), 4)
+        self.zone_id = str(self.zone_id)
+
+    def to_dict(self) -> dict:
+        return {
+            "lat": round(self.lat, 6),
+            "lon": round(self.lon, 6),
+            "risk_score": round(min(1.0, max(0.05, self.risk_score)), 4),
+            "zone_id": self.zone_id,
+        }
+
+    def __getitem__(self, key: str):
+        return getattr(self, key)
+
+    def __setitem__(self, key: str, value):
+        if key == "risk_score":
+            value = round(min(1.0, max(0.05, float(value))), 4)
+        setattr(self, key, value)
+
+    def get(self, key: str, default=None):
+        return getattr(self, key, default)
+
 
 class ScenarioManager:
     """
     Bộ quản lý kịch bản Hybrid cho mạng SAGSINS:
     1. Đồng bộ TLE vệ tinh thực tế từ CelesTrak (NORAD) kèm cơ chế Cache CSV Offline.
     2. Phân bổ UAV theo bảy vùng rừng Sơn Trà lấy từ dữ liệu GIS công khai.
-    3. Quản lý đọc/ghi cấu hình mạng và xuất dữ liệu thực nghiệm QoS ra file CSV.
+    3. Quản lý bản đồ điểm nhiệt (HeatNode) trong 7 vùng Z1-Z7 bằng thuật toán Ray-Casting.
+    4. Quản lý đọc/ghi cấu hình mạng và xuất dữ liệu thực nghiệm QoS ra file CSV.
     """
-    def __init__(self, data_dir: str = "data"):
+    def __init__(self, data_dir: str = "data", nodes_per_zone: int = 30):
         self.data_dir = data_dir
         os.makedirs(self.data_dir, exist_ok=True)
 
@@ -27,6 +69,9 @@ class ScenarioManager:
         self.metrics_log_path = os.path.join(self.data_dir, "simulation_metrics_log.csv")
         self.ke_hoach_bo_tri_ban_dau: dict = {}
         self.patrol_zones = self._doc_vung_tuan_tra()
+        self.heat_nodes: list[HeatNode] = self._khoi_tao_heat_nodes(
+            so_diem_moi_vung=nodes_per_zone
+        )
 
         self._khoi_tao_file_log_thuc_nghiem()
 
@@ -142,6 +187,160 @@ class ScenarioManager:
             ):
                 return True
         return False
+
+    @classmethod
+    def _diem_nam_gon_trong_vung(
+        cls,
+        latitude: float,
+        longitude: float,
+        zone: dict,
+        margin_deg: float = 0.00035
+    ) -> bool:
+        """
+        Kiểm tra điểm nhiệt nằm gọn bên trong đa giác phân khu (có khoảng lùi an toàn
+        margin_deg ~ 35-40m so với đường bờ biển/ranh giới) bằng thuật toán Ray-Casting.
+        """
+        if not cls._diem_nam_trong_vung(latitude, longitude, zone):
+            return False
+        if margin_deg <= 0.0:
+            return True
+        offsets = (
+            (margin_deg, 0.0),
+            (-margin_deg, 0.0),
+            (0.0, margin_deg),
+            (0.0, -margin_deg),
+        )
+        return all(
+            cls._diem_nam_trong_vung(latitude + d_lat, longitude + d_lon, zone)
+            for d_lat, d_lon in offsets
+        )
+
+    def _khoi_tao_heat_nodes(self, so_diem_moi_vung: int = 30) -> list[HeatNode]:
+        """
+        Dùng thuật toán Ray-Casting (Point-in-Polygon) để đọc các đa giác từ
+        `data/son_tra_zones.geojson` và rải các điểm nhiệt (HeatNode: lat, lon,
+        risk_score từ 0.05 đến 1.0, zone_id) nằm gọn bên trong ranh giới 7 vùng Z1-Z7,
+        tuyệt đối không bị tràn ra ngoài biển.
+        """
+        danh_sach_heat_nodes: list[HeatNode] = []
+        rng = random.Random(42)
+
+        for zone in self.patrol_zones.get("features", []):
+            zone_id = zone.get("properties", {}).get("zone_id", "ZONE_01")
+            all_lons: list[float] = []
+            all_lats: list[float] = []
+            for polygon in zone.get("geometry", {}).get("coordinates", []):
+                if polygon and polygon[0]:
+                    for coord in polygon[0]:
+                        all_lons.append(float(coord[0]))
+                        all_lats.append(float(coord[1]))
+
+            if not all_lons or not all_lats:
+                continue
+
+            min_lon, max_lon = min(all_lons), max(all_lons)
+            min_lat, max_lat = min(all_lats), max(all_lats)
+            nodes_trong_vung: list[HeatNode] = []
+
+            # Bước 1: Rải lưới phân tầng (Stratified Grid + Jitter) kết hợp kiểm tra Ray-Casting có lề an toàn
+            grid_rows = 7
+            grid_cols = 6
+            step_lat = (max_lat - min_lat) / (grid_rows + 1)
+            step_lon = (max_lon - min_lon) / (grid_cols + 1)
+
+            for r in range(1, grid_rows + 1):
+                for c in range(1, grid_cols + 1):
+                    if len(nodes_trong_vung) >= so_diem_moi_vung:
+                        break
+                    cand_lat = min_lat + r * step_lat + rng.uniform(-0.35, 0.35) * step_lat
+                    cand_lon = min_lon + c * step_lon + rng.uniform(-0.35, 0.35) * step_lon
+                    if self._diem_nam_gon_trong_vung(cand_lat, cand_lon, zone, margin_deg=0.00035):
+                        nodes_trong_vung.append(
+                            HeatNode(
+                                lat=cand_lat,
+                                lon=cand_lon,
+                                risk_score=round(rng.uniform(0.05, 0.25), 4),
+                                zone_id=zone_id,
+                            )
+                        )
+
+            # Bước 2: Lấy mẫu bổ sung bằng Ray-Casting cho đủ số điểm nhiệt mỗi vùng
+            max_attempts = so_diem_moi_vung * 80
+            attempts = 0
+            while len(nodes_trong_vung) < so_diem_moi_vung and attempts < max_attempts:
+                attempts += 1
+                cand_lat = rng.uniform(min_lat, max_lat)
+                cand_lon = rng.uniform(min_lon, max_lon)
+                margin = 0.00035 if attempts < max_attempts // 2 else 0.0
+                if self._diem_nam_gon_trong_vung(cand_lat, cand_lon, zone, margin_deg=margin):
+                    nodes_trong_vung.append(
+                        HeatNode(
+                            lat=cand_lat,
+                            lon=cand_lon,
+                            risk_score=round(rng.uniform(0.05, 0.25), 4),
+                            zone_id=zone_id,
+                        )
+                    )
+
+            danh_sach_heat_nodes.extend(nodes_trong_vung)
+
+        return danh_sach_heat_nodes
+
+    def update_heatmap(self, dt: float) -> list[HeatNode]:
+        """
+        Các điểm nhiệt tự động tăng nhẹ risk_score theo thời gian dt (giây)
+        để mô phỏng nguy cơ cháy rừng tích tụ tự nhiên, giới hạn trong [0.05, 1.0].
+        """
+        dt_sec = max(0.0, float(dt))
+        if dt_sec <= 0.0:
+            return self.heat_nodes
+
+        for node in self.heat_nodes:
+            # Mức tăng nhẹ theo thời gian thực (từ 0.0015 đến 0.004 mỗi giây)
+            delta_risk = random.uniform(0.0015, 0.0040) * dt_sec
+            node.risk_score = round(min(1.0, max(0.05, node.risk_score + delta_risk)), 4)
+
+        return self.heat_nodes
+
+    def trigger_fire(
+        self,
+        lat: float,
+        lon: float,
+        radius_m: float = 800.0
+    ) -> list[HeatNode]:
+        """
+        Khi có sự kiện cháy tại (lat, lon):
+        - Tìm các HeatNode xung quanh tâm cháy trong bán kính `radius_m` (mét)
+          và đẩy `risk_score` lên 1.0 (tạo điểm nóng cực đại).
+        - Nếu bán kính nhỏ chưa chạm tới HeatNode nào nhưng điểm cháy nằm trong vùng,
+          đẩy HeatNode gần nhất lên 1.0 để luôn hình thành điểm nóng cực đại.
+        - KHÔNG kích hoạt cơ chế đấu thầu của Trạm Kiểm Lâm.
+        """
+        fire_lat = float(lat)
+        fire_lon = float(lon)
+        ban_kinh_m = max(50.0, float(radius_m))
+        affected_nodes: list[HeatNode] = []
+
+        for node in self.heat_nodes:
+            dist_m = self._khoang_cach_mot_phang_m(fire_lat, fire_lon, node.lat, node.lon)
+            if dist_m <= ban_kinh_m:
+                node.risk_score = 1.0
+                affected_nodes.append(node)
+
+        if not affected_nodes and self.heat_nodes:
+            nearest_node = min(
+                self.heat_nodes,
+                key=lambda n: self._khoang_cach_mot_phang_m(fire_lat, fire_lon, n.lat, n.lon)
+            )
+            if self._khoang_cach_mot_phang_m(fire_lat, fire_lon, nearest_node.lat, nearest_node.lon) <= max(ban_kinh_m * 2.5, 1500.0):
+                nearest_node.risk_score = 1.0
+                affected_nodes.append(nearest_node)
+
+        return affected_nodes
+
+    def xuat_heatmap(self) -> list[dict]:
+        """Xuất danh sách điểm nhiệt dạng dict JSON phục vụ đồng bộ giao diện Web."""
+        return [node.to_dict() for node in self.heat_nodes]
 
     # =========================================================================
     # 1. TỰ ĐỘNG ĐỒNG BỘ VỆ TINH THẬT TỪ CELESTRAK (CÓ DỰ PHÒNG OFFLINE CSV)

@@ -743,6 +743,11 @@ class MessageBroker:
         ]
         await self.phat_su_kien_ra_web("WORLD_STATE", {
             "nodes": danh_sach_nodes,
+            "heatmap": (
+                self.scenario.xuat_heatmap()
+                if hasattr(self.scenario, "xuat_heatmap")
+                else []
+            ),
             "zone_coverage": self.tinh_thong_ke_phu_song_vung(),
             "network_metrics": self.thong_ke_toan_mang,
             "connectivity_metrics": getattr(self, "thong_ke_lien_tuc", {}),

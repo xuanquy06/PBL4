@@ -781,6 +781,39 @@ class ScenarioDeploymentTests(unittest.IsolatedAsyncioTestCase):
             )
         )
 
+    def test_heat_nodes_stay_strictly_inside_seven_zones_and_update_on_fire(self):
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        scenario = ScenarioManager(data_dir=os.path.join(project_root, "data"))
+        zones_by_id = {
+            feat["properties"]["zone_id"]: feat
+            for feat in scenario.patrol_zones["features"]
+        }
+
+        self.assertGreaterEqual(len(scenario.heat_nodes), 7 * 15)
+        self.assertEqual(
+            {node.zone_id for node in scenario.heat_nodes},
+            {f"ZONE_{idx:02d}" for idx in range(1, 8)}
+        )
+        for node in scenario.heat_nodes:
+            self.assertGreaterEqual(node.risk_score, 0.05)
+            self.assertLessEqual(node.risk_score, 1.0)
+            self.assertTrue(
+                self._point_in_zone(node.lat, node.lon, zones_by_id[node.zone_id]),
+                f"HeatNode ({node.lat}, {node.lon}) must lie inside {node.zone_id}"
+            )
+
+        before_scores = [node.risk_score for node in scenario.heat_nodes]
+        scenario.update_heatmap(10.0)
+        after_scores = [node.risk_score for node in scenario.heat_nodes]
+        self.assertTrue(all(after >= before for before, after in zip(before_scores, after_scores)))
+        self.assertTrue(any(after > before for before, after in zip(before_scores, after_scores)))
+
+        # Trigger fire at ZONE_03 patrol center
+        c_lon, c_lat = zones_by_id["ZONE_03"]["properties"]["patrol_center"]
+        hotspots = scenario.trigger_fire(c_lat, c_lon, radius_m=800.0)
+        self.assertGreater(len(hotspots), 0)
+        self.assertTrue(all(node.risk_score == 1.0 for node in hotspots))
+
     async def test_cnp_bid_or_refusal_uses_flight_energy_not_geographic_radius(self):
         class FakeCnpBroker:
             def __init__(self):
@@ -842,109 +875,29 @@ class ScenarioDeploymentTests(unittest.IsolatedAsyncioTestCase):
 
 
 class MissionDispatchTests(unittest.IsolatedAsyncioTestCase):
-    async def test_fire_mission_farther_than_155_km_uses_energy_not_radius(self):
+    async def test_trigger_fire_maximizes_surrounding_heatnodes_without_station_auction(self):
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         simulation = SimulationLoop.__new__(SimulationLoop)
         simulation.physics = FakePhysics({})
+        simulation.scenario = ScenarioManager(data_dir=os.path.join(project_root, "data"))
         uav = FakeAgent("MÁY_BAY_UAV_01", "MÁY_BAY", battery=100.0)
         uav.chuyen_trang_thai(AgentState.PATROLLING)
-        uav.pin_toi_da = 100000.0
-        uav.pin_hien_tai = uav.pin_toi_da
-        uav.toa_do.update({
-            "vi_do": 16.1,
-            "kinh_do": 108.2,
-            "do_cao": 1200.0,
-            "van_toc_m_s": 45.0
-        })
-        broker = MessageBroker(simulation.physics, scenario_manager=object())
+        uav.xu_ly_thong_diep = AsyncMock()
+        broker = MessageBroker(simulation.physics, scenario_manager=simulation.scenario)
         broker.dang_ky_tac_nhan(uav)
-        broker.gui_goi_tin_da_chang_ve_tram = AsyncMock(return_value=True)
         simulation.broker = broker
         simulation.ground_station_server = GroundStationServer(broker)
-        broker.ground_station_server = simulation.ground_station_server
 
-        bid_messages = []
-
-        async def submit_bid(message):
-            bid_messages.append(message)
-            if message.get("loai_tin") != "CFP_FIRE_EVENT":
-                return
-            target = {
-                "vi_do": message["vi_do"],
-                "kinh_do": message["kinh_do"],
-                "do_cao": 0.0
-            }
-            distance_m = simulation.physics.tinh_khoang_cach_3d(uav.toa_do, target)
-            energy_j = 2.0 * distance_m / 45.0 * uav.cong_suat_bay_w
-            battery_after_mission_pct = (
-                (uav.pin_hien_tai - energy_j) / uav.pin_toi_da * 100.0
-            )
-            if battery_after_mission_pct > 25.0:
-                simulation.ground_station_server.nhan_propose({
-                    "ma_phien_dau_gia": message["ma_phien_dau_gia"],
-                    "uav_id": uav.ma_dinh_danh,
-                    "chi_phi": distance_m,
-                    "khoang_cach_m": distance_m
-                })
-
-        uav.xu_ly_thong_diep = submit_bid
-        simulation._so_nhiem_vu_dieu_phoi = 0
-        simulation._chi_so_lien_lac = {"nhiem_vu_da_dieu_phoi": 0}
-        target_latitude = 16.24
-        distance_km = FakePhysics.tinh_khoang_cach_3d(
-            uav.toa_do,
-            {"vi_do": target_latitude, "kinh_do": 108.2, "do_cao": 0.0}
-        ) / 1000.0
-
-        with patch("core.ground_station_server.asyncio.sleep", new_callable=AsyncMock):
-            result = await asyncio.wait_for(
-                simulation.kich_hoat_su_co_khan_cap("CHÁY_RỪNG", target_latitude, 108.2),
-                timeout=5.0
-            )
-
-        self.assertEqual(
-            [message["loai_tin"] for message in bid_messages],
-            ["CFP_FIRE_EVENT", "ACCEPT_PROPOSAL"]
+        c_lon, c_lat = simulation.scenario.patrol_zones["features"][2]["properties"]["patrol_center"]
+        result = await asyncio.wait_for(
+            simulation.kich_hoat_su_co_khan_cap("CHÁY_RỪNG", c_lat, c_lon),
+            timeout=5.0
         )
-        report_args = broker.gui_goi_tin_da_chang_ve_tram.await_args.kwargs
-        self.assertEqual(report_args["ma_nguon"], uav.ma_dinh_danh)
-        self.assertEqual(report_args["thong_diep"]["loai_tin"], "FIRE_DETECTION_REPORT")
-        self.assertGreater(distance_km, 15.5)
-        self.assertTrue(result["thanh_cong"], result)
-        self.assertEqual(result["uav_phat_hien"], uav.ma_dinh_danh)
-        self.assertEqual(result["uav_dieu_dong"], uav.ma_dinh_danh)
 
-    async def test_low_energy_mission_reports_nearest_uav_and_required_reserve(self):
-        simulation = SimulationLoop.__new__(SimulationLoop)
-        simulation.physics = FakePhysics({})
-        nearest_uav = FakeAgent("MÁY_BAY_UAV_01", "MÁY_BAY", battery=20.0)
-        nearest_uav.trang_thai = AgentState.PATROLLING
-        nearest_uav.xu_ly_thong_diep = AsyncMock()
-        nearest_uav.toa_do.update({
-            "vi_do": 16.0748,
-            "kinh_do": 108.152,
-            "do_cao": 1200.0,
-            "van_toc_m_s": 45.0
-        })
-        simulation.broker = type(
-            "FakeBroker",
-            (),
-            {
-                "danh_sach_tac_nhan": {nearest_uav.ma_dinh_danh: nearest_uav},
-                "gui_log_ra_web": AsyncMock(),
-                "gui_goi_tin_da_chang_ve_tram": AsyncMock(return_value=True)
-            }
-        )()
-
-        with patch("core.ground_station_server.asyncio.sleep", new_callable=AsyncMock):
-            result = await asyncio.wait_for(
-                simulation.kich_hoat_su_co_khan_cap("CHÁY_RỪNG", 16.8508, 103.7948),
-                timeout=5.0
-            )
-
-        self.assertFalse(result["thanh_cong"])
-        self.assertEqual(result["uav_gan_nhat"], nearest_uav.ma_dinh_danh)
-        self.assertGreater(result["khoang_cach_gan_nhat_km"], 400.0)
-        self.assertIn("dự trữ", result["thong_bao"])
+        self.assertTrue(result["thanh_cong"])
+        self.assertFalse(result["auction_triggered"])
+        self.assertGreater(result["so_diem_nhiet_kich_hoat"], 0)
+        uav.xu_ly_thong_diep.assert_not_called()
 
 
 class FleetAvailabilityTests(unittest.IsolatedAsyncioTestCase):

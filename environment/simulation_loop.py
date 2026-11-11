@@ -198,6 +198,9 @@ class SimulationLoop:
             self.so_buoc_thoi_gian += 1
             dt_mo_phong = dt_thuc * self.time_scale
 
+            # Cập nhật bản đồ điểm nhiệt (HeatNode) tự động tăng nhẹ risk_score theo thời gian
+            self.update_heatmap(dt_mo_phong)
+
             cac_tac_vu_vat_ly = [
                 agent.cap_nhat_vat_ly(dt_mo_phong)
                 for agent in self.broker.danh_sach_tac_nhan.values()
@@ -549,167 +552,98 @@ class SimulationLoop:
                 return uav.ma_dinh_danh
         return None
 
-    async def kich_hoat_su_co_khan_cap(self, loai_su_co: str, vi_do: float, kinh_do: float) -> dict:
+    def update_heatmap(self, dt: float) -> list:
         """
-        Mô phỏng UAV báo cáo sự cố về trạm, sau đó khởi tạo Contract Net Protocol (CNP):
-        - UAV gần nhất có tuyến khả dụng gửi FIRE_DETECTION_REPORT qua broker về trạm.
-        - Phát sóng CFP_FIRE_EVENT tới các UAV đang tuần tra/chờ lệnh.
-        - Thu thập PROPOSE và REFUSE trong cửa sổ đấu giá.
-        - Trao hợp đồng ACCEPT_PROPOSAL cho UAV có chi phí đa mục tiêu thấp nhất.
+        Cập nhật các điểm nhiệt (HeatNode) tự động tăng nhẹ risk_score theo thời gian dt.
+        """
+        scenario = getattr(self, "scenario", None)
+        if scenario is not None and hasattr(scenario, "update_heatmap"):
+            return scenario.update_heatmap(dt)
+        return []
+
+    def trigger_fire(self, lat: float, lon: float, radius_m: float = 800.0) -> list:
+        """
+        Khi có sự kiện cháy tại (lat, lon):
+        - Tìm các HeatNode xung quanh tâm cháy trong bán kính `radius_m` và đẩy risk_score lên 1.0
+          (tạo điểm nóng cực đại).
+        - KHÔNG kích hoạt cơ chế đấu thầu của Trạm Kiểm Lâm nữa.
+        """
+        scenario = getattr(self, "scenario", None)
+        if scenario is not None and hasattr(scenario, "trigger_fire"):
+            return scenario.trigger_fire(lat, lon, radius_m=radius_m)
+        return []
+
+    async def kich_hoat_su_co_khan_cap(
+        self,
+        loai_su_co: str,
+        vi_do: float,
+        kinh_do: float,
+        ban_kinh_m: float = 800.0
+    ) -> dict:
+        """
+        Kích hoạt sự kiện cháy rừng bằng cách đẩy risk_score của các HeatNode xung quanh
+        tâm cháy lên 1.0 thông qua `trigger_fire(lat, lon)`.
+        KHÔNG kích hoạt cơ chế đấu thầu FIPA-CNP của Trạm Kiểm Lâm nữa.
         """
         ma_phien = str(uuid.uuid4())
-        uav_phat_hien = await self._gui_bao_cao_phat_hien_chay(
-            ma_phien,
-            loai_su_co,
-            float(vi_do),
-            float(kinh_do)
-        )
-        if not uav_phat_hien:
-            thong_bao = "Không có UAV nào gửi được báo cáo phát hiện về trạm qua mạng."
-            await self.broker.gui_log_ra_web("WARN", f"⚠️ {thong_bao}")
-            return {
-                "thanh_cong": False,
-                "ma_phien": ma_phien,
-                "thong_bao": thong_bao
-            }
+        fire_lat = float(vi_do)
+        fire_lon = float(kinh_do)
 
         fire_zone_id = None
         scenario = getattr(self, "scenario", None)
         if scenario and hasattr(scenario, "patrol_zones") and isinstance(scenario.patrol_zones, dict):
             for feat in scenario.patrol_zones.get("features", []):
-                if hasattr(scenario, "_diem_nam_trong_vung") and scenario._diem_nam_trong_vung(float(vi_do), float(kinh_do), feat):
+                if hasattr(scenario, "_diem_nam_trong_vung") and scenario._diem_nam_trong_vung(fire_lat, fire_lon, feat):
                     fire_zone_id = feat.get("properties", {}).get("zone_id")
                     break
 
-        thong_diep_cfp = {
-            "loai_tin": "CFP_FIRE_EVENT",
-            "ma_phien_dau_gia": ma_phien,
-            "loai_su_co": loai_su_co,
-            "vi_do": float(vi_do),
-            "kinh_do": float(kinh_do),
-            "zone_id": fire_zone_id,
-            "thoi_diem_khoi_tao": time.time(),
-            "nguoi_gui": "TRẠM_KIỂM_LÂM_SƠN_TRÀ"
-        }
+        affected_nodes = self.trigger_fire(fire_lat, fire_lon, radius_m=ban_kinh_m)
+        if not fire_zone_id and affected_nodes:
+            fire_zone_id = getattr(affected_nodes[0], "zone_id", None)
 
-        uavs_kha_dung = []
-        for tac_nhan in self.broker.danh_sach_tac_nhan.values():
-            if tac_nhan.loai_tac_nhan != "MÁY_BAY":
-                continue
-            trang_thai = getattr(tac_nhan, "uav_state", None) or tac_nhan.trang_thai
-            trang_thai_val = getattr(trang_thai, "value", str(trang_thai))
-            trang_thai_name = getattr(trang_thai, "name", str(trang_thai))
-
-            if (
-                trang_thai_name in ("PATROLLING", "STANDBY", "IDLE", "RELAYING")
-                or trang_thai_val in ("ĐANG_TUẦN_TRA", "NHÀN_RỖI", "ĐANG_TRUYỀN_TẢI", "STANDBY", "PATROLLING", "RELAYING")
-            ):
-                tac_vu_su_co = getattr(tac_nhan, "_tac_vu_su_co", None)
-                if tac_vu_su_co is None or tac_vu_su_co.done():
-                    uavs_kha_dung.append(tac_nhan)
-
-        if not uavs_kha_dung:
-            thong_bao = "Không có UAV nào đang ở trạng thái sẵn sàng để nhận CFP."
-            thong_tin_uav = self._thong_tin_uav_gan_nhat(vi_do, kinh_do)
-            if thong_tin_uav:
-                thong_bao += (
-                    f" UAV gần nhất [{thong_tin_uav['uav_gan_nhat']}] cách "
-                    f"{thong_tin_uav['khoang_cach_gan_nhat_km']} km; cần bảo toàn "
-                    f"{thong_tin_uav['nang_luong_du_tru_yeu_cau_joule']} J dự trữ."
-                )
-            await self.broker.gui_log_ra_web("WARN", f"⚠️ {thong_bao}")
-            return {
-                "thanh_cong": False,
-                "ma_phien": ma_phien,
-                "uav_phat_hien": uav_phat_hien,
-                "thong_bao": thong_bao,
-                **thong_tin_uav
-            }
-
-        await self.broker.gui_log_ra_web(
-            "EVENT",
-            f"🔥 [{uav_phat_hien}] báo cáo sự cố [{loai_su_co}] tại "
-            f"({vi_do:.4f}, {kinh_do:.4f}). "
-            f"Phát quảng bá CFP_FIRE_EVENT tới {len(uavs_kha_dung)} UAV."
-        )
-
-        if not hasattr(self, "ground_station_server") or self.ground_station_server is None:
-            self.ground_station_server = GroundStationServer(self.broker)
-
-        for uav in uavs_kha_dung:
-            if getattr(uav, "_dang_lang_nghe", False):
-                await uav.hang_doi_thong_diep.put(thong_diep_cfp.copy())
-            else:
-                await uav.xu_ly_thong_diep(thong_diep_cfp.copy())
-
-        ket_qua_dau_gia = await self.ground_station_server.mo_phien_dau_gia_chay_rung(
-            ma_phien=ma_phien,
-            thong_diep_cfp=thong_diep_cfp,
-            thoi_gian_cho_s=0.6
-        )
-
-        if not ket_qua_dau_gia:
-            thong_bao = "Không có UAV nào gửi PROPOSE khả dụng (tất cả không đủ pin dự trữ > 25% sau khứ hồi)."
-            thong_tin_uav = self._thong_tin_uav_gan_nhat(vi_do, kinh_do)
-            if thong_tin_uav:
-                thong_bao += (
-                    f" UAV gần nhất [{thong_tin_uav['uav_gan_nhat']}] cách "
-                    f"{thong_tin_uav['khoang_cach_gan_nhat_km']} km; cần bảo toàn "
-                    f"{thong_tin_uav['nang_luong_du_tru_yeu_cau_joule']} J dự trữ."
-                )
-            return {
-                "thanh_cong": False,
-                "ma_phien": ma_phien,
-                "uav_phat_hien": uav_phat_hien,
-                "thong_bao": thong_bao,
-                "auction_detail": getattr(self.broker, "phien_dau_gia_gan_nhat", None),
-                **thong_tin_uav
-            }
-
-        winner_id = ket_qua_dau_gia.get("uav_id") or ket_qua_dau_gia.get("winner_id")
-        if winner_id:
-            if not hasattr(self, "_active_fire_missions"):
-                self._active_fire_missions = {}
-            self._active_fire_missions[ma_phien] = {
-                "ma_phien": ma_phien,
-                "loai_su_co": loai_su_co,
-                "vi_do": float(vi_do),
-                "kinh_do": float(kinh_do),
-                "zone_id": fire_zone_id,
-                "winner_id": winner_id,
-                "retry_count": 0,
-                "failed_uavs": set(),
-                "status": "RESPONDING"
-            }
-        khoang_cach_km = round(ket_qua_dau_gia.get("khoang_cach_m", 0.0) / 1000.0, 2)
-        chi_phi = ket_qua_dau_gia.get("chi_phi", 0.0)
-        self._so_nhiem_vu_dieu_phoi += 1
-        self._chi_so_lien_lac["nhiem_vu_da_dieu_phoi"] = self._so_nhiem_vu_dieu_phoi
-
+        so_diem_nong = len(affected_nodes)
         thong_bao_kq = (
-            f"🎯 CNP thành công! Đã trao thầu cho [{winner_id}] (cách {khoang_cach_km} km, "
-            f"chi phí {chi_phi}) tiếp cận hiện trường chữa cháy."
+            f"🔥 [HEATMAP] Đã kích hoạt điểm cháy [{loai_su_co}] tại ({fire_lat:.4f}, {fire_lon:.4f}) "
+            f"{f'thuộc {fire_zone_id} ' if fire_zone_id else ''}"
+            f"— Đẩy {so_diem_nong} HeatNode trong bán kính {ban_kinh_m:.0f}m lên risk_score = 1.0 "
+            f"(Không kích hoạt đấu thầu Trạm Kiểm Lâm)."
         )
+
+        if hasattr(self, "broker") and self.broker is not None:
+            if hasattr(self.broker, "gui_log_ra_web"):
+                await self.broker.gui_log_ra_web("EVENT", thong_bao_kq)
+            if hasattr(self.broker, "dong_bo_trang_thai_toan_mang"):
+                await self.broker.dong_bo_trang_thai_toan_mang()
+
         return {
             "thanh_cong": True,
             "ma_phien": ma_phien,
-            "uav_phat_hien": uav_phat_hien,
-            "uav_dieu_dong": winner_id,
-            "khoang_cach_tiep_can_km": khoang_cach_km,
-            "chi_phi": chi_phi,
-            "pin_du_kien_pct": ket_qua_dau_gia.get("pin_du_kien_pct", 0.0),
+            "loai_su_co": loai_su_co,
+            "vi_do": fire_lat,
+            "kinh_do": fire_lon,
+            "zone_id": fire_zone_id,
+            "so_diem_nhiet_kich_hoat": so_diem_nong,
+            "affected_nodes": [
+                n.to_dict() if hasattr(n, "to_dict") else dict(n)
+                for n in affected_nodes
+            ],
+            "auction_triggered": False,
             "thong_bao": thong_bao_kq,
-            "auction_detail": getattr(self.broker, "phien_dau_gia_gan_nhat", None)
         }
 
     def lay_du_lieu_khoi_tao_ban_do(self) -> dict:
         """
-        Trả về trạng thái node, waypoint tuần tra, độ phủ 7 phân khu và chỉ số mạng khi trình duyệt mở trang.
+        Trả về trạng thái node, waypoint tuần tra, bản đồ nhiệt HeatNode, độ phủ 7 phân khu và chỉ số mạng.
         """
         return {
             "nodes": [a.xuat_ho_so_trang_thai() for a in self.broker.danh_sach_tac_nhan.values()],
             "uav_waypoints": self.ban_do_waypoints_uav,
             "patrol_zones": self.scenario.patrol_zones,
+            "heatmap": (
+                self.scenario.xuat_heatmap()
+                if hasattr(self.scenario, "xuat_heatmap")
+                else []
+            ),
             "zone_coverage": self.broker.tinh_thong_ke_phu_song_vung(),
             "deployment_plan": self.scenario.ke_hoach_bo_tri_ban_dau,
             "network_metrics": self.broker.thong_ke_toan_mang,
