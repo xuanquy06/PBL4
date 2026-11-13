@@ -1,13 +1,16 @@
-"""UAV patrol, energy-aware scheduling, and CNP mission behavior."""
+"""UAV autonomous potential-field patrol, P2P swarm handover, and Dijkstra reporting."""
 import asyncio
 import math
 import time
 import uuid
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 from core.base_agent import AgentState, BaseAgent
 
 LOW_BATTERY_THRESHOLD = 25.0
+FIRE_DETECTION_RADIUS_M = 600.0
+FIRE_RISK_THRESHOLD = 0.85
+FIRE_CONTAINMENT_RADIUS_M = 130.0
 
 
 class UAVState(str, Enum):
@@ -22,7 +25,6 @@ class UAVAgent(BaseAgent):
     def __init__(
         self,
         bo_dinh_tuyen,
-        waypoints: Optional[List[dict]] = None,
         cong_suat_bay_w: float = 80.0,
         zone_id: Optional[str] = None,
         **kwargs
@@ -33,24 +35,25 @@ class UAVAgent(BaseAgent):
         kwargs.setdefault("tan_so_hz", 2.4e9)
         kwargs.setdefault("bang_thong_hz", 20e6)
         super().__init__(bo_dinh_tuyen=bo_dinh_tuyen, **kwargs)
-        self.waypoints = [dict(wp) for wp in (waypoints or [])]
-        self.waypoints_goc = [dict(wp) for wp in self.waypoints]
-        self.waypoint_index = 0
         self.cong_suat_bay_w = max(1.0, float(cong_suat_bay_w))
         self.zone_id = zone_id
         self.nguong_pin_yeu_pct = LOW_BATTERY_THRESHOLD
-        self.danh_sach_bao_gia: Dict[str, list[dict]] = {}
         self.so_nhiem_vu_da_nhan = 0
         self.toa_do_muc_tieu: Optional[dict] = None
         self.toa_do_tram_sac: Optional[dict] = None
-        self._vung_tuan_tra_phu: Dict[str, list[dict]] = {}
-        self._so_diem_tuan_tra_su_co_con_lai = 0
+        self._vung_tuan_tra_phu: Dict[str, str] = {}
+        self._tam_khoanh_vung_chay: Optional[dict] = None
+        self._goc_khoanh_vung_rad: float = 0.0
+        self._thoi_gian_khoanh_vung_con_lai: float = 0.0
         self._den_muc_tieu: Optional[asyncio.Event] = None
         self._tac_vu_su_co: Optional[asyncio.Task] = None
         self._yeu_cau_ban_giao_da_phat = False
         self._waiting_for_relief_id: Optional[str] = None
         self._relieving_target_id: Optional[str] = None
         self._da_ban_giao_tai_cho = False
+        self._su_co_da_nho_dong_doi: set[tuple[float, float]] = set()
+        self._da_log_gradient_pull: set[tuple[float, float]] = set()
+        self._da_phat_hien_dam_chay: set[tuple[float, float]] = set()
         self.uav_state = UAVState.STANDBY
         self.current_link = "LEO_SATELLITE"
         self.direct_los = False
@@ -64,6 +67,22 @@ class UAVAgent(BaseAgent):
             self.uav_state = UAVState.STANDBY
         else:
             self.chuyen_trang_thai(AgentState.PATROLLING)
+
+    @property
+    def lat(self) -> float:
+        return float(self.toa_do["vi_do"])
+
+    @lat.setter
+    def lat(self, value: float):
+        self.toa_do["vi_do"] = float(value)
+
+    @property
+    def lon(self) -> float:
+        return float(self.toa_do["kinh_do"])
+
+    @lon.setter
+    def lon(self, value: float):
+        self.toa_do["kinh_do"] = float(value)
 
     def _get_den_muc_tieu_event(self) -> asyncio.Event:
         if self._den_muc_tieu is None:
@@ -96,6 +115,7 @@ class UAVAgent(BaseAgent):
         ho_so["relay_target_id"] = self.relay_target_id
         ho_so["tuyen_ve_tram"] = list(getattr(self, "tuyen_ve_tram_cuc_bo", []))
         ho_so["is_reserve"] = bool(getattr(self, "uav_state", None) == UAVState.STANDBY and self._dang_o_tai_tram())
+        ho_so["scan_radius_m"] = FIRE_DETECTION_RADIUS_M
         ho_so["so_nhiem_vu"] = self.so_nhiem_vu_da_nhan
         ho_so["vung_ban_giao_nhan"] = list(self._vung_tuan_tra_phu.keys())
         if self.toa_do_muc_tieu:
@@ -103,16 +123,10 @@ class UAVAgent(BaseAgent):
             ho_so["target_lng"] = round(float(self.toa_do_muc_tieu["kinh_do"]), 5)
         return ho_so
 
-    def _khoi_phuc_quy_dao_tuan_tra_goc(self):
-        """Khôi phục lộ trình tuần tra phân khu gốc cộng với các vùng đang nhận bàn giao hộ."""
-        if not self.waypoints_goc:
-            return
-        self._so_diem_tuan_tra_su_co_con_lai = 0
-        lo_trinh_moi = [dict(wp) for wp in self.waypoints_goc]
-        for vung_phu in self._vung_tuan_tra_phu.values():
-            lo_trinh_moi.extend(vung_phu)
-        self.waypoints = lo_trinh_moi
-        self.waypoint_index = self.waypoint_index % max(1, len(self.waypoints))
+    def _ket_thuc_khoanh_vung_chay(self):
+        """Giải phóng trạng thái khoanh vùng sự cố để UAV tiếp tục tuần tra theo trường lực Heatmap."""
+        self._tam_khoanh_vung_chay = None
+        self._thoi_gian_khoanh_vung_con_lai = 0.0
 
     async def dat_pin_gia_lap(self, phan_tram_pin: float):
         """Áp dụng sự cố pin qua hành vi của UAV thay vì để API sửa trực tiếp FSM."""
@@ -127,8 +141,7 @@ class UAVAgent(BaseAgent):
         else:
             self._yeu_cau_ban_giao_da_phat = False
             self._waiting_for_relief_id = None
-            if self.waypoints_goc:
-                self._khoi_phuc_quy_dao_tuan_tra_goc()
+            self._ket_thuc_khoanh_vung_chay()
             await self._phat_thong_bao_khoi_phuc_vung()
             if self._dang_o_tai_tram():
                 self.chuyen_trang_thai(
@@ -193,7 +206,8 @@ class UAVAgent(BaseAgent):
                         f"🔋 [{self.ma_dinh_danh}] Sạc đầy 100%, chuyển sang trực chiến DỰ BỊ tại Trạm cho {self.zone_id}."
                     )
                 else:
-                    self._khoi_phuc_quy_dao_tuan_tra_goc()
+                    self._ket_thuc_khoanh_vung_chay()
+                    self.toa_do["do_cao"] = max(1000.0, float(self.toa_do.get("do_cao", 1000.0)))
                     self.chuyen_trang_thai(AgentState.PATROLLING)
                     await self._phat_thong_bao_khoi_phuc_vung()
                     await self.bo_dinh_tuyen.gui_log_ra_web(
@@ -225,7 +239,7 @@ class UAVAgent(BaseAgent):
             else:
                 if self.uav_state != UAVState.RETURNING:
                     self.chuyen_trang_thai(AgentState.LOW_BATTERY_RTB)
-                if not self._yeu_cau_ban_giao_da_phat:
+                if not self._yeu_cau_ban_giao_vung_da_phat():
                     await self._phat_yeu_cau_ban_giao_vung()
 
         if self.trang_thai in (AgentState.LOW_BATTERY_RTB, AgentState.PATROLLING, AgentState.RELAYING) and (
@@ -240,62 +254,520 @@ class UAVAgent(BaseAgent):
             ):
                 return
 
+        # Tự chủ phát hiện đám cháy trong bán kính <= 600m khi đang tuần tra
+        if (
+            self.trang_thai in (AgentState.PATROLLING, AgentState.RELAYING)
+            and (not self._tac_vu_su_co or self._tac_vu_su_co.done())
+            and not self.toa_do_muc_tieu
+            and self._tam_khoanh_vung_chay is None
+        ):
+            await self._kiem_tra_va_xu_ly_dam_chay_tu_chu()
+
         if self.toa_do_muc_tieu:
-            waypoint = self.toa_do_muc_tieu
-        elif self.trang_thai in (
+            self._di_chuyen_den_diem_muc_tieu(self.toa_do_muc_tieu, dt_giay, la_tram_sac=False)
+            return
+
+        if self.trang_thai in (
             AgentState.LOW_BATTERY_RTB,
             AgentState.RETURNING
         ) and self.toa_do_tram_sac:
-            waypoint = self.toa_do_tram_sac
-        elif self.waypoints:
-            waypoint = self.waypoints[self.waypoint_index]
-        else:
+            self._di_chuyen_den_diem_muc_tieu(self.toa_do_tram_sac, dt_giay, la_tram_sac=True)
             return
 
-        van_toc_m_s = max(0.0, float(waypoint.get("van_toc_m_s", 0.0)))
-        if van_toc_m_s == 0.0:
+        if self._tam_khoanh_vung_chay is not None:
+            self._di_chuyen_khoanh_vung_dam_chay(dt_giay)
             return
 
-        khoang_cach_m = self.bo_dinh_tuyen.physics.tinh_khoang_cach_3d(self.toa_do, waypoint)
+        if self.trang_thai in (AgentState.PATROLLING, AgentState.RELAYING):
+            # Logic di chuyển duy nhất của UAV ở trạng thái tuần tra:
+            # Cập nhật self.lat và self.lon bằng vector lực hấp dẫn tổng hợp từ các điểm HeatNode
+            # (hướng về tâm nhiệt đỏ) cộng với lực đẩy giữa các UAV, tuyệt đối không bay theo mốc định sẵn.
+            self._di_chuyen_tu_chu_theo_truong_luc(dt_giay)
+
+    def _yeu_cau_ban_giao_vung_da_phat(self) -> bool:
+        return bool(self._yeu_cau_ban_giao_da_phat)
+
+    def _di_chuyen_den_diem_muc_tieu(self, muc_tieu: dict, dt_giay: float, la_tram_sac: bool = False):
+        """Di chuyển thẳng tới tọa độ mục tiêu (tâm đám cháy hoặc Trạm mặt đất khi về sạc)."""
+        van_toc_m_s = max(0.0, float(muc_tieu.get("van_toc_m_s", 40.0)))
+        if van_toc_m_s <= 0.0:
+            return
+
+        khoang_cach_m = self.bo_dinh_tuyen.physics.tinh_khoang_cach_3d(self.toa_do, muc_tieu)
         if khoang_cach_m <= 1.0:
-            if self.trang_thai in (AgentState.RETURNING, AgentState.LOW_BATTERY_RTB):
-                self.toa_do.update(waypoint)
+            if la_tram_sac:
+                self.lat = float(muc_tieu["vi_do"])
+                self.lon = float(muc_tieu["kinh_do"])
+                self.toa_do["do_cao"] = float(muc_tieu.get("do_cao", self.toa_do["do_cao"]))
                 self.toa_do_tram_sac = None
                 self.chuyen_trang_thai(AgentState.CHARGING)
-            elif self.toa_do_muc_tieu:
+            else:
                 self._get_den_muc_tieu_event().set()
-            elif self.waypoints:
-                self._chuyen_sang_waypoint_ke_tiep()
             return
 
         quang_duong_m = min(khoang_cach_m, van_toc_m_s * dt_giay)
         ti_le_di_chuyen = quang_duong_m / khoang_cach_m
-        for truong in ("vi_do", "kinh_do", "do_cao"):
-            hien_tai = self.toa_do[truong]
-            self.toa_do[truong] = hien_tai + (float(waypoint[truong]) - hien_tai) * ti_le_di_chuyen
+        self.lat = self.lat + (float(muc_tieu["vi_do"]) - self.lat) * ti_le_di_chuyen
+        self.lon = self.lon + (float(muc_tieu["kinh_do"]) - self.lon) * ti_le_di_chuyen
+        self.toa_do["do_cao"] = float(self.toa_do["do_cao"]) + (
+            float(muc_tieu.get("do_cao", self.toa_do["do_cao"])) - float(self.toa_do["do_cao"])
+        ) * ti_le_di_chuyen
         self.toa_do["van_toc_m_s"] = van_toc_m_s
         self.tieu_hao_nang_luong(self.cong_suat_bay_w * dt_giay)
 
         if ti_le_di_chuyen >= 1.0:
-            if self.trang_thai in (AgentState.RETURNING, AgentState.LOW_BATTERY_RTB):
-                self.toa_do.update(waypoint)
+            if la_tram_sac:
+                self.lat = float(muc_tieu["vi_do"])
+                self.lon = float(muc_tieu["kinh_do"])
+                self.toa_do["do_cao"] = float(muc_tieu.get("do_cao", self.toa_do["do_cao"]))
                 self.toa_do_tram_sac = None
                 self.chuyen_trang_thai(AgentState.CHARGING)
-            elif self.toa_do_muc_tieu:
+            else:
                 self._get_den_muc_tieu_event().set()
-            elif self.waypoints:
-                self._chuyen_sang_waypoint_ke_tiep()
 
-    def _chuyen_sang_waypoint_ke_tiep(self):
-        """Di chuyển sang waypoint kế tiếp; nếu đã hoàn tất vòng quét đám cháy thì quay về phân khu gốc."""
-        if not self.waypoints:
+    def _di_chuyen_khoanh_vung_dam_chay(self, dt_giay: float):
+        """Khoanh vùng 130m quanh tâm đám cháy bằng chuyển động góc liên tục, không dùng mốc tọa độ định sẵn."""
+        if not self._tam_khoanh_vung_chay:
             return
-        if self._so_diem_tuan_tra_su_co_con_lai > 0:
-            self._so_diem_tuan_tra_su_co_con_lai -= 1
-            if self._so_diem_tuan_tra_su_co_con_lai <= 0 and self.waypoints_goc:
-                self._khoi_phuc_quy_dao_tuan_tra_goc()
+        self._thoi_gian_khoanh_vung_con_lai -= dt_giay
+        if self._thoi_gian_khoanh_vung_con_lai <= 0.0:
+            if hasattr(self.bo_dinh_tuyen, "mo_khoa_muc_tieu_chay"):
+                self.bo_dinh_tuyen.mo_khoa_muc_tieu_chay(self.ma_dinh_danh, ha_nhiet=True)
+            self._ket_thuc_khoanh_vung_chay()
+            return
+
+        fire_lat = float(self._tam_khoanh_vung_chay["vi_do"])
+        fire_lon = float(self._tam_khoanh_vung_chay["kinh_do"])
+        van_toc_m_s = 40.0
+        omega = van_toc_m_s / FIRE_CONTAINMENT_RADIUS_M
+        self._goc_khoanh_vung_rad = (self._goc_khoanh_vung_rad + omega * dt_giay) % (2.0 * math.pi)
+
+        met_tren_do_vi = 111320.0
+        met_tren_do_kinh = 111320.0 * max(0.2, math.cos(math.radians(fire_lat)))
+        self.lat = fire_lat + (FIRE_CONTAINMENT_RADIUS_M * math.sin(self._goc_khoanh_vung_rad)) / met_tren_do_vi
+        self.lon = fire_lon + (FIRE_CONTAINMENT_RADIUS_M * math.cos(self._goc_khoanh_vung_rad)) / met_tren_do_kinh
+        self.toa_do["van_toc_m_s"] = van_toc_m_s
+        self.tieu_hao_nang_luong(self.cong_suat_bay_w * dt_giay)
+
+    def _lay_da_giac_vung_hien_tai(self) -> Optional[dict]:
+        """Lấy thông tin đa giác GeoJSON của phân khu hiện tại (Z_k)."""
+        if not self.zone_id:
+            return None
+        scenario = getattr(self.bo_dinh_tuyen, "scenario", None)
+        patrol_zones = getattr(scenario, "patrol_zones", None)
+        if not isinstance(patrol_zones, dict):
+            return None
+        for feat in patrol_zones.get("features", []):
+            if feat.get("properties", {}).get("zone_id") == self.zone_id:
+                return feat
+        return None
+
+    def _di_chuyen_tu_chu_theo_truong_luc(self, dt_giay: float):
+        """
+        Di chuyển tự chủ (Autonomous Potential Field) trong phân khu Z_k:
+        1. Cập nhật self.lat và self.lon bằng cách tính vector lực hấp dẫn tổng hợp từ các điểm HeatNode
+           (hướng về tâm nhiệt đỏ có risk_score cao nhất).
+        2. Cộng với lực đẩy giữa các UAV để tránh va chạm và giữ khoảng cách đội hình.
+        3. Tuân thủ nghiêm ngặt biên giới đa giác Z_k bằng thuật toán Ray-Casting, tuyệt đối không
+           di chuyển theo các mốc tọa độ định sẵn.
+        """
+        scenario = getattr(self.bo_dinh_tuyen, "scenario", None)
+        active_zones = {self.zone_id} if self.zone_id else set()
+        active_zones.update(z for z in self._vung_tuan_tra_phu.values() if z)
+
+        all_heat_nodes = getattr(scenario, "heat_nodes", None) or []
+        heat_nodes = [
+            n for n in all_heat_nodes
+            if (not active_zones or getattr(n, "zone_id", None) in active_zones)
+            and not getattr(n, "locked_by", None)
+        ]
+        if not heat_nodes and all_heat_nodes:
+            heat_nodes = [
+                n for n in all_heat_nodes
+                if not active_zones or getattr(n, "zone_id", None) in active_zones
+            ]
+
+        cur_lat = self.lat
+        cur_lon = self.lon
+        met_tren_do_vi = 111320.0
+        met_tren_do_kinh = 111320.0 * max(0.2, math.cos(math.radians(cur_lat)))
+
+        # Làm mát nhẹ các HeatNode thông thường (< 0.85) mà UAV vừa bay qua sát (<= 160m)
+        # để UAV tự động chuyển hướng tuần tra sang điểm có risk_score cao tiếp theo trong vùng
+        for node in heat_nodes:
+            d_node = self._khoang_cach_m(cur_lat, cur_lon, node.lat, node.lon)
+            if d_node <= 160.0 and node.risk_score < FIRE_RISK_THRESHOLD:
+                node.risk_score = 0.05
+
+        fx_attr = 0.0
+        fy_attr = 0.0
+        ux_max = 0.0
+        uy_max = 0.0
+
+        if heat_nodes:
+            # 1. Lực hút từ các HeatNode trong phân khu (hướng mạnh nhất về tâm nhiệt đỏ có risk_score cao nhất)
+            node_max = max(
+                heat_nodes,
+                key=lambda n: (
+                    round(float(n.risk_score), 3),
+                    -self._khoang_cach_m(cur_lat, cur_lon, n.lat, n.lon)
+                )
+            )
+            if float(node_max.risk_score) >= FIRE_RISK_THRESHOLD:
+                fc = getattr(node_max, "fire_center", None) or (node_max.lat, node_max.lon)
+                pull_key = (round(float(fc[0]), 4), round(float(fc[1]), 4))
+                if pull_key not in self._da_log_gradient_pull:
+                    self._da_log_gradient_pull.add(pull_key)
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(
+                            self.bo_dinh_tuyen.gui_log_ra_web(
+                                "INFO",
+                                f"[GRADIENT_PULL] [{self.ma_dinh_danh}] bị hút theo trường lực Heatmap về phía vùng "
+                                f"risk_score={node_max.risk_score:.2f} tại ({pull_key[0]:.4f}, {pull_key[1]:.4f}) thuộc {self.zone_id}."
+                            )
+                        )
+                    except RuntimeError:
+                        pass
+
+            for node in heat_nodes:
+                dx_m = (node.lon - cur_lon) * met_tren_do_kinh
+                dy_m = (node.lat - cur_lat) * met_tren_do_vi
+                dist_m = math.hypot(dx_m, dy_m)
+                if dist_m < 1.0:
+                    continue
+                weight = (float(node.risk_score) ** 2) / max(150.0, dist_m)
+                fx_attr += (dx_m / dist_m) * weight
+                fy_attr += (dy_m / dist_m) * weight
+
+            mag_attr = math.hypot(fx_attr, fy_attr)
+            if mag_attr > 1e-9:
+                fx_attr /= mag_attr
+                fy_attr /= mag_attr
+
+            dx_max = (node_max.lon - cur_lon) * met_tren_do_kinh
+            dy_max = (node_max.lat - cur_lat) * met_tren_do_vi
+            dist_max = max(1.0, math.hypot(dx_max, dy_max))
+            ux_max = dx_max / dist_max
+            uy_max = dy_max / dist_max
+        else:
+            zone_feat_fallback = self._lay_da_giac_vung_hien_tai()
+            if zone_feat_fallback is not None:
+                c_lon, c_lat = zone_feat_fallback.get("properties", {}).get("patrol_center", [cur_lon, cur_lat])
+                dx_c = (float(c_lon) - cur_lon) * met_tren_do_kinh
+                dy_c = (float(c_lat) - cur_lat) * met_tren_do_vi
+                dist_c = max(1.0, math.hypot(dx_c, dy_c))
+                ux_max = dx_c / dist_c
+                uy_max = dy_c / dist_c
+
+        # Vector hướng về tâm nhiệt đỏ có risk_score cao nhất đóng vai trò dẫn đường chính
+        fx_total = ux_max * 2.4 + fx_attr * 0.8
+        fy_total = uy_max * 2.4 + fy_attr * 0.8
+
+        # 2. Lực đẩy giữa các UAV để tránh va chạm và phân tán đội hình trong vùng
+        for other in self.bo_dinh_tuyen.danh_sach_tac_nhan.values():
+            if (
+                other is self
+                or other.loai_tac_nhan != "MÁY_BAY"
+                or other.trang_thai == AgentState.OFFLINE
+                or other._dang_o_tai_tram()
+            ):
+                continue
+            rx_m = (cur_lon - float(other.toa_do["kinh_do"])) * met_tren_do_kinh
+            ry_m = (cur_lat - float(other.toa_do["vi_do"])) * met_tren_do_vi
+            d_uav = math.hypot(rx_m, ry_m)
+            if 0.1 < d_uav < 850.0:
+                rep_strength = 3.2 * ((850.0 - d_uav) / 850.0) ** 2
+                if d_uav < 320.0:
+                    rep_strength += 4.0 * ((320.0 - d_uav) / 320.0)
+                fx_total += (rx_m / d_uav) * rep_strength
+                fy_total += (ry_m / d_uav) * rep_strength
+
+        mag_total = math.hypot(fx_total, fy_total)
+        if mag_total <= 1e-9:
+            ux, uy = ux_max, uy_max
+        else:
+            ux, uy = fx_total / mag_total, fy_total / mag_total
+
+        van_toc_m_s = 40.0
+        quang_duong_m = van_toc_m_s * dt_giay
+        next_lat = cur_lat + (uy * quang_duong_m) / met_tren_do_vi
+        next_lon = cur_lon + (ux * quang_duong_m) / met_tren_do_kinh
+
+        # 3. Tuân thủ biên giới đa giác phân khu Z_k bằng thuật toán Ray-Casting
+        zone_feat = self._lay_da_giac_vung_hien_tai()
+        if zone_feat is not None and scenario is not None:
+            dang_trong_vung = scenario._diem_nam_trong_vung(cur_lat, cur_lon, zone_feat)
+            nam_trong = (
+                scenario._diem_nam_gon_trong_vung(next_lat, next_lon, zone_feat, margin_deg=0.00025)
+                if hasattr(scenario, "_diem_nam_gon_trong_vung")
+                else scenario._diem_nam_trong_vung(next_lat, next_lon, zone_feat)
+            )
+            if not nam_trong:
+                # Nếu đang ở ngoài vùng (vừa xuất kích từ Trạm) hoặc chạm biên đa giác, bẻ hướng về node_max trong vùng
+                next_lat = cur_lat + (uy_max * quang_duong_m) / met_tren_do_vi
+                next_lon = cur_lon + (ux_max * quang_duong_m) / met_tren_do_kinh
+                if dang_trong_vung and not scenario._diem_nam_trong_vung(next_lat, next_lon, zone_feat):
+                    c_lon, c_lat = zone_feat.get("properties", {}).get("patrol_center", [cur_lon, cur_lat])
+                    dx_c = (float(c_lon) - cur_lon) * met_tren_do_kinh
+                    dy_c = (float(c_lat) - cur_lat) * met_tren_do_vi
+                    d_c = max(1.0, math.hypot(dx_c, dy_c))
+                    next_lat = cur_lat + ((dy_c / d_c) * quang_duong_m) / met_tren_do_vi
+                    next_lon = cur_lon + ((dx_c / d_c) * quang_duong_m) / met_tren_do_kinh
+
+        self.lat = next_lat
+        self.lon = next_lon
+        self.toa_do["van_toc_m_s"] = van_toc_m_s
+        self.tieu_hao_nang_luong(self.cong_suat_bay_w * dt_giay)
+
+    def _tinh_pin_du_kien_khu_hoi_pct(self, target_lat: float, target_lon: float) -> float:
+        """
+        Tính phần trăm pin dự kiến còn lại sau khi bay tới tâm cháy (target_lat, target_lon),
+        khoanh vùng giám sát và bay khứ hồi về vị trí an toàn / Trạm mặt đất.
+        """
+        muc_tieu = {
+            "vi_do": float(target_lat),
+            "kinh_do": float(target_lon),
+            "do_cao": float(self.toa_do.get("do_cao", 1000.0))
+        }
+        kc_toi_chay_m = self.bo_dinh_tuyen.physics.tinh_khoang_cach_3d(self.toa_do, muc_tieu)
+        van_toc = max(1.0, float(self.toa_do.get("van_toc_m_s") or 40.0))
+        thoi_gian_khu_hoi_s = (2.0 * kc_toi_chay_m) / van_toc
+        nang_luong_tieu_hao_j = thoi_gian_khu_hoi_s * self.cong_suat_bay_w
+        pin_con_lai_j = self.pin_hien_tai - nang_luong_tieu_hao_j
+        if self.pin_toi_da <= 0:
+            return 0.0
+        return round((pin_con_lai_j / self.pin_toi_da) * 100.0, 2)
+
+    async def _kiem_tra_va_xu_ly_dam_chay_tu_chu(self):
+        """
+        Khi UAV bay vào bán kính phát hiện đám cháy (<= 600m):
+        - Tự động kiểm tra mục tiêu chưa bị khóa và kiểm tra pin khứ hồi (> 25%).
+        - Nếu đủ pin (> 25%): khóa mục tiêu để UAV khác không lặp lại, đổi trạng thái bay thẳng
+          tới tâm cháy, khoanh vùng 130m và gửi gói tin báo cáo qua định tuyến Dijkstra về Trạm.
+        - Nếu pin yếu (<= 25%): tự phát tin nhắn P2P nhờ UAV đồng đội trong cùng phân khu xử lý thay.
+        """
+        scenario = getattr(self.bo_dinh_tuyen, "scenario", None)
+        heat_nodes = getattr(scenario, "heat_nodes", None) or []
+        if not heat_nodes:
+            return
+
+        cur_lat = self.lat
+        cur_lon = self.lon
+
+        # Lọc các HeatNode đang bùng cháy (risk_score >= 0.85) nằm trong bán kính phát hiện <= 600m
+        cac_diem_chay_gan = []
+        for node in heat_nodes:
+            if float(node.risk_score) < FIRE_RISK_THRESHOLD:
+                continue
+            if getattr(node, "locked_by", None):
+                continue
+            kc_m = self._khoang_cach_m(cur_lat, cur_lon, node.lat, node.lon)
+            if kc_m <= FIRE_DETECTION_RADIUS_M:
+                cac_diem_chay_gan.append((kc_m, node))
+
+        if not cac_diem_chay_gan:
+            return
+
+        cac_diem_chay_gan.sort(key=lambda item: (-float(item[1].risk_score), item[0]))
+        kc_min_m, fire_node = cac_diem_chay_gan[0]
+        fire_center = getattr(fire_node, "fire_center", None)
+        fire_lat, fire_lon = (
+            (float(fire_center[0]), float(fire_center[1]))
+            if fire_center
+            else (float(fire_node.lat), float(fire_node.lon))
+        )
+
+        # Kiểm tra xem mục tiêu cháy này đã bị UAV khác khóa chưa
+        if hasattr(self.bo_dinh_tuyen, "kiem_tra_muc_tieu_da_khoa"):
+            if self.bo_dinh_tuyen.kiem_tra_muc_tieu_da_khoa(fire_lat, fire_lon):
                 return
-        self.waypoint_index = (self.waypoint_index + 1) % len(self.waypoints)
+
+        # Khi 1 UAV bay vào cách đám cháy <= 600m, chuyển trạng thái đám cháy sang "DETECTED"
+        det_key = (round(fire_lat, 4), round(fire_lon, 4))
+        gcs_server = getattr(self.bo_dinh_tuyen, "ground_station_server", None)
+        if det_key not in self._da_phat_hien_dam_chay:
+            self._da_phat_hien_dam_chay.add(det_key)
+            if gcs_server and hasattr(gcs_server, "ghi_nhan_phat_hien_dam_chay"):
+                await gcs_server.ghi_nhan_phat_hien_dam_chay(
+                    fire_lat,
+                    fire_lon,
+                    self.ma_dinh_danh,
+                    kc_min_m,
+                    zone_id=self.zone_id,
+                )
+            else:
+                await self.bo_dinh_tuyen.gui_log_ra_web(
+                    "WARN",
+                    f"[FIRE_DETECTED] [{self.ma_dinh_danh}] phát hiện đám cháy ở cự ly {kc_min_m:.0f}m (<= 600m) "
+                    f"tại ({fire_lat:.4f}, {fire_lon:.4f}) ➔ Chuyển trạng thái đám cháy sang DETECTED."
+                )
+
+        pin_du_kien_pct = self._tinh_pin_du_kien_khu_hoi_pct(fire_lat, fire_lon)
+        if self.phan_tram_pin > LOW_BATTERY_THRESHOLD and pin_du_kien_pct > LOW_BATTERY_THRESHOLD:
+            await self._kich_hoat_xu_ly_chay_tu_chu(
+                fire_lat,
+                fire_lon,
+                pin_du_kien_pct=pin_du_kien_pct,
+                la_p2p=False,
+                uav_phat_hien_goc=self.ma_dinh_danh,
+            )
+        else:
+            await self._phat_tin_nhan_p2p_nho_dong_doi(fire_lat, fire_lon, pin_du_kien_pct)
+
+    async def _kich_hoat_xu_ly_chay_tu_chu(
+        self,
+        fire_lat: float,
+        fire_lon: float,
+        pin_du_kien_pct: Optional[float] = None,
+        ma_phien: Optional[str] = None,
+        la_p2p: bool = False,
+        uav_phat_hien_goc: Optional[str] = None
+    ):
+        """
+        Khóa mục tiêu cháy ([TARGET_LOCKED]), chuyển trạng thái sang bay thẳng tới tâm cháy,
+        khoanh vùng 130m và gửi báo cáo qua định tuyến Dijkstra về Trạm mặt đất ([DIJKSTRA_REPORT]).
+        """
+        if hasattr(self.bo_dinh_tuyen, "khoa_muc_tieu_chay"):
+            da_khoa = self.bo_dinh_tuyen.khoa_muc_tieu_chay(fire_lat, fire_lon, self.ma_dinh_danh)
+            if not da_khoa:
+                return
+
+        phien_id = ma_phien or str(uuid.uuid4())
+        pin_khu_hoi = (
+            pin_du_kien_pct
+            if pin_du_kien_pct is not None
+            else self._tinh_pin_du_kien_khu_hoi_pct(fire_lat, fire_lon)
+        )
+
+        gcs_server = getattr(self.bo_dinh_tuyen, "ground_station_server", None)
+        if gcs_server and hasattr(gcs_server, "ghi_nhan_khoa_muc_tieu"):
+            await gcs_server.ghi_nhan_khoa_muc_tieu(
+                fire_lat,
+                fire_lon,
+                self.ma_dinh_danh,
+                pin_khu_hoi,
+                zone_id=self.zone_id,
+                la_p2p=la_p2p,
+                uav_phat_hien_goc=uav_phat_hien_goc or self.ma_dinh_danh,
+            )
+        else:
+            await self.bo_dinh_tuyen.gui_log_ra_web(
+                "WIN",
+                f"[TARGET_LOCKED] [{self.ma_dinh_danh}] đủ pin khứ hồi ({pin_khu_hoi:.1f}% > 25%) "
+                f"➔ Đã khóa mục tiêu, bay thẳng tới tâm cháy ({fire_lat:.4f}, {fire_lon:.4f}) & khoanh vùng 130m."
+            )
+
+        self.toa_do_muc_tieu = {
+            "vi_do": float(fire_lat),
+            "kinh_do": float(fire_lon),
+            "do_cao": float(self.toa_do["do_cao"]),
+            "van_toc_m_s": max(45.0, float(self.toa_do.get("van_toc_m_s") or 45.0)),
+        }
+        self._den_muc_tieu = asyncio.Event()
+        if self.bo_dinh_tuyen.physics.tinh_khoang_cach_3d(self.toa_do, self.toa_do_muc_tieu) <= 50.0:
+            self._den_muc_tieu.set()
+
+        self.so_nhiem_vu_da_nhan += 1
+        self.chuyen_trang_thai(AgentState.BIDDING)
+        self.uav_state = UAVState.RESPONDING
+        thong_tin_su_co = {
+            "ma_phien_dau_gia": phien_id,
+            "loai_su_co": "CHÁY_RỪNG",
+            "vi_do": float(fire_lat),
+            "kinh_do": float(fire_lon),
+            "zone_id": self.zone_id,
+            "kich_thuoc_kb": 250.0,
+        }
+        try:
+            loop = asyncio.get_running_loop()
+            self._tac_vu_su_co = loop.create_task(self._thuc_hien_nhiem_vu(thong_tin_su_co))
+        except RuntimeError:
+            self._tac_vu_su_co = None
+
+    async def _phat_tin_nhan_p2p_nho_dong_doi(
+        self,
+        fire_lat: float,
+        fire_lon: float,
+        pin_du_kien_pct: float
+    ):
+        """
+        Khi UAV phát hiện đám cháy (<= 600m) nhưng pin khứ hồi yếu (<= 25%),
+        phát sự kiện [P2P_HANDOVER] bàn giao trực tiếp cho UAV có pin cao nhất trong cùng phân khu xử lý.
+        """
+        key_su_co = (round(fire_lat, 4), round(fire_lon, 4))
+        if key_su_co in self._su_co_da_nho_dong_doi:
+            return
+
+        dong_doi_cung_vung = [
+            u for u in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()
+            if u.loai_tac_nhan == "MÁY_BAY"
+            and u.ma_dinh_danh != self.ma_dinh_danh
+            and getattr(u, "zone_id", None) == self.zone_id
+            and u.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY_RTB, AgentState.RETURNING, AgentState.CHARGING)
+            and (not getattr(u, "_tac_vu_su_co", None) or getattr(u, "_tac_vu_su_co").done())
+        ]
+        if not dong_doi_cung_vung:
+            return
+
+        self._su_co_da_nho_dong_doi.add(key_su_co)
+        # Chọn UAV có pin cao nhất trong cùng phân khu
+        dong_doi_cung_vung.sort(
+            key=lambda u: (
+                -u.phan_tram_pin,
+                self._khoang_cach_m(fire_lat, fire_lon, float(u.toa_do["vi_do"]), float(u.toa_do["kinh_do"]))
+            )
+        )
+        uav_pin_cao_nhat = dong_doi_cung_vung[0]
+        pin_khu_hoi_dong_doi = uav_pin_cao_nhat._tinh_pin_du_kien_khu_hoi_pct(fire_lat, fire_lon)
+
+        ma_phien = str(uuid.uuid4())
+        gcs_server = getattr(self.bo_dinh_tuyen, "ground_station_server", None)
+        if gcs_server and hasattr(gcs_server, "ghi_nhan_ban_giao_p2p"):
+            await gcs_server.ghi_nhan_ban_giao_p2p(
+                fire_lat,
+                fire_lon,
+                self.ma_dinh_danh,
+                uav_pin_cao_nhat.ma_dinh_danh,
+                pin_du_kien_pct,
+                pin_khu_hoi_dong_doi,
+                zone_id=self.zone_id,
+            )
+        else:
+            await self.bo_dinh_tuyen.gui_log_ra_web(
+                "WARN",
+                f"[P2P_HANDOVER] [{self.ma_dinh_danh}] phát hiện cháy tại ({fire_lat:.4f}, {fire_lon:.4f}) "
+                f"nhưng pin khứ hồi yếu ({pin_du_kien_pct:.1f}% <= 25%) ➔ Ủy quyền P2P cho [{uav_pin_cao_nhat.ma_dinh_danh}] "
+                f"(pin cao nhất vùng {self.zone_id}: {uav_pin_cao_nhat.phan_tram_pin:.1f}%) xử lý thay."
+            )
+
+        thong_diep_p2p = {
+            "loai_tin": "YEU_CAU_HO_TRO_CHAY_P2P",
+            "ma_phien_dau_gia": ma_phien,
+            "loai_su_co": "CHÁY_RỪNG",
+            "vi_do": float(fire_lat),
+            "kinh_do": float(fire_lon),
+            "zone_id": self.zone_id,
+            "nguoi_nho": self.ma_dinh_danh,
+            "kich_thuoc_kb": 2.0,
+        }
+        da_gui_thanh_cong = False
+        for dong_doi in dong_doi_cung_vung:
+            da_gui = await self.bo_dinh_tuyen.gui_don_huong(
+                self.ma_dinh_danh,
+                dong_doi.ma_dinh_danh,
+                thong_diep_p2p.copy()
+            )
+            if da_gui:
+                da_gui_thanh_cong = True
+                break
+
+        if not da_gui_thanh_cong:
+            # Dự phòng đảm bảo gói bàn giao P2P đến được UAV có pin cao nhất trong cùng vùng
+            await uav_pin_cao_nhat.xu_ly_thong_diep({
+                **thong_diep_p2p,
+                "nguoi_gui": self.ma_dinh_danh,
+            })
 
     async def _cap_nhat_duong_truyen(self):
         if self._dang_o_tai_tram():
@@ -304,8 +776,8 @@ class UAVAgent(BaseAgent):
                     agent for agent in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()
                     if agent.loai_tac_nhan == "TRẠM_MẶT_ĐẤT"
                     and self._khoang_cach_m(
-                        self.toa_do["vi_do"],
-                        self.toa_do["kinh_do"],
+                        self.lat,
+                        self.lon,
                         agent.toa_do["vi_do"],
                         agent.toa_do["kinh_do"]
                     ) <= 1.0
@@ -338,8 +810,8 @@ class UAVAgent(BaseAgent):
         tram = min(
             cac_tram,
             key=lambda station: self._khoang_cach_m(
-                self.toa_do["vi_do"],
-                self.toa_do["kinh_do"],
+                self.lat,
+                self.lon,
                 station.toa_do["vi_do"],
                 station.toa_do["kinh_do"]
             )
@@ -423,8 +895,8 @@ class UAVAgent(BaseAgent):
             if agent is not self
             and agent.loai_tac_nhan == "MÁY_BAY"
             and self._khoang_cach_m(
-                self.toa_do["vi_do"],
-                self.toa_do["kinh_do"],
+                self.lat,
+                self.lon,
                 agent.toa_do["vi_do"],
                 agent.toa_do["kinh_do"]
             ) < 5000.0
@@ -445,8 +917,8 @@ class UAVAgent(BaseAgent):
         return min(
             eligible,
             key=lambda neighbor: self._khoang_cach_m(
-                self.toa_do["vi_do"],
-                self.toa_do["kinh_do"],
+                self.lat,
+                self.lon,
                 neighbor.toa_do["vi_do"],
                 neighbor.toa_do["kinh_do"]
             )
@@ -488,146 +960,33 @@ class UAVAgent(BaseAgent):
         if loai_tin == "HELLO_BEACON":
             return
 
-        if loai_tin == "CFP_FIRE_EVENT":
-            # Xử lý kêu gọi thầu sự cố cháy rừng qua FIPA-CNP
-            trang_thai_uav = getattr(self, "uav_state", None)
+        if loai_tin == "YEU_CAU_HO_TRO_CHAY_P2P":
+            # Nhận tin nhắn P2P từ UAV đồng đội cùng phân khu bị yếu pin nhờ xử lý đám cháy thay
             if (
-                trang_thai_uav not in (UAVState.PATROLLING, UAVState.STANDBY, UAVState.RELAYING)
-                and self.trang_thai not in (AgentState.PATROLLING, AgentState.IDLE, AgentState.RELAYING)
+                thong_diep.get("zone_id") != self.zone_id
+                or (self._tac_vu_su_co and not self._tac_vu_su_co.done())
+                or self.trang_thai in (AgentState.OFFLINE, AgentState.LOW_BATTERY_RTB, AgentState.RETURNING, AgentState.CHARGING)
             ):
                 return
-            if self._tac_vu_su_co and not self._tac_vu_su_co.done():
-                return
-
-            tam_chan = {
-                "vi_do": float(thong_diep["vi_do"]),
-                "kinh_do": float(thong_diep["kinh_do"]),
-                "do_cao": float(self.toa_do.get("do_cao", 1000.0))
-            }
-            # 1. Khoảng cách 3D đến điểm cháy
-            kc_m = self.bo_dinh_tuyen.physics.tinh_khoang_cach_3d(self.toa_do, tam_chan)
-            van_toc = max(1.0, float(self.toa_do.get("van_toc_m_s") or 45.0))
-
-            # 2. Mức hao hụt pin dự kiến sau chuyến bay khứ hồi (2 chiều)
-            thoi_gian_bay_khu_hoi_s = (2.0 * kc_m) / van_toc
-            nang_luong_tieu_hao_j = thoi_gian_bay_khu_hoi_s * self.cong_suat_bay_w
-            pin_con_lai_j = self.pin_hien_tai - nang_luong_tieu_hao_j
-            pin_du_kien_pct = (pin_con_lai_j / self.pin_toi_da) * 100.0
-
-            gcs_server = getattr(self.bo_dinh_tuyen, "ground_station_server", None)
-
-            # 3. Ràng buộc cứng: Pin dự kiến sau khứ hồi phải > 25%
-            if pin_du_kien_pct > LOW_BATTERY_THRESHOLD:
-                # Hàm chi phí đa mục tiêu: Cự ly + Mức hao hụt pin + Cân bằng tải số nhiệm vụ + Trọng số đang gánh vùng phụ
-                # Ưu tiên tuyệt đối UAV nội vùng: Phạt 12,000 nếu UAV từ phân khu khác
-                fire_zone = thong_diep.get("zone_id")
-                phat_khac_vung = 0.0 if (not fire_zone or self.zone_id == fire_zone) else 12000.0
-                he_so_ganh_vung = len(self._vung_tuan_tra_phu) * 1500.0
-                chi_phi = round(
-                    kc_m
-                    + (100.0 - self.phan_tram_pin) * 40.0
-                    + self.so_nhiem_vu_da_nhan * 3000.0
-                    + he_so_ganh_vung
-                    + phat_khac_vung,
-                    2
+            fire_lat = float(thong_diep["vi_do"])
+            fire_lon = float(thong_diep["kinh_do"])
+            if hasattr(self.bo_dinh_tuyen, "kiem_tra_muc_tieu_da_khoa"):
+                if self.bo_dinh_tuyen.kiem_tra_muc_tieu_da_khoa(fire_lat, fire_lon):
+                    return
+            pin_du_kien_pct = self._tinh_pin_du_kien_khu_hoi_pct(fire_lat, fire_lon)
+            if self.phan_tram_pin > LOW_BATTERY_THRESHOLD and pin_du_kien_pct > LOW_BATTERY_THRESHOLD:
+                await self._kich_hoat_xu_ly_chay_tu_chu(
+                    fire_lat,
+                    fire_lon,
+                    pin_du_kien_pct=pin_du_kien_pct,
+                    ma_phien=thong_diep.get("ma_phien_dau_gia"),
+                    la_p2p=True,
+                    uav_phat_hien_goc=thong_diep.get("nguoi_nho") or nguoi_gui,
                 )
-                propose_msg = {
-                    "loai_tin": "PROPOSE",
-                    "type": "PROPOSE",
-                    "ma_phien_dau_gia": thong_diep.get("ma_phien_dau_gia"),
-                    "uav_id": self.ma_dinh_danh,
-                    "zone_id": self.zone_id,
-                    "nguoi_gui": self.ma_dinh_danh,
-                    "chi_phi": chi_phi,
-                    "khoang_cach_m": round(kc_m, 2),
-                    "pin_hien_tai_pct": round(self.phan_tram_pin, 2),
-                    "pin_du_kien_pct": round(pin_du_kien_pct, 2),
-                    "current_link": self.current_link,
-                    "toa_do": self.toa_do,
-                    "thoi_diem_gui": time.time(),
-                    "kich_thuoc_kb": 2.0
-                }
-
-                # Chuyển gói PROPOSE qua tuyến mạng SAGSINS về Trạm mặt đất
-                da_chuyen_qua_mang = False
-                if self.tuyen_ve_tram_cuc_bo and len(self.tuyen_ve_tram_cuc_bo) >= 2:
-                    hop_ke_tiep = self.tuyen_ve_tram_cuc_bo[1]
-                    da_chuyen_qua_mang = await self.bo_dinh_tuyen.gui_don_huong(
-                        self.ma_dinh_danh,
-                        hop_ke_tiep,
-                        {
-                            **propose_msg,
-                            "lo_trinh_di_qua": [self.ma_dinh_danh],
-                            "tuyen_du_kien": list(self.tuyen_ve_tram_cuc_bo)
-                        }
-                    )
-                else:
-                    for agent in self.bo_dinh_tuyen.danh_sach_tac_nhan.values():
-                        if agent.loai_tac_nhan == "TRẠM_MẶT_ĐẤT":
-                            if await self.bo_dinh_tuyen.gui_don_huong(self.ma_dinh_danh, agent.ma_dinh_danh, propose_msg):
-                                da_chuyen_qua_mang = True
-
-                # Đảm bảo tính tương thích với các bài kiểm thử gọi trực tiếp không chạy vòng lặp lắng nghe
-                if gcs_server and (da_chuyen_qua_mang or not any(
-                    a.loai_tac_nhan == "TRẠM_MẶT_ĐẤT" for a in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()
-                )):
-                    gcs_server.nhan_propose(propose_msg)
-
-                await self.bo_dinh_tuyen.gui_log_ra_web(
-                    "BID",
-                    f"[{self.ma_dinh_danh}] PROPOSE phiên #{thong_diep.get('ma_phien_dau_gia', '')[:8]}: "
-                    f"Chi phí={chi_phi}, cự ly={kc_m/1000.0:.2f} km, pin sau khứ hồi={pin_du_kien_pct:.1f}%."
-                )
-            else:
-                refuse_msg = {
-                    "loai_tin": "REFUSE",
-                    "type": "REFUSE",
-                    "ma_phien_dau_gia": thong_diep.get("ma_phien_dau_gia"),
-                    "uav_id": self.ma_dinh_danh,
-                    "zone_id": self.zone_id,
-                    "nguoi_gui": self.ma_dinh_danh,
-                    "khoang_cach_m": round(kc_m, 2),
-                    "pin_hien_tai_pct": round(self.phan_tram_pin, 2),
-                    "pin_du_kien_pct": round(pin_du_kien_pct, 2),
-                    "ly_do": f"Pin khứ hồi dự kiến ({pin_du_kien_pct:.1f}%) < ngưỡng an toàn {LOW_BATTERY_THRESHOLD:.0f}%",
-                    "thoi_diem_gui": time.time(),
-                    "kich_thuoc_kb": 1.5
-                }
-                if gcs_server:
-                    gcs_server.nhan_refuse(refuse_msg)
-
-        elif loai_tin == "ACCEPT_PROPOSAL":
-            if thong_diep.get("uav_id") != self.ma_dinh_danh:
-                return
-            if self._tac_vu_su_co and not self._tac_vu_su_co.done():
-                return
-            await self.bo_dinh_tuyen.gui_log_ra_web(
-                "WIN",
-                f"🏆 [{self.ma_dinh_danh}] Nhận lệnh ACCEPT_PROPOSAL phiên #{thong_diep.get('ma_phien_dau_gia', '')[:8]}! "
-                f"Chuyển sang RESPONDING bay tới điểm cháy."
-            )
-            self.toa_do_muc_tieu = {
-                "vi_do": float(thong_diep["vi_do"]),
-                "kinh_do": float(thong_diep["kinh_do"]),
-                "do_cao": self.toa_do["do_cao"],
-                "van_toc_m_s": self.toa_do.get("van_toc_m_s") or 45.0
-            }
-            self._den_muc_tieu = asyncio.Event()
-            if self.bo_dinh_tuyen.physics.tinh_khoang_cach_3d(self.toa_do, self.toa_do_muc_tieu) <= 50.0:
-                self._den_muc_tieu.set()
-            self.so_nhiem_vu_da_nhan += 1
-            self.chuyen_trang_thai(AgentState.BIDDING)
-            self.uav_state = UAVState.RESPONDING
-            self._tac_vu_su_co = asyncio.create_task(self._thuc_hien_nhiem_vu(thong_diep.copy()))
-
-        elif loai_tin == "REJECT_PROPOSAL":
-            pass
+            return
 
         elif loai_tin == "PHAT_HIEN_SU_CO":
             if self._tac_vu_su_co and not self._tac_vu_su_co.done():
-                await self.bo_dinh_tuyen.gui_log_ra_web(
-                    "WARN", f"[{self.ma_dinh_danh}] Đang xử lý nhiệm vụ khác; từ chối nhiệm vụ mới."
-                )
                 return
             self.toa_do_muc_tieu = {
                 "vi_do": float(thong_diep["vi_do"]),
@@ -641,21 +1000,6 @@ class UAVAgent(BaseAgent):
             self.so_nhiem_vu_da_nhan += 1
             self.chuyen_trang_thai(AgentState.BIDDING)
             self._tac_vu_su_co = asyncio.create_task(self._thuc_hien_nhiem_vu(thong_diep.copy()))
-
-        elif loai_tin == "CFP_GOI_THAU":
-            await self._tra_bao_gia(thong_diep, nguoi_gui)
-
-        elif loai_tin == "PROPOSE_BAO_GIA":
-            ma_phien = thong_diep.get("ma_phien_dau_gia")
-            if ma_phien:
-                self.danh_sach_bao_gia.setdefault(ma_phien, []).append(thong_diep)
-
-        elif loai_tin == "REFUSE_BAO_GIA":
-            await self.bo_dinh_tuyen.gui_log_ra_web(
-                "WARN",
-                f"[{self.ma_dinh_danh}] {nguoi_gui} từ chối CNP: "
-                f"{thong_diep.get('ly_do', 'không đủ năng lượng')}."
-            )
 
         elif loai_tin == "YEU_CAU_BAN_GIAO_VUNG":
             # Tự trị nhận bàn giao vùng từ đồng đội cùng phân khu đang yếu pin
@@ -667,24 +1011,14 @@ class UAVAgent(BaseAgent):
                 and self.phan_tram_pin >= 45.0
                 and (not self._tac_vu_su_co or self._tac_vu_su_co.done())
             ):
-                waypoints_ban_giao = thong_diep.get("waypoints") or []
-                if waypoints_ban_giao and nguoi_gui not in self._vung_tuan_tra_phu:
-                    self.nhan_vung_tuan_tra(nguoi_gui, waypoints_ban_giao)
-                    await self.bo_dinh_tuyen.gui_log_ra_web(
-                        "INFO",
-                        f"🤝 [{self.ma_dinh_danh}] Tự động tiếp quản tuyến tuần tra của "
-                        f"{nguoi_gui} tại phân khu {self.zone_id}."
-                    )
+                if nguoi_gui not in self._vung_tuan_tra_phu:
+                    self.nhan_vung_tuan_tra(nguoi_gui, thong_diep.get("zone_id") or self.zone_id)
 
         elif loai_tin == "THONG_BAO_KHOI_PHUC_VUNG":
             if nguoi_gui and nguoi_gui in self._vung_tuan_tra_phu:
                 self.tra_lai_vung_tuan_tra(nguoi_gui)
-                await self.bo_dinh_tuyen.gui_log_ra_web(
-                    "INFO",
-                    f"🔄 [{self.ma_dinh_danh}] Đã hoàn trả tuyến tuần tra phân khu {self.zone_id} cho {nguoi_gui}."
-                )
 
-        elif loai_tin in ("GIAO_NHIEM_VU_DU_LIEU", "PROPOSE", "REFUSE"):
+        elif loai_tin == "GIAO_NHIEM_VU_DU_LIEU":
             await self._chuyen_tiep_du_lieu(thong_diep)
 
         elif loai_tin == "XAC_NHAN_ACK":
@@ -697,102 +1031,20 @@ class UAVAgent(BaseAgent):
                         tuyen_phan_hoi[vi_tri + 1],
                         thong_diep
                     )
-                else:
-                    await self.bo_dinh_tuyen.gui_log_ra_web(
-                        "SUCCESS",
-                        f"[{self.ma_dinh_danh}] Nhận ACK từ {nguoi_gui}; hoàn tất truyền dữ liệu sự cố."
-                    )
-
-    async def _tra_bao_gia(self, thong_diep: dict, ma_nguon: Optional[str]):
-        if (
-            not ma_nguon
-            or ma_nguon == self.ma_dinh_danh
-            or self.trang_thai != AgentState.PATROLLING
-        ):
-            return
-        target = thong_diep.get("toa_do_su_co")
-        flight_energy = 0.0
-        if target:
-            target_position = {
-                "vi_do": float(target["vi_do"]),
-                "kinh_do": float(target["kinh_do"]),
-                "do_cao": self.toa_do["do_cao"]
-            }
-            distance = self.bo_dinh_tuyen.physics.tinh_khoang_cach_3d(
-                self.toa_do, target_position
-            )
-            speed = max(1.0, float(self.toa_do.get("van_toc_m_s") or 45.0))
-            flight_energy = distance / speed * self.cong_suat_bay_w
-            required_energy = flight_energy * 1.5 + 5000.0
-            if self.pin_hien_tai < required_energy:
-                refusal = {
-                    "loai_tin": "REFUSE_BAO_GIA",
-                    "ma_phien_dau_gia": thong_diep.get("ma_phien_dau_gia"),
-                    "ly_do": "Không đủ năng lượng dự trữ để bay tới tâm cháy.",
-                    "nang_luong_can_thiet_joule": round(required_energy, 2),
-                    "nang_luong_con_lai_joule": round(self.pin_hien_tai, 2)
-                }
-                await self.bo_dinh_tuyen.gui_don_huong(
-                    self.ma_dinh_danh, ma_nguon, refusal
-                )
-                await self.bo_dinh_tuyen.gui_log_ra_web(
-                    "WARN",
-                    f"[{self.ma_dinh_danh}] REFUSE: cần {required_energy:.0f} J để tới tâm cháy, "
-                    f"chỉ còn {self.pin_hien_tai:.0f} J."
-                )
-                return
-        elif self.phan_tram_pin < self.nguong_pin_yeu_pct:
-            return
-        kich_thuoc_kb = float(thong_diep.get("kich_thuoc_kb", 250.0))
-        bao_gia = self.bo_dinh_tuyen.tao_bao_gia(
-            self.ma_dinh_danh,
-            ma_nguon,
-            thong_diep.get("thong_so_kenh", {}),
-            kich_thuoc_kb
-        )
-        if not bao_gia:
-            return
-        await self.bo_dinh_tuyen.gui_don_huong(
-            self.ma_dinh_danh,
-            ma_nguon,
-            {
-                "loai_tin": "PROPOSE_BAO_GIA",
-                "ma_phien_dau_gia": thong_diep.get("ma_phien_dau_gia"),
-                "chi_phi": bao_gia["chi_phi"],
-                "loai_ung_vien": self.loai_tac_nhan,
-                "tuyen": bao_gia["tuyen"],
-                "nang_luong_du_kien_joule": bao_gia["nang_luong_du_kien_joule"],
-                "do_tre_du_kien_ms": bao_gia["do_tre_du_kien_ms"],
-                "dung_luong_du_kien_mbps": bao_gia["dung_luong_du_kien_mbps"],
-                "pin_pct": self.phan_tram_pin,
-                "nang_luong_tiep_can_joule": round(flight_energy, 2),
-                "kich_thuoc_kb": 2.0
-            }
-        )
-        await self.bo_dinh_tuyen.gui_log_ra_web(
-            "BID", f"[{self.ma_dinh_danh}] Báo giá tuyến {bao_gia['tuyen']} · chi phí {bao_gia['chi_phi']}"
-        )
 
     async def _bao_huy_nhiem_vu(self, su_co: dict, ly_do: str):
-        """Thông báo khẩn cấp về trạm khi UAV gặp sự cố giữa đường bay làm nhiệm vụ cháy."""
+        """Giải phóng khóa mục tiêu và nhờ đồng đội cùng phân khu qua P2P khi UAV gặp sự cố giữa đường."""
+        if hasattr(self.bo_dinh_tuyen, "mo_khoa_muc_tieu_chay"):
+            self.bo_dinh_tuyen.mo_khoa_muc_tieu_chay(self.ma_dinh_danh, ha_nhiet=False)
         await self.bo_dinh_tuyen.gui_log_ra_web(
             "WARN", f"⚠️ [{self.ma_dinh_danh}] HUỶ NHIỆM VỤ #{su_co.get('ma_phien_dau_gia', '')[:8]}: {ly_do}."
         )
-        msg = {
-            "loai_tin": "MISSION_ABORT",
-            "ma_phien_dau_gia": su_co.get("ma_phien_dau_gia"),
-            "uav_id": self.ma_dinh_danh,
-            "zone_id": self.zone_id,
-            "vi_do": su_co.get("vi_do"),
-            "kinh_do": su_co.get("kinh_do"),
-            "ly_do": ly_do,
-            "thoi_gian": time.time(),
-        }
-        gcs_server = getattr(self.bo_dinh_tuyen, "ground_station_server", None)
-        if gcs_server and hasattr(gcs_server, "nhan_mission_abort"):
-            await gcs_server.nhan_mission_abort(msg)
-        else:
-            await self.bo_dinh_tuyen.gui_don_huong(self.ma_dinh_danh, "TRẠM_KIỂM_LÂM_SƠN_TRÀ", msg)
+        if su_co.get("vi_do") is not None and su_co.get("kinh_do") is not None:
+            await self._phat_tin_nhan_p2p_nho_dong_doi(
+                float(su_co["vi_do"]),
+                float(su_co["kinh_do"]),
+                self.phan_tram_pin,
+            )
 
     async def _thuc_hien_nhiem_vu(self, su_co: dict):
         try:
@@ -825,7 +1077,7 @@ class UAVAgent(BaseAgent):
                 await self._bao_huy_nhiem_vu(su_co, "Pin sập hoặc UAV chuyển OFFLINE")
                 return
             await self._dau_gia_va_truyen(su_co)
-            self._bat_dau_tuan_tra_vung_su_co(su_co)
+            self._bat_dau_khoanh_vung_su_co(su_co)
         except asyncio.TimeoutError:
             await self.bo_dinh_tuyen.gui_log_ra_web(
                 "WARN", f"[{self.ma_dinh_danh}] Không tới được vùng nhiệm vụ trong thời hạn mô phỏng."
@@ -840,21 +1092,14 @@ class UAVAgent(BaseAgent):
                 self.chuyen_trang_thai(AgentState.PATROLLING)
             self._tac_vu_su_co = None
 
-    def _bat_dau_tuan_tra_vung_su_co(self, su_co: dict):
-        """Thiết lập 1 vòng quét nhỏ (~130m) sát quanh đám cháy, sau đó tự động khôi phục về phân khu gốc."""
-        vi_do = float(su_co["vi_do"])
-        kinh_do = float(su_co["kinh_do"])
-        do_cao = float(self.toa_do["do_cao"])
-        delta_lat = 0.0012
-        delta_lon = delta_lat / max(0.2, abs(math.cos(math.radians(vi_do))))
-        self.waypoints = [
-            {"vi_do": vi_do - delta_lat, "kinh_do": kinh_do - delta_lon, "do_cao": do_cao, "van_toc_m_s": 40.0},
-            {"vi_do": vi_do - delta_lat, "kinh_do": kinh_do + delta_lon, "do_cao": do_cao, "van_toc_m_s": 40.0},
-            {"vi_do": vi_do + delta_lat, "kinh_do": kinh_do + delta_lon, "do_cao": do_cao, "van_toc_m_s": 40.0},
-            {"vi_do": vi_do + delta_lat, "kinh_do": kinh_do - delta_lon, "do_cao": do_cao, "van_toc_m_s": 40.0}
-        ]
-        self.waypoint_index = 0
-        self._so_diem_tuan_tra_su_co_con_lai = 4
+    def _bat_dau_khoanh_vung_su_co(self, su_co: dict):
+        """Thiết lập khoanh vùng bán kính 130m sát quanh đám cháy, sau đó tự động quay về tuần tra trường lực."""
+        self._tam_khoanh_vung_chay = {
+            "vi_do": float(su_co["vi_do"]),
+            "kinh_do": float(su_co["kinh_do"]),
+        }
+        self._goc_khoanh_vung_rad = 0.0
+        self._thoi_gian_khoanh_vung_con_lai = 20.0
 
     def _goi_uav_du_bi_thay_ca(self) -> bool:
         """
@@ -899,14 +1144,8 @@ class UAVAgent(BaseAgent):
         if not u_reserve:
             return False
 
-        wps = [dict(wp) for wp in (self.waypoints_goc or self.waypoints)]
-        if not wps:
-            return False
-        for wp in wps:
-            wp["van_toc_m_s"] = max(45.0, float(wp.get("van_toc_m_s", 45.0)))
-        u_reserve.waypoints_goc = list(wps)
-        u_reserve.waypoints = list(wps)
-        u_reserve.waypoint_index = self.waypoint_index % len(wps)
+        u_reserve.toa_do["do_cao"] = max(1000.0, float(self.toa_do.get("do_cao", 1000.0)))
+        u_reserve.toa_do["van_toc_m_s"] = 45.0
         u_reserve.toa_do_tram_sac = None
         u_reserve._relieving_target_id = self.ma_dinh_danh
         u_reserve._da_ban_giao_tai_cho = False
@@ -976,13 +1215,11 @@ class UAVAgent(BaseAgent):
         if not cac_uav_cung_vung:
             return
         self._yeu_cau_ban_giao_da_phat = True
-        waypoints_goc = self.waypoints_goc or self.waypoints
         await self._phat_lenh_quang_ba({
             "loai_tin": "YEU_CAU_BAN_GIAO_VUNG",
             "zone_id": self.zone_id,
             "nguoi_gui": self.ma_dinh_danh,
             "pin_pct": self.phan_tram_pin,
-            "waypoints": waypoints_goc
         }, set(cac_uav_cung_vung))
 
     async def _phat_thong_bao_khoi_phuc_vung(self):
@@ -1009,52 +1246,72 @@ class UAVAgent(BaseAgent):
             danh_sach_nguoi_nhan=recipient_ids
         )
 
-    def nhan_vung_tuan_tra(self, ma_uav_nguon: str, waypoints: List[dict]):
+    def nhan_vung_tuan_tra(self, ma_uav_nguon: str, thong_tin_vung=None):
         if ma_uav_nguon in self._vung_tuan_tra_phu:
             return
-        vung = [{**waypoint, "_chu_so_huu_vung": ma_uav_nguon} for waypoint in waypoints]
-        self._vung_tuan_tra_phu[ma_uav_nguon] = vung
-        self.waypoints.extend(vung)
+        ma_vung = thong_tin_vung if isinstance(thong_tin_vung, str) else (self.zone_id or "ZONE_01")
+        self._vung_tuan_tra_phu[ma_uav_nguon] = str(ma_vung)
 
     def tra_lai_vung_tuan_tra(self, ma_uav_nguon: str):
-        vung = self._vung_tuan_tra_phu.pop(ma_uav_nguon, [])
-        if not vung:
-            return
-        ids_vung = {id(waypoint) for waypoint in vung}
-        so_truoc = sum(1 for waypoint in self.waypoints[:self.waypoint_index] if id(waypoint) in ids_vung)
-        self.waypoints = [waypoint for waypoint in self.waypoints if id(waypoint) not in ids_vung]
-        if not self.waypoints and self.waypoints_goc:
-            self.waypoints = [dict(wp) for wp in self.waypoints_goc]
-        self.waypoint_index = max(0, min(len(self.waypoints) - 1, self.waypoint_index - so_truoc))
+        self._vung_tuan_tra_phu.pop(ma_uav_nguon, None)
 
     async def _dau_gia_va_truyen(self, su_co: dict):
         """
-        Định tuyến gói tin dữ liệu sự cố từ điểm cháy về Trạm mặt đất qua mạng SAGSINS
-        (Trực tiếp A2G, qua UAV FANET Relay, hoặc qua Vệ tinh LEO).
+        Định tuyến gói tin báo cáo đám cháy từ tâm cháy về Trạm mặt đất qua thuật toán
+        Dijkstra đa mục tiêu (`core/message_broker.py`: A2G trực tiếp, FANET Relay, hoặc Vệ tinh LEO).
         """
         kich_thuoc_kb = float(su_co.get("kich_thuoc_kb", 250.0))
+        fire_lat = float(su_co["vi_do"])
+        fire_lon = float(su_co["kinh_do"])
         goi_tin = {
             "loai_tin": "GIAO_NHIEM_VU_DU_LIEU",
             "ma_phien_dau_gia": su_co.get("ma_phien_dau_gia", str(uuid.uuid4())),
             "loai_su_co": su_co.get("loai_su_co", "CHÁY_RỪNG"),
-            "toa_do_su_co": {"vi_do": su_co["vi_do"], "kinh_do": su_co["kinh_do"]},
+            "toa_do_su_co": {"vi_do": fire_lat, "kinh_do": fire_lon},
             "thoi_diem_khoi_tao": time.time(),
             "kich_thuoc_kb": kich_thuoc_kb
         }
+        tuyen_dijkstra = None
+        if hasattr(self.bo_dinh_tuyen, "tim_tuyen_dijkstra_ve_tram"):
+            tuyen_dijkstra = self.bo_dinh_tuyen.tim_tuyen_dijkstra_ve_tram(
+                self.ma_dinh_danh, kich_thuoc_kb=kich_thuoc_kb
+            )
         tuyen = await self.bo_dinh_tuyen.gui_chang_tiep_ve_tram(
             self.ma_dinh_danh,
             goi_tin,
             [self.ma_dinh_danh]
         )
+        gcs_server = getattr(self.bo_dinh_tuyen, "ground_station_server", None)
         if tuyen:
-            ma_ke_tiep = tuyen["nodes"][1]
-            await self.bo_dinh_tuyen.gui_log_ra_web(
-                "RELAY", f"[{self.ma_dinh_danh}] Đã truyền gói tin sự cố tới [{ma_ke_tiep}]."
+            nodes_path = list(tuyen.get("nodes", []))
+            delay_ms = float(tuyen.get("delay_ms", 0.0))
+            if gcs_server and hasattr(gcs_server, "ghi_nhan_bao_cao_dijkstra"):
+                await gcs_server.ghi_nhan_bao_cao_dijkstra(
+                    fire_lat, fire_lon, self.ma_dinh_danh, nodes_path, do_tre_ms=delay_ms
+                )
+            else:
+                chuoi_tuyen = " ➔ ".join(nodes_path)
+                await self.bo_dinh_tuyen.gui_log_ra_web(
+                    "ROUTE",
+                    f"[DIJKSTRA_REPORT] [{self.ma_dinh_danh}] gửi báo cáo cháy qua định tuyến Dijkstra "
+                    f"({len(nodes_path) - 1} hops: {chuoi_tuyen})."
+                )
+        elif tuyen_dijkstra and len(tuyen_dijkstra.get("nodes", [])) >= 2:
+            nodes_path = list(tuyen_dijkstra["nodes"])
+            ma_ke_tiep = nodes_path[1]
+            await self.bo_dinh_tuyen.gui_don_huong(
+                self.ma_dinh_danh,
+                ma_ke_tiep,
+                {
+                    **goi_tin,
+                    "lo_trinh_di_qua": [self.ma_dinh_danh, ma_ke_tiep],
+                    "tuyen_du_kien": nodes_path
+                }
             )
-        else:
-            await self.bo_dinh_tuyen.gui_log_ra_web(
-                "WARN", f"[{self.ma_dinh_danh}] Không tìm được tuyến truyền gói tin sự cố tới trạm mặt đất."
-            )
+            if gcs_server and hasattr(gcs_server, "ghi_nhan_bao_cao_dijkstra"):
+                await gcs_server.ghi_nhan_bao_cao_dijkstra(
+                    fire_lat, fire_lon, self.ma_dinh_danh, nodes_path, do_tre_ms=float(tuyen_dijkstra.get("delay_ms", 0.0))
+                )
 
     async def _chuyen_tiep_du_lieu(self, thong_diep: dict):
         tuyen = await self.bo_dinh_tuyen.gui_chang_tiep_ve_tram(

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SAGSINS MAS — Dashboard Điều phối</title>
+    <title>Hệ thống MAS_SAGSINS</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -539,7 +539,7 @@
         <div class="brand-nav">
             <div class="brand">
                 <div id="wsDot" class="ws-dot" title="Trạng thái kết nối thời gian thực"></div>
-                <span>SAGSINS MAS</span>
+                <span>Hệ thống MAS_SAGSINS</span>
                 <span class="brand-badge">28 UAV</span>
             </div>
             <nav class="nav-tabs" aria-label="Điều hướng chính">
@@ -603,27 +603,27 @@
                 <div class="k-sub">RF Tx/Rx + Động cơ bay</div>
             </div>
             <div class="kpi-card" style="--card-accent: var(--accent-purple);">
-                <div class="k-label">Đấu thầu CNP hoàn tất</div>
+                <div class="k-label">Sự cố Tự Phát hiện &amp; Khoanh vùng</div>
                 <div id="kMissions" class="k-val" style="color:var(--accent-purple)">0</div>
-                <div id="kSatStatus" class="k-sub">3 Vệ tinh LEO hoạt động</div>
+                <div id="kSatStatus" class="k-sub">Tự chủ Heatmap &amp; P2P Handover</div>
             </div>
         </section>
 
         <!-- ROW 2: 3 ANALYTICS COLUMNS -->
         <section class="main-grid">
-            <!-- COLUMN 1: CNP AUCTION & E2E ROUTE -->
+            <!-- COLUMN 1: SWARM RESPONSE LOG & E2E ROUTE -->
             <div class="panel">
                 <div class="panel-head">
                     <span class="panel-head-title">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-                        <span>1. Đấu thầu CNP &amp; Định tuyến E2E</span>
+                        <span>1. Nhật ký Phản ứng Bầy đàn &amp; Bàn giao P2P</span>
                     </span>
                     <span id="cnpTime" style="font-family:var(--font-mono);color:var(--accent-green);font-size:10.5px;"></span>
                 </div>
                 <div class="panel-body">
-                    <div class="section-subhead">Phiên đấu thầu FIPA-CNP gần nhất</div>
-                    <div id="cnpDetail" style="margin-top:6px;margin-bottom:16px;color:var(--text-muted);">
-                        Chưa có phiên đấu thầu nào. Hãy bấm <b>Báo cháy</b> trên trang Bản đồ.
+                    <div class="section-subhead">Nhật ký Phản ứng Bầy đàn &amp; Bàn giao P2P</div>
+                    <div id="cnpDetail" style="margin-top:6px;margin-bottom:16px;color:var(--text-muted);overflow-x:auto;">
+                        Chưa có sự kiện cháy. Hãy bấm <b>Báo cháy</b> trên trang Bản đồ để khởi tạo điểm nóng Heatmap.
                     </div>
 
                     <div class="section-subhead" style="border-top:1px solid var(--border-color);padding-top:12px;">
@@ -693,42 +693,76 @@
             }
         }
 
-        function renderCnp(auc) {
-            if (!auc) return;
-            document.getElementById('cnpTime').textContent = auc.thoi_gian || '';
+        function renderSwarmTable(swarmData) {
+            if (!swarmData) return;
+            const history = Array.isArray(swarmData.history)
+                ? swarmData.history
+                : (swarmData.current ? [swarmData.current] : []);
+            if (swarmData.total_detected != null) {
+                document.getElementById('kMissions').textContent = swarmData.total_detected;
+            }
+            const latest = swarmData.current || history[0];
+            if (latest && latest.thoi_gian) {
+                document.getElementById('cnpTime').textContent = latest.thoi_gian;
+            }
             const box = document.getElementById('cnpDetail');
-            const props = auc.proposals || [];
-            const refs = auc.refusals || [];
-            const header = auc.thanh_cong
-                ? `<div style="color:var(--accent-green);font-weight:700;margin-bottom:6px;font-family:var(--font-mono);">★ Thắng thầu: ${auc.winner_id.replace('MÁY_BAY_', '')} (${auc.vi_do?.toFixed(4)}, ${auc.kinh_do?.toFixed(4)})</div>`
-                : `<div style="color:var(--accent-red);font-weight:700;margin-bottom:6px;">Thất bại — Không UAV nào đủ pin khứ hồi (&gt;25%)</div>`;
+            if (!history.length) {
+                box.innerHTML = 'Chưa có sự kiện cháy. Hãy bấm <b>Báo cháy</b> trên trang Bản đồ để khởi tạo điểm nóng Heatmap.';
+                return;
+            }
 
-            const rows = [
-                ...props.map((p, i) => `
-                    <tr class="${i === 0 ? 'win' : ''}">
-                        <td>${p.uav_id.replace('MÁY_BAY_', '')}</td>
-                        <td>${((p.khoang_cach_m || 0) / 1000).toFixed(2)} km</td>
-                        <td>${p.pin_du_kien_pct ?? '-'}%</td>
-                        <td>${p.chi_phi}</td>
-                        <td><span class="status-pill ${i === 0 ? 'win' : 'lose'}">${i === 0 ? 'WIN' : 'LOSE'}</span></td>
+            const rows = history.map((item, idx) => {
+                const zShort = (item.zone_id || 'ZONE_01').replace('ZONE_0', 'Z');
+                const coordStr = `(${Number(item.vi_do || 0).toFixed(4)}, ${Number(item.kinh_do || 0).toFixed(4)})`;
+                const detUav = item.uav_phat_hien_dau_tien
+                    ? item.uav_phat_hien_dau_tien.replace('MÁY_BAY_', '')
+                    : 'Đang quét...';
+                const assignUav = item.uav_nhan_nhiem_vu
+                    ? item.uav_nhan_nhiem_vu.replace('MÁY_BAY_', '')
+                    : '';
+                let mechHtml = '<span class="status-pill lose">UNVERIFIED</span>';
+                if (item.loai_phan_ung === 'DIRECT_LOCK') {
+                    mechHtml = `<span class="status-pill win">Tự khóa mục tiêu</span> <span style="font-size:10px;color:var(--text-secondary)">(${assignUav})</span>`;
+                } else if (item.loai_phan_ung === 'P2P_HANDOVER') {
+                    mechHtml = `<span class="status-pill refuse" style="background:rgba(245,158,11,0.16);color:#fcd34d;border-color:rgba(245,158,11,0.4);">Ủy quyền P2P</span> <span style="font-size:10px;color:var(--text-secondary)">(➔ ${assignUav})</span>`;
+                } else if (item.trang_thai_chay === 'DETECTED') {
+                    mechHtml = `<span class="status-pill lose">Đã phát hiện (&lt;=600m)</span>`;
+                }
+
+                const batStr = item.pin_khu_hoi_du_kien_pct != null
+                    ? `${Number(item.pin_khu_hoi_du_kien_pct).toFixed(1)}%`
+                    : '—';
+                const routeArr = Array.isArray(item.tuyen_bao_cao_e2e) && item.tuyen_bao_cao_e2e.length
+                    ? item.tuyen_bao_cao_e2e.map(n => n.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '')).join(' ➔ ')
+                    : 'Đang định tuyến...';
+
+                return `
+                    <tr class="${idx === 0 ? 'win' : ''}">
+                        <td>${item.thoi_gian || '—'}</td>
+                        <td><b>${zShort}</b></td>
+                        <td>${coordStr}</td>
+                        <td>${detUav}</td>
+                        <td>${mechHtml}</td>
+                        <td>${batStr}</td>
+                        <td style="font-size:10px;color:var(--accent-blue);">${routeArr}</td>
                     </tr>
-                `),
-                ...refs.slice(0, 6).map(r => `
-                    <tr class="refuse">
-                        <td>${(r.uav_id || '').replace('MÁY_BAY_', '')}</td>
-                        <td>${((r.khoang_cach_m || 0) / 1000).toFixed(2)} km</td>
-                        <td>${r.pin_du_kien_pct ?? '-'}%</td>
-                        <td>—</td>
-                        <td><span class="status-pill refuse">REFUSE</span></td>
-                    </tr>
-                `)
-            ].join('');
+                `;
+            }).join('');
 
             box.innerHTML = `
-                ${header}
                 <table class="tbl">
-                    <thead><tr><th>UAV</th><th>Cự ly</th><th>Pin sau NV</th><th>Chi phí</th><th>KQ</th></tr></thead>
-                    <tbody>${rows || '<tr><td colspan="5">Không có báo giá</td></tr>'}</tbody>
+                    <thead>
+                        <tr>
+                            <th>Thời gian</th>
+                            <th>Phân khu</th>
+                            <th>Tọa độ cháy</th>
+                            <th>UAV Phát hiện</th>
+                            <th>Cơ chế Phản ứng</th>
+                            <th>Pin sau NV (%)</th>
+                            <th>Tuyến báo cáo E2E về Trạm</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
                 </table>
             `;
         }
@@ -796,11 +830,30 @@
             summaryEl.style.color = okCount === keys.length ? 'var(--accent-green)' : 'var(--accent-amber)';
         }
 
+        const ALLOWED_LOG_TAGS = [
+            '[HEATMAP_ANOMALY]',
+            '[GRADIENT_PULL]',
+            '[FIRE_DETECTED]',
+            '[TARGET_LOCKED]',
+            '[P2P_HANDOVER]',
+            '[DIJKSTRA_REPORT]'
+        ];
+
         function appendLog(capDo, noiDung, timeStr) {
+            const text = String(noiDung || '');
+            const matchedTag = ALLOWED_LOG_TAGS.find(tag => text.includes(tag));
+            if (!matchedTag) return;
+
+            let cls = capDo || 'INFO';
+            if (matchedTag === '[HEATMAP_ANOMALY]') cls = 'ALERT';
+            else if (matchedTag === '[FIRE_DETECTED]' || matchedTag === '[P2P_HANDOVER]') cls = 'WARN';
+            else if (matchedTag === '[TARGET_LOCKED]') cls = 'WIN';
+            else if (matchedTag === '[DIJKSTRA_REPORT]') cls = 'ROUTE';
+
             const box = document.getElementById('logStream');
             const el = document.createElement('div');
-            el.className = `log-item ${capDo || 'INFO'}`;
-            el.innerHTML = `<span style="color:var(--text-muted)">[${timeStr}]</span> <b>[${capDo}]</b> ${noiDung}`;
+            el.className = `log-item ${cls}`;
+            el.innerHTML = `<span style="color:var(--text-muted)">[${timeStr}]</span> ${text}`;
             box.prepend(el);
             while (box.children.length > 60) box.removeChild(box.lastChild);
         }
@@ -834,7 +887,7 @@
             nodesCache = d.nodes || [];
             updateKpis(d.network_metrics, d.connectivity_metrics);
             renderZoneMatrix(d.zone_coverage, nodesCache);
-            if (d.last_auction) renderCnp(d.last_auction);
+            if (d.swarm_response || d.last_auction) renderSwarmTable(d.swarm_response || d.last_auction);
             if (d.last_e2e_route) renderE2E(d.last_e2e_route);
             if (d.recent_logs) {
                 d.recent_logs.forEach(l => appendLog(l.cap_do, l.noi_dung, l.timestamp));
@@ -850,10 +903,12 @@
                     nodesCache = msg.data.nodes || [];
                     updateKpis(msg.data.network_metrics, msg.data.connectivity_metrics);
                     renderZoneMatrix(msg.data.zone_coverage, nodesCache);
-                    if (msg.data.last_auction) renderCnp(msg.data.last_auction);
+                    if (msg.data.swarm_response || msg.data.last_auction) {
+                        renderSwarmTable(msg.data.swarm_response || msg.data.last_auction);
+                    }
                     if (msg.data.last_e2e_route) renderE2E(msg.data.last_e2e_route);
-                } else if (msg.type === 'CNP_AUCTION_RESULT') {
-                    renderCnp(msg.data);
+                } else if (msg.type === 'SWARM_RESPONSE_UPDATE') {
+                    renderSwarmTable(msg.data);
                 } else if (msg.type === 'E2E_ROUTE_COMPLETED') {
                     renderE2E(msg.data);
                 } else if (msg.type === 'LOG') {

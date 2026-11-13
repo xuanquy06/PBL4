@@ -31,6 +31,7 @@ class MessageBroker:
         self.nhat_ky_gan_day: List[dict[str, Any]] = []
         self.ground_station_server: Any = None
         self.thong_ke_lien_tuc: dict[str, Any] = {}
+        self.muc_tieu_chay_da_khoa: List[dict[str, Any]] = []
 
         self.thong_ke_toan_mang: dict[str, Any] = {
             "tong_goi_tin_phat": 0,
@@ -40,6 +41,79 @@ class MessageBroker:
             "do_tre_trung_binh_ms": 0.0,
             "nang_luong_tieu_hao_joule": 0.0
         }
+
+    @staticmethod
+    def _khoang_cach_mat_dat_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        r_earth = 6371000.0
+        p1, p2 = math.radians(lat1), math.radians(lat2)
+        dp = p2 - p1
+        dl = math.radians(lon2 - lon1)
+        a = math.sin(dp / 2.0) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2.0) ** 2
+        return r_earth * 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
+
+    def kiem_tra_muc_tieu_da_khoa(
+        self,
+        lat: float,
+        lon: float,
+        ban_kinh_khoa_m: float = 850.0
+    ) -> Optional[str]:
+        """Kiểm tra xem tâm cháy (lat, lon) đã bị một UAV hoạt động khác khóa mục tiêu chưa."""
+        con_hieu_luc: List[dict[str, Any]] = []
+        uav_khoa: Optional[str] = None
+        for entry in self.muc_tieu_chay_da_khoa:
+            uav = self.danh_sach_tac_nhan.get(entry["uav_id"])
+            if not uav or getattr(uav.trang_thai, "value", "") == "NGẮT_KẾT_NỐI":
+                continue
+            con_hieu_luc.append(entry)
+            if self._khoang_cach_mat_dat_m(lat, lon, entry["lat"], entry["lon"]) <= ban_kinh_khoa_m:
+                uav_khoa = entry["uav_id"]
+        self.muc_tieu_chay_da_khoa = con_hieu_luc
+        return uav_khoa
+
+    def khoa_muc_tieu_chay(
+        self,
+        lat: float,
+        lon: float,
+        uav_id: str,
+        ban_kinh_khoa_m: float = 850.0
+    ) -> bool:
+        """
+        Khóa mục tiêu đám cháy tại (lat, lon) cho `uav_id` để các UAV khác không xử lý lặp lại.
+        Đồng thời đánh dấu `locked_by` trên các HeatNode trong bán kính đám cháy.
+        """
+        da_khoa_boi = self.kiem_tra_muc_tieu_da_khoa(lat, lon, ban_kinh_khoa_m=ban_kinh_khoa_m)
+        if da_khoa_boi and da_khoa_boi != uav_id:
+            return False
+        if not da_khoa_boi:
+            self.muc_tieu_chay_da_khoa.append({
+                "lat": float(lat),
+                "lon": float(lon),
+                "uav_id": uav_id,
+                "timestamp": time.time(),
+            })
+        heat_nodes = getattr(self.scenario, "heat_nodes", None) or []
+        for node in heat_nodes:
+            if self._khoang_cach_mat_dat_m(lat, lon, node.lat, node.lon) <= ban_kinh_khoa_m:
+                node.locked_by = uav_id
+        return True
+
+    def mo_khoa_muc_tieu_chay(self, uav_id: str, ha_nhiet: bool = False):
+        """Giải phóng khóa mục tiêu của `uav_id`; nếu `ha_nhiet=True` thì hạ nhiệt các HeatNode đã xử lý."""
+        cac_tam = [e for e in self.muc_tieu_chay_da_khoa if e["uav_id"] == uav_id]
+        self.muc_tieu_chay_da_khoa = [e for e in self.muc_tieu_chay_da_khoa if e["uav_id"] != uav_id]
+        heat_nodes = getattr(self.scenario, "heat_nodes", None) or []
+        for node in heat_nodes:
+            if getattr(node, "locked_by", None) == uav_id:
+                node.locked_by = None
+                if ha_nhiet:
+                    node.risk_score = 0.15
+                    node.fire_center = None
+            elif ha_nhiet:
+                for tam in cac_tam:
+                    if self._khoang_cach_mat_dat_m(tam["lat"], tam["lon"], node.lat, node.lon) <= 850.0:
+                        node.risk_score = 0.15
+                        node.locked_by = None
+                        node.fire_center = None
 
     def dang_ky_tac_nhan(self, tac_nhan: Any):
         """Đăng ký một Node mạng (UAV, Vệ tinh, Trạm mặt đất) vào không gian mô phỏng"""
@@ -363,13 +437,26 @@ class MessageBroker:
             "dung_luong_du_kien_mbps": round(bw_nut_that_co_chai, 3)
         }
 
+    def tim_tuyen_dijkstra_ve_tram(
+        self,
+        ma_bat_dau: str,
+        kich_thuoc_kb: float = 250.0,
+        loai_tru: Optional[set[str]] = None
+    ) -> Optional[dict[str, Any]]:
+        """Tìm tuyến ngắn nhất đa mục tiêu về Trạm mặt đất bằng thuật toán Dijkstra."""
+        return self._tim_tuyen_toan_cuc_tham_chieu(
+            ma_bat_dau=ma_bat_dau,
+            kich_thuoc_kb=kich_thuoc_kb,
+            loai_tru=loai_tru,
+        )
+
     async def gui_chang_tiep_ve_tram(
         self,
         ma_node: str,
         thong_diep: dict[str, Any],
         lo_trinh_da_di: Optional[list[str]] = None
     ) -> Optional[dict[str, Any]]:
-        """Gửi một chặng kế tiếp; khi chặng lỗi, thử các láng giềng thay thế còn khả dụng."""
+        """Gửi một chặng kế tiếp qua định tuyến láng giềng hoặc Dijkstra; khi chặng lỗi, thử láng giềng thay thế."""
         kich_thuoc_kb = float(thong_diep.get("kich_thuoc_kb", 12.0))
         lo_trinh = list(lo_trinh_da_di or thong_diep.get("lo_trinh_di_qua", []))
         if not lo_trinh or lo_trinh[-1] != ma_node:
@@ -386,6 +473,12 @@ class MessageBroker:
                 kich_thuoc_kb=kich_thuoc_kb,
                 loai_tru=loai_tru
             )
+            if not tuyen or len(tuyen.get("nodes", [])) < 2:
+                tuyen = self._tim_tuyen_toan_cuc_tham_chieu(
+                    ma_node,
+                    kich_thuoc_kb=kich_thuoc_kb,
+                    loai_tru=loai_tru
+                )
             if not tuyen or len(tuyen["nodes"]) < 2:
                 return None
 
@@ -650,18 +743,30 @@ class MessageBroker:
     # =========================================================================
     # 2. QUẢN LÝ KẾT NỐI WEBSOCKET & ĐỒNG BỘ GIAO DIỆN
     # =========================================================================
+    ALLOWED_SWARM_LOG_TAGS = (
+        "[HEATMAP_ANOMALY]",
+        "[GRADIENT_PULL]",
+        "[FIRE_DETECTED]",
+        "[TARGET_LOCKED]",
+        "[P2P_HANDOVER]",
+        "[DIJKSTRA_REPORT]",
+    )
+
     async def phat_su_kien_ra_web(self, loai_su_kien: str, du_lieu):
         """Đẩy gói tin JSON thời gian thực xuống tất cả trình duyệt đang mở"""
         thoi_diem = time.strftime("%H:%M:%S")
-        if loai_su_kien == "CNP_AUCTION_RESULT":
+        if loai_su_kien in ("SWARM_RESPONSE_UPDATE", "CNP_AUCTION_RESULT"):
             self.phien_dau_gia_gan_nhat = du_lieu
         elif loai_su_kien == "E2E_ROUTE_COMPLETED":
             self.tuyen_e2e_gan_nhat = du_lieu
         elif loai_su_kien == "LOG" and isinstance(du_lieu, dict):
+            noi_dung_log = str(du_lieu.get("noi_dung", ""))
+            if not any(tag in noi_dung_log for tag in self.ALLOWED_SWARM_LOG_TAGS):
+                return
             self.nhat_ky_gan_day.append({
                 "timestamp": thoi_diem,
                 "cap_do": du_lieu.get("cap_do", "INFO"),
-                "noi_dung": du_lieu.get("noi_dung", "")
+                "noi_dung": noi_dung_log
             })
             if len(self.nhat_ky_gan_day) > 60:
                 self.nhat_ky_gan_day = self.nhat_ky_gan_day[-60:]
@@ -687,7 +792,9 @@ class MessageBroker:
                 self.danh_sach_client_ws.remove(ws)
 
     async def gui_log_ra_web(self, loai_log: str, noi_dung: str):
-        """Hàm tiện ích in nhật ký sự kiện lên bảng điều khiển Web"""
+        """Hàm tiện ích in nhật ký sự kiện lên bảng điều khiển Web (chỉ lọc 6 bản tin giao thức Bầy đàn)"""
+        if not any(tag in str(noi_dung) for tag in self.ALLOWED_SWARM_LOG_TAGS):
+            return
         await self.phat_su_kien_ra_web("LOG", {
             "cap_do": loai_log,
             "noi_dung": noi_dung
@@ -733,24 +840,33 @@ class MessageBroker:
                 entry["trang_thai"] = "DU_PHU_SONG"
         return vung_stats
 
-    async def dong_bo_trang_thai_toan_mang(self):
+    async def dong_bo_trang_thai_toan_mang(self, heatmap_nodes: list = None):
         """
-        Thu thập tọa độ, pin, tuyến truyền, độ phủ 7 phân khu và thống kê QoS đẩy ra giao diện.
+        Thu thập tọa độ, pin, tuyến truyền, danh sách điểm nhiệt (heatmap), độ phủ 7 phân khu và thống kê QoS đẩy ra giao diện.
         """
         danh_sach_nodes = [
             agent.xuat_ho_so_trang_thai()
             for agent in self.danh_sach_tac_nhan.values()
         ]
-        await self.phat_su_kien_ra_web("WORLD_STATE", {
-            "nodes": danh_sach_nodes,
-            "heatmap": (
+        if heatmap_nodes is None:
+            heatmap_nodes = (
                 self.scenario.xuat_heatmap()
                 if hasattr(self.scenario, "xuat_heatmap")
                 else []
-            ),
+            )
+        swarm_state = (
+            self.ground_station_server.xuat_trang_thai_phan_ung()
+            if self.ground_station_server and hasattr(self.ground_station_server, "xuat_trang_thai_phan_ung")
+            else self.phien_dau_gia_gan_nhat
+        )
+        await self.phat_su_kien_ra_web("WORLD_STATE", {
+            "nodes": danh_sach_nodes,
+            "heatmap": heatmap_nodes,
+            "heatmap_nodes": heatmap_nodes,
             "zone_coverage": self.tinh_thong_ke_phu_song_vung(),
             "network_metrics": self.thong_ke_toan_mang,
             "connectivity_metrics": getattr(self, "thong_ke_lien_tuc", {}),
-            "last_auction": self.phien_dau_gia_gan_nhat,
+            "swarm_response": swarm_state,
+            "last_auction": swarm_state,
             "last_e2e_route": self.tuyen_e2e_gan_nhat
         })

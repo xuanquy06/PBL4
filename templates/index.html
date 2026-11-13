@@ -3,12 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SAGSINS MAS — Bản đồ Chiến thuật</title>
+    <title>Hệ thống MAS_SAGSINS</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
     <script src="/static/vendor/leaflet/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+    <script src="/static/vendor/leaflet/leaflet-heat.js"></script>
     <style>
         :root {
             --bg-dark: #0d1117;
@@ -708,7 +710,7 @@
         <div class="brand-nav">
             <div class="brand">
                 <div id="wsDot" class="ws-dot" title="Trạng thái kết nối thời gian thực"></div>
-                <span>SAGSINS MAS</span>
+                <span>Hệ thống MAS_SAGSINS</span>
                 <span class="brand-badge">28 UAV</span>
             </div>
             <nav class="nav-tabs" aria-label="Điều hướng chính">
@@ -792,7 +794,9 @@
                 </div>
                 <div class="layer-grid">
                     <label class="chk-label"><input type="checkbox" id="chkZones" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#4ade80"></i>7 Vùng (Z1–Z7)</label>
-                    <label class="chk-label"><input type="checkbox" id="chkRfPackets" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#f43f5e"></i>Tia Gói tin (RF)</label>
+                    <label class="chk-label"><input type="checkbox" id="chkHeatmap" checked onchange="toggleLayers()"><i class="legend-dot" style="background:linear-gradient(90deg,#22c55e,#f59e0b,#ef4444)"></i>Heatmap</label>
+                    <label class="chk-label"><input type="checkbox" id="chkScanRadius" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#38bdf8;border:1px dashed #e2e8f0"></i>Quét 600m</label>
+                    <label class="chk-label"><input type="checkbox" id="chkRfPackets" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#10b981"></i>Tia Gói tin (RF)</label>
                     <label class="chk-label"><input type="checkbox" id="chkE2E" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#38bdf8"></i>Tuyến E2E</label>
                     <label class="chk-label"><input type="checkbox" id="chkLabels" checked onchange="toggleLabels()"><i class="legend-dot" style="background:#e2e8f0"></i>Nhãn tên</label>
                     <label class="chk-label"><input type="checkbox" id="chkFanet" onchange="toggleLayers()"><i class="legend-dot" style="background:#f59e0b"></i>Tia FANET</label>
@@ -819,14 +823,33 @@
 
         <!-- COMPACT RIGHT SIDEBAR -->
         <aside class="sidebar">
-            <!-- CNP Summary -->
+            <!-- Autonomous Swarm Response & Heatmap Monitor -->
             <div class="side-block">
                 <div class="block-head">
-                    <span>Đấu thầu CNP gần nhất</span>
+                    <span>Giám sát Tự Phát hiện &amp; Lực hút Heatmap</span>
                     <a href="/dashboard" class="block-link">Chi tiết ➔</a>
                 </div>
-                <div id="cnpMiniBox" class="mini-card" style="color:var(--text-muted)">
-                    Chưa có sự kiện cháy. Bấm <strong style="color:#fca5a5;">Báo cháy</strong> rồi click lên bản đồ.
+                <div id="swarmMiniBox" class="mini-card" style="font-size:11px;line-height:1.55;">
+                    <div style="display:flex;justify-content:space-between;">
+                        <span style="color:var(--text-muted)">Trạng thái cháy:</span>
+                        <b id="swFireStatus" style="color:var(--accent-green);font-family:var(--font-mono);">Chưa có đám cháy</b>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;">
+                        <span style="color:var(--text-muted)">UAV phát hiện đầu tiên:</span>
+                        <b id="swFirstUav" style="font-family:var(--font-mono);">—</b>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;">
+                        <span style="color:var(--text-muted)">UAV nhận nhiệm vụ:</span>
+                        <b id="swAssignedUav" style="font-family:var(--font-mono);color:var(--accent-blue);">—</b>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;">
+                        <span style="color:var(--text-muted)">Pin khứ hồi dự kiến:</span>
+                        <b id="swReturnBat" style="font-family:var(--font-mono);">—</b>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;border-top:1px solid rgba(255,255,255,0.06);margin-top:3px;padding-top:3px;">
+                        <span style="color:var(--text-muted)">Điểm rủi ro nhiệt TB:</span>
+                        <b id="swAvgRisk" style="font-family:var(--font-mono);color:var(--accent-amber);">0.15</b>
+                    </div>
                 </div>
             </div>
 
@@ -895,9 +918,16 @@
         map.on('zoomstart', () => map.getContainer().classList.add('map-zooming'));
         map.on('zoomend', () => map.getContainer().classList.remove('map-zooming'));
 
-        // Mặc định chỉ bật: 7 Vùng, Tuyến E2E, Tia Gói tin RF.
+        // Mặc định bật: 7 Vùng, Heatmap, Vòng quét 600m, Tuyến E2E, Tia Gói tin RF.
         // Các lớp A2G, FANET, Vệ tinh LEO và Quỹ đạo được tắt mặc định để giao diện gọn mượt.
         const zoneLayer = L.layerGroup().addTo(map);
+        const heatmapLayer = L.heatLayer([], {
+            radius: 25,
+            blur: 15,
+            maxZoom: 15,
+            gradient: { 0.4: 'green', 0.65: 'yellow', 1.0: 'red' }
+        }).addTo(map);
+        const scanRadiusLayer = L.layerGroup().addTo(map);
         const patrolLayer = L.layerGroup();
         const a2gLinkLayer = L.layerGroup();
         const fanetLinkLayer = L.layerGroup();
@@ -909,10 +939,12 @@
         const nodeLayer = L.layerGroup().addTo(map);
 
         const markersById = new Map();
+        const scanCirclesById = new Map();
         const zonePolygons = new Map();
         const zoneBounds = new Map();
-        let cachedWaypoints = {};
         let nodesCache = [];
+        let heatmapCache = [];
+        let swarmStateCache = null;
         let fireMode = false;
         let isPaused = false;
         let currentFilter = 'ALL';
@@ -930,12 +962,25 @@
 
         function toggleLayers() {
             syncLayer('chkZones', zoneLayer);
+            syncLayer('chkHeatmap', heatmapLayer);
+            syncLayer('chkScanRadius', scanRadiusLayer);
             syncLayer('chkRfPackets', rfPacketLayer);
             syncLayer('chkA2G', a2gLinkLayer);
             syncLayer('chkFanet', fanetLinkLayer);
             syncLayer('chkLeo', leoLinkLayer);
             syncLayer('chkE2E', e2eLayer);
             syncLayer('chkRoutes', patrolLayer);
+        }
+
+        function renderHeatmap(heatNodes) {
+            if (!Array.isArray(heatNodes)) return;
+            heatmapCache = heatNodes;
+            const heatLatLngs = heatNodes.map(node => [
+                Number(node.lat),
+                Number(node.lon),
+                Math.max(0.05, Math.min(1.0, Number(node.risk_score ?? node.intensity ?? 0.05)))
+            ]);
+            heatmapLayer.setLatLngs(heatLatLngs);
         }
 
         function setAllLinkLayers(enable) {
@@ -1032,12 +1077,11 @@
             });
         }
 
-        function drawZones(patrolZones, uavWaypoints) {
+        function drawZones(patrolZones) {
             zoneLayer.clearLayers();
             patrolLayer.clearLayers();
             zonePolygons.clear();
             zoneBounds.clear();
-            cachedWaypoints = uavWaypoints || {};
 
             if (patrolZones && patrolZones.features) {
                 patrolZones.features.forEach(feat => {
@@ -1062,14 +1106,6 @@
                             iconAnchor: [14, 9]
                         })
                     }).addTo(zoneLayer);
-                });
-            }
-            if (uavWaypoints) {
-                Object.values(uavWaypoints).forEach(pts => {
-                    if (!pts || pts.length < 2) return;
-                    const latlngs = pts.map(p => [p.vi_do, p.kinh_do]);
-                    latlngs.push(latlngs[0]);
-                    L.polyline(latlngs, { color: '#93c5fd', weight: 1.2, dashArray: '4,5', opacity: 0.55 }).addTo(patrolLayer);
                 });
             }
             toggleLayers();
@@ -1131,21 +1167,53 @@
                         m._lastStateKey = stateKey;
                     }
                 }
+
+                // Vẽ vòng tròn bán kính quét 600m quanh các UAV đang hoạt động trên không
+                if (n.loai === 'MÁY_BAY') {
+                    const isActiveScanning = !n.is_reserve && n.state !== 'OFFLINE' && n.state !== 'CHARGING';
+                    let sc = scanCirclesById.get(n.id);
+                    if (isActiveScanning) {
+                        const isResponding = n.state === 'RESPONDING';
+                        const isSelected = selectedNodeId === n.id;
+                        const strokeColor = isResponding ? '#f97316' : (isSelected ? '#38bdf8' : '#22d3ee');
+                        const fillOpacity = isResponding ? 0.08 : (isSelected ? 0.07 : 0.025);
+                        const strokeOpacity = isResponding ? 0.75 : (isSelected ? 0.70 : 0.32);
+                        const weight = isResponding || isSelected ? 1.6 : 1.0;
+                        const scanRadius = Number(n.scan_radius_m || 600);
+                        if (!sc) {
+                            sc = L.circle(pos, {
+                                radius: scanRadius,
+                                color: strokeColor,
+                                weight: weight,
+                                opacity: strokeOpacity,
+                                fillColor: strokeColor,
+                                fillOpacity: fillOpacity,
+                                dashArray: '4, 6',
+                                interactive: false
+                            }).addTo(scanRadiusLayer);
+                            scanCirclesById.set(n.id, sc);
+                        } else {
+                            sc.setLatLng(pos);
+                            sc.setRadius(scanRadius);
+                            sc.setStyle({
+                                color: strokeColor,
+                                weight: weight,
+                                opacity: strokeOpacity,
+                                fillColor: strokeColor,
+                                fillOpacity: fillOpacity
+                            });
+                        }
+                    } else if (sc) {
+                        scanRadiusLayer.removeLayer(sc);
+                        scanCirclesById.delete(n.id);
+                    }
+                }
             });
 
             a2gLinkLayer.clearLayers();
             fanetLinkLayer.clearLayers();
             leoLinkLayer.clearLayers();
             focusLayer.clearLayers();
-
-            if (selectedNodeId && cachedWaypoints[selectedNodeId]) {
-                const pts = cachedWaypoints[selectedNodeId];
-                if (pts.length >= 2) {
-                    const loop = pts.map(p => [p.vi_do, p.kinh_do]);
-                    loop.push(loop[0]);
-                    L.polyline(loop, { color: '#38bdf8', weight: 2.2, dashArray: '5,4', opacity: 0.9 }).addTo(focusLayer);
-                }
-            }
 
             if (selectedNodeId) {
                 const selNode = byId.get(selectedNodeId);
@@ -1256,23 +1324,73 @@
             });
         }
 
-        function renderCnpMini(auc) {
-            if (!auc) return;
-            const box = document.getElementById('cnpMiniBox');
-            if (!auc.thanh_cong) {
-                box.innerHTML = `<span style="color:var(--accent-red);font-weight:700;">Thất bại</span> — Không UAV nào đủ pin khứ hồi (&gt;25%).`;
+        function computeAvgHeatRisk() {
+            if (!heatmapCache || !heatmapCache.length) return 0.15;
+            const sum = heatmapCache.reduce((acc, n) => acc + Number(n.risk_score || 0.05), 0);
+            return sum / heatmapCache.length;
+        }
+
+        function renderSwarmMini(swarmData) {
+            if (swarmData) swarmStateCache = swarmData;
+            const stEl = document.getElementById('swFireStatus');
+            const firstEl = document.getElementById('swFirstUav');
+            const assignEl = document.getElementById('swAssignedUav');
+            const batEl = document.getElementById('swReturnBat');
+            const riskEl = document.getElementById('swAvgRisk');
+            if (!stEl) return;
+
+            const cur = (swarmStateCache && swarmStateCache.current) ? swarmStateCache.current : (swarmStateCache && swarmStateCache.trang_thai_chay ? swarmStateCache : null);
+            const avgRisk = cur && cur.diem_rui_ro_nhiet_tb != null
+                ? Number(cur.diem_rui_ro_nhiet_tb)
+                : (swarmStateCache && swarmStateCache.avg_heat_risk != null ? Number(swarmStateCache.avg_heat_risk) : computeAvgHeatRisk());
+
+            riskEl.textContent = avgRisk.toFixed(2);
+            riskEl.style.color = avgRisk >= 0.65 ? 'var(--accent-red)' : (avgRisk >= 0.35 ? 'var(--accent-amber)' : 'var(--accent-green)');
+
+            if (!cur) {
+                stEl.textContent = 'Chưa có đám cháy';
+                stEl.style.color = 'var(--accent-green)';
+                firstEl.textContent = '—';
+                assignEl.textContent = '—';
+                batEl.textContent = '—';
                 return;
             }
-            const w = auc.winner || {};
-            box.innerHTML = `
-                <div style="display:flex;justify-content:space-between;align-items:center;">
-                    <span style="color:var(--accent-green);font-weight:700;font-family:var(--font-mono);">★ ${auc.winner_id.replace('MÁY_BAY_', '')}</span>
-                    <span style="color:var(--text-muted);font-family:var(--font-mono);font-size:10px;">${auc.thoi_gian || ''}</span>
-                </div>
-                <div style="margin-top:4px;color:var(--text-secondary);font-family:var(--font-mono);font-size:10.5px;">
-                    Cự ly: <b>${((w.khoang_cach_m || 0)/1000).toFixed(2)} km</b> · Pin: <b>${w.pin_du_kien_pct || 0}%</b> · Thầu: <b>${(auc.proposals || []).length}</b>
-                </div>
-            `;
+
+            const statusRaw = cur.trang_thai_chay || 'UNVERIFIED';
+            const zoneShort = (cur.zone_id || '').replace('ZONE_0', 'Z');
+            if (statusRaw === 'UNVERIFIED') {
+                stEl.textContent = `Đang âm ỉ (${zoneShort || 'UNVERIFIED'})`;
+                stEl.style.color = 'var(--accent-amber)';
+            } else if (statusRaw === 'DETECTED') {
+                stEl.textContent = `Đã phát hiện (${zoneShort || 'DETECTED'})`;
+                stEl.style.color = '#fb923c';
+            } else {
+                stEl.textContent = `Đang khoanh vùng (${zoneShort || '130m'})`;
+                stEl.style.color = 'var(--accent-red)';
+            }
+
+            firstEl.textContent = cur.uav_phat_hien_dau_tien
+                ? cur.uav_phat_hien_dau_tien.replace('MÁY_BAY_', '')
+                : 'Đang quét (<=600m)...';
+
+            if (cur.uav_nhan_nhiem_vu) {
+                const uShort = cur.uav_nhan_nhiem_vu.replace('MÁY_BAY_', '');
+                const modeLabel = cur.loai_phan_ung === 'P2P_HANDOVER' ? 'P2P Handover' : 'Direct Lock';
+                assignEl.textContent = `${uShort} (${modeLabel})`;
+                assignEl.style.color = cur.loai_phan_ung === 'P2P_HANDOVER' ? 'var(--accent-amber)' : 'var(--accent-green)';
+            } else {
+                assignEl.textContent = 'Đang hút về tâm nhiệt...';
+                assignEl.style.color = 'var(--text-muted)';
+            }
+
+            if (cur.pin_khu_hoi_du_kien_pct != null) {
+                const bVal = Number(cur.pin_khu_hoi_du_kien_pct);
+                batEl.textContent = `${bVal.toFixed(1)}%`;
+                batEl.style.color = bVal > 25 ? 'var(--accent-green)' : 'var(--accent-red)';
+            } else {
+                batEl.textContent = '—';
+                batEl.style.color = 'var(--text-main)';
+            }
         }
 
         function renderE2EMini(data) {
@@ -1322,22 +1440,26 @@
         function drawRfPacketRay(data) {
             if (!data || !data.toa_do_dau || !data.toa_do_cuoi) return;
             if (!document.getElementById('chkRfPackets').checked) return;
+            const kind = data.loai_tin || 'DATA';
+            // Loại bỏ hoàn toàn tia đấu thầu FIPA-CNP cũ (CFP, PROPOSE, REFUSE, ACCEPT)
+            if (kind.includes('CFP') || kind.includes('PROPOSE') || kind.includes('REFUSE') || kind.includes('ACCEPT') || kind.includes('REJECT')) {
+                return;
+            }
             const p1 = [data.toa_do_dau.vi_do, data.toa_do_dau.kinh_do];
             const p2 = [data.toa_do_cuoi.vi_do, data.toa_do_cuoi.kinh_do];
-            const kind = data.loai_tin || 'DATA';
 
             let color = '#38bdf8';
-            if (kind.includes('FIRE') || kind.includes('CFP')) color = '#f43f5e';
-            else if (kind.includes('PROPOSE') || kind.includes('ACCEPT')) color = '#10b981';
-            else if (kind.includes('RETURN') || kind.includes('HANDOVER')) color = '#f59e0b';
+            if (kind.includes('GIAO_NHIEM_VU_DU_LIEU') || kind.includes('FIRE') || kind.includes('CHAY')) color = '#10b981';
+            else if (kind.includes('P2P')) color = '#f59e0b';
+            else if (kind.includes('RETURN') || kind.includes('BAN_GIAO')) color = '#eab308';
 
             const shortKind = kind
-                .replace('CFP_FIRE_ALERT', 'CFP')
-                .replace('CFP_FIRE_EVENT', 'CFP')
-                .replace('PROPOSE_BID', 'BID')
-                .replace('ACCEPT_PROPOSAL', 'AWARD')
-                .replace('REJECT_PROPOSAL', 'REJECT')
+                .replace('GIAO_NHIEM_VU_DU_LIEU', 'DIJKSTRA')
+                .replace('YEU_CAU_HO_TRO_CHAY_P2P', 'P2P_SOS')
                 .replace('TELEMETRY_REPORT', 'TELEM')
+                .replace('YEU_CAU_BAN_GIAO_VUNG', 'HANDOVER')
+                .replace('THONG_BAO_KHOI_PHUC_VUNG', 'RESTORE')
+                .replace('XAC_NHAN_ACK', 'ACK')
                 .replace('EMERGENCY_RETURN', 'RTB');
 
             const line = L.polyline([p1, p2], {
@@ -1377,7 +1499,11 @@
                     body: JSON.stringify({ loai_su_co: 'CHÁY_RỪNG', vi_do: lat, kinh_do: lng })
                 });
                 const data = await res.json();
-                if (data.auction_detail) renderCnpMini(data.auction_detail);
+                if (data.swarm_response) {
+                    renderSwarmMini(data.swarm_response);
+                } else if (data.swarm_record) {
+                    renderSwarmMini({ current: data.swarm_record });
+                }
             } catch (_) {}
         });
 
@@ -1413,36 +1539,58 @@
             document.querySelectorAll('.speed-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.speed) === scale));
         }
 
-        async function init() {
-            const res = await fetch('/api/init-state');
-            const d = await res.json();
-            drawZones(d.patrol_zones, d.uav_waypoints);
-            updateNodesAndLinks(d.nodes);
-            updateZoneStrip(d.zone_coverage);
-            updateKpis(d.network_metrics, d.connectivity_metrics);
-            if (d.last_auction) renderCnpMini(d.last_auction);
-            if (d.last_e2e_route) renderE2EMini(d.last_e2e_route);
+        async function fetchInitState() {
+            try {
+                const res = await fetch('/api/init-state');
+                if (!res.ok) return;
+                const d = await res.json();
+                drawZones(d.patrol_zones);
+                renderHeatmap(d.heatmap || d.heatmap_nodes || []);
+                updateNodesAndLinks(d.nodes);
+                updateZoneStrip(d.zone_coverage);
+                updateKpis(d.network_metrics, d.connectivity_metrics);
+                renderSwarmMini(d.swarm_response || d.last_auction);
+                if (d.last_e2e_route) renderE2EMini(d.last_e2e_route);
+            } catch (err) {
+                console.error('Lỗi tải init-state:', err);
+            }
+        }
 
+        function connectWebSocket() {
             const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
             const ws = new WebSocket(`${proto}//${location.host}/ws/mophong`);
-            ws.onopen = () => document.getElementById('wsDot').classList.add('online');
-            ws.onclose = () => document.getElementById('wsDot').classList.remove('online');
+            ws.onopen = () => {
+                document.getElementById('wsDot').classList.add('online');
+                if (zonePolygons.size === 0) fetchInitState();
+            };
+            ws.onclose = () => {
+                document.getElementById('wsDot').classList.remove('online');
+                setTimeout(connectWebSocket, 1500);
+            };
             ws.onmessage = (ev) => {
                 const msg = JSON.parse(ev.data);
                 if (msg.type === 'WORLD_STATE') {
+                    if (msg.data.heatmap || msg.data.heatmap_nodes) {
+                        renderHeatmap(msg.data.heatmap || msg.data.heatmap_nodes);
+                    }
                     updateNodesAndLinks(msg.data.nodes);
                     updateZoneStrip(msg.data.zone_coverage);
                     updateKpis(msg.data.network_metrics, msg.data.connectivity_metrics);
-                    if (msg.data.last_auction) renderCnpMini(msg.data.last_auction);
+                    renderSwarmMini(msg.data.swarm_response || msg.data.last_auction);
                     if (msg.data.last_e2e_route) renderE2EMini(msg.data.last_e2e_route);
                 } else if (msg.type === 'RF_LINK') {
                     drawRfPacketRay(msg.data);
-                } else if (msg.type === 'CNP_AUCTION_RESULT') {
-                    renderCnpMini(msg.data);
+                } else if (msg.type === 'SWARM_RESPONSE_UPDATE') {
+                    renderSwarmMini(msg.data);
                 } else if (msg.type === 'E2E_ROUTE_COMPLETED') {
                     renderE2EMini(msg.data);
                 }
             };
+        }
+
+        async function init() {
+            await fetchInitState();
+            connectWebSocket();
         }
         init();
     </script>

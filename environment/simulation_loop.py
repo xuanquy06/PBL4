@@ -89,15 +89,12 @@ class SimulationLoop:
 
         for node_cfg in danh_sach_nodes:
             loai = node_cfg["loai_tac_nhan"]
-            ma_node = node_cfg["ma_dinh_danh"]
 
             if loai == "TRẠM_MẶT_ĐẤT":
                 GroundStationAgent(**node_cfg, bo_dinh_tuyen=self.broker)
             elif loai == "MÁY_BAY":
-                waypoints = self.ban_do_waypoints_uav.get(ma_node, [])
                 UAVAgent(
                     **node_cfg,
-                    waypoints=waypoints,
                     bo_dinh_tuyen=self.broker
                 )
 
@@ -220,7 +217,12 @@ class SimulationLoop:
                 await self._kiem_tra_lien_lac_lien_tuc(self._thoi_gian_tich_luy_kiem_tra_lien_lac)
                 self._thoi_gian_tich_luy_kiem_tra_lien_lac = 0.0
 
-            await self.broker.dong_bo_trang_thai_toan_mang()
+            heatmap_payload = (
+                self.scenario.xuat_heatmap()
+                if hasattr(self.scenario, "xuat_heatmap")
+                else []
+            )
+            await self.broker.dong_bo_trang_thai_toan_mang(heatmap_nodes=heatmap_payload)
 
     async def _kiem_tra_lien_lac_lien_tuc(self, khoang_thoi_gian_giay: float):
         """Đo định kỳ khả năng mỗi UAV tạo được tuyến tới ít nhất một trạm mặt đất."""
@@ -352,7 +354,7 @@ class SimulationLoop:
                 or chu_vung.trang_thai not in (
                     AgentState.RETURNING, AgentState.CHARGING, AgentState.LOW_BATTERY, AgentState.OFFLINE
                 )
-                or not getattr(chu_vung, "waypoints", None)
+                or not getattr(chu_vung, "zone_id", None)
             ):
                 continue
             # Kiểm tra xem đã có UAV cùng vùng nào tự trị nhận bàn giao qua gói tin YEU_CAU_BAN_GIAO_VUNG chưa
@@ -379,10 +381,8 @@ class SimulationLoop:
                 None
             )
             if u_reserve:
-                waypoints = getattr(chu_vung, "waypoints_goc", None) or chu_vung.waypoints
-                u_reserve.waypoints_goc = list(waypoints)
-                u_reserve.waypoints = list(waypoints)
-                u_reserve.waypoint_index = 0
+                u_reserve.toa_do["do_cao"] = max(1000.0, float(chu_vung.toa_do.get("do_cao", 1000.0)))
+                u_reserve.toa_do["van_toc_m_s"] = 45.0
                 u_reserve.toa_do_tram_sac = None
                 u_reserve.chuyen_trang_thai(AgentState.PATROLLING)
                 self._ban_giao_vung_uav[chu_vung.ma_dinh_danh] = u_reserve.ma_dinh_danh
@@ -404,18 +404,14 @@ class SimulationLoop:
             ]
             if not cac_ung_vien:
                 continue
-            waypoints = getattr(chu_vung, "waypoints_goc", None) or chu_vung.waypoints
             uav_nhan = min(
                 cac_ung_vien,
                 key=lambda uav: (
                     len(getattr(uav, "_vung_tuan_tra_phu", {})) * 10000.0
-                    + min(
-                        self.physics.tinh_khoang_cach_3d(uav.toa_do, waypoint)
-                        for waypoint in waypoints
-                    )
+                    + self.physics.tinh_khoang_cach_3d(uav.toa_do, chu_vung.toa_do)
                 )
             )
-            uav_nhan.nhan_vung_tuan_tra(chu_vung.ma_dinh_danh, waypoints)
+            uav_nhan.nhan_vung_tuan_tra(chu_vung.ma_dinh_danh, getattr(chu_vung, "zone_id", None))
             self._ban_giao_vung_uav[chu_vung.ma_dinh_danh] = uav_nhan.ma_dinh_danh
             await self.broker.gui_log_ra_web(
                 "WARN",
@@ -424,58 +420,9 @@ class SimulationLoop:
             )
 
     async def xu_ly_uav_gap_su_co_nhiem_vu(self, ma_phien: str, uav_id: str, ly_do: str):
-        """Kích hoạt cơ chế tự động tái đấu giá (Re-auction) khi UAV đang xử lý cháy gặp sự cố / hết pin."""
-        if ma_phien not in self._active_fire_missions:
-            return
-        mission = self._active_fire_missions[ma_phien]
-        if mission.get("retry_count", 0) >= 3:
-            await self.broker.gui_log_ra_web(
-                "WARN", f"🚨 [SỰ CỐ CHÁY] Đám cháy #{ma_phien[:8]} tại ({mission['vi_do']:.4f}, {mission['kinh_do']:.4f}) không thể xử lý sau 3 lần tái điều động!"
-            )
-            return
-
-        mission["retry_count"] += 1
-        mission.setdefault("failed_uavs", set()).add(uav_id)
-        await self.broker.gui_log_ra_web(
-            "WARN",
-            f"⚠️ [SỰ CỐ NHIỆM VỤ] Tác tử {uav_id} gặp sự cố ({ly_do}). "
-            f"Kích hoạt tái đấu thầu tự động (Lần {mission['retry_count']}/3)..."
-        )
-
-        thong_diep_cfp = {
-            "loai_tin": "CFP_FIRE_EVENT",
-            "ma_phien_dau_gia": ma_phien,
-            "loai_su_co": mission["loai_su_co"],
-            "vi_do": mission["vi_do"],
-            "kinh_do": mission["kinh_do"],
-            "zone_id": mission["zone_id"],
-            "thoi_diem_khoi_tao": time.time(),
-            "nguoi_gui": "TRẠM_KIỂM_LÂM_SƠN_TRÀ"
-        }
-
-        for tac_nhan in self.broker.danh_sach_tac_nhan.values():
-            if tac_nhan.loai_tac_nhan == "MÁY_BAY" and tac_nhan.ma_dinh_danh not in mission["failed_uavs"]:
-                t_state = getattr(tac_nhan, "uav_state", None) or tac_nhan.trang_thai
-                t_name = getattr(t_state, "name", str(t_state))
-                if t_name in ("PATROLLING", "STANDBY", "IDLE", "RELAYING"):
-                    tac_vu = getattr(tac_nhan, "_tac_vu_su_co", None)
-                    if tac_vu is None or tac_vu.done():
-                        await tac_nhan.hang_doi_thong_diep.put(thong_diep_cfp.copy())
-                        if hasattr(tac_nhan, "xu_ly_thong_diep"):
-                            await tac_nhan.xu_ly_thong_diep(thong_diep_cfp.copy())
-
-        ket_qua = await self.ground_station_server.mo_phien_dau_gia_chay_rung(
-            ma_phien=ma_phien,
-            thong_diep_cfp=thong_diep_cfp,
-            thoi_gian_cho_s=0.6,
-            exclude_uavs=mission["failed_uavs"]
-        )
-        if ket_qua and (ket_qua.get("winner_id") or ket_qua.get("uav_id")):
-            new_wid = ket_qua.get("winner_id") or ket_qua.get("uav_id")
-            mission["winner_id"] = new_wid
-            await self.broker.gui_log_ra_web(
-                "WIN", f"🔄 [TÁI ĐẤU GIÁ THÀNH CÔNG] Đã bàn giao đám cháy #{ma_phien[:8]} cho tác tử ứng cứu [{new_wid}]!"
-            )
+        """Giải phóng khóa mục tiêu khi UAV gặp sự cố giữa nhiệm vụ để đồng đội cùng phân khu tiếp ứng."""
+        if hasattr(self.broker, "mo_khoa_muc_tieu_chay"):
+            self.broker.mo_khoa_muc_tieu_chay(uav_id, ha_nhiet=False)
 
     def _thong_tin_uav_gan_nhat(self, vi_do: float, kinh_do: float) -> dict:
         uavs = [
@@ -602,19 +549,32 @@ class SimulationLoop:
             fire_zone_id = getattr(affected_nodes[0], "zone_id", None)
 
         so_diem_nong = len(affected_nodes)
+        swarm_record = None
+        if hasattr(self, "ground_station_server") and self.ground_station_server is not None:
+            if hasattr(self.ground_station_server, "khoi_tao_dam_chay_unverified"):
+                swarm_record = await self.ground_station_server.khoi_tao_dam_chay_unverified(
+                    ma_su_co=ma_phien,
+                    vi_do=fire_lat,
+                    kinh_do=fire_lon,
+                    zone_id=fire_zone_id,
+                    so_diem_nong=so_diem_nong,
+                )
+
         thong_bao_kq = (
-            f"🔥 [HEATMAP] Đã kích hoạt điểm cháy [{loai_su_co}] tại ({fire_lat:.4f}, {fire_lon:.4f}) "
+            f"[HEATMAP_ANOMALY] Đã khởi tạo đám cháy [{loai_su_co}] ở trạng thái UNVERIFIED tại ({fire_lat:.4f}, {fire_lon:.4f}) "
             f"{f'thuộc {fire_zone_id} ' if fire_zone_id else ''}"
-            f"— Đẩy {so_diem_nong} HeatNode trong bán kính {ban_kinh_m:.0f}m lên risk_score = 1.0 "
-            f"(Không kích hoạt đấu thầu Trạm Kiểm Lâm)."
+            f"— Đẩy {so_diem_nong} nút Heatmap trong bán kính {ban_kinh_m:.0f}m lên risk_score = 1.0."
         )
 
         if hasattr(self, "broker") and self.broker is not None:
-            if hasattr(self.broker, "gui_log_ra_web"):
-                await self.broker.gui_log_ra_web("EVENT", thong_bao_kq)
             if hasattr(self.broker, "dong_bo_trang_thai_toan_mang"):
                 await self.broker.dong_bo_trang_thai_toan_mang()
 
+        swarm_state = (
+            self.ground_station_server.xuat_trang_thai_phan_ung()
+            if hasattr(self, "ground_station_server") and hasattr(self.ground_station_server, "xuat_trang_thai_phan_ung")
+            else None
+        )
         return {
             "thanh_cong": True,
             "ma_phien": ma_phien,
@@ -622,11 +582,14 @@ class SimulationLoop:
             "vi_do": fire_lat,
             "kinh_do": fire_lon,
             "zone_id": fire_zone_id,
+            "trang_thai_chay": "UNVERIFIED",
             "so_diem_nhiet_kich_hoat": so_diem_nong,
             "affected_nodes": [
                 n.to_dict() if hasattr(n, "to_dict") else dict(n)
                 for n in affected_nodes
             ],
+            "swarm_response": swarm_state,
+            "swarm_record": swarm_record,
             "auction_triggered": False,
             "thong_bao": thong_bao_kq,
         }
@@ -635,20 +598,28 @@ class SimulationLoop:
         """
         Trả về trạng thái node, waypoint tuần tra, bản đồ nhiệt HeatNode, độ phủ 7 phân khu và chỉ số mạng.
         """
+        heatmap_nodes = (
+            self.scenario.xuat_heatmap()
+            if hasattr(self.scenario, "xuat_heatmap")
+            else []
+        )
+        swarm_state = (
+            self.ground_station_server.xuat_trang_thai_phan_ung()
+            if hasattr(self, "ground_station_server") and hasattr(self.ground_station_server, "xuat_trang_thai_phan_ung")
+            else self.broker.phien_dau_gia_gan_nhat
+        )
         return {
             "nodes": [a.xuat_ho_so_trang_thai() for a in self.broker.danh_sach_tac_nhan.values()],
             "uav_waypoints": self.ban_do_waypoints_uav,
             "patrol_zones": self.scenario.patrol_zones,
-            "heatmap": (
-                self.scenario.xuat_heatmap()
-                if hasattr(self.scenario, "xuat_heatmap")
-                else []
-            ),
+            "heatmap": heatmap_nodes,
+            "heatmap_nodes": heatmap_nodes,
             "zone_coverage": self.broker.tinh_thong_ke_phu_song_vung(),
             "deployment_plan": self.scenario.ke_hoach_bo_tri_ban_dau,
             "network_metrics": self.broker.thong_ke_toan_mang,
             "connectivity_metrics": self._chi_so_lien_lac,
-            "last_auction": self.broker.phien_dau_gia_gan_nhat,
+            "swarm_response": swarm_state,
+            "last_auction": swarm_state,
             "last_e2e_route": self.broker.tuyen_e2e_gan_nhat,
             "recent_logs": list(getattr(self.broker, "nhat_ky_gan_day", [])),
             "uav_energy_model": {

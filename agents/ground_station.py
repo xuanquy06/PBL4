@@ -131,47 +131,8 @@ class GroundStationAgent(BaseAgent):
             )
             return
 
-        # 1. Trạm mặt đất báo giá nếu UAV gọi CFP_GOI_THAU trực tiếp trong tầm A2G
-        if loai_tin == "CFP_GOI_THAU":
-            snr_db = thong_so_kenh.get("snr_db", -100.0)
-            if snr_db >= 5.0 and thong_so_kenh.get("per", 1.0) < 0.25:
-                bao_gia = self.bo_dinh_tuyen.tao_bao_gia(
-                    self.ma_dinh_danh,
-                    nguoi_gui,
-                    thong_so_kenh,
-                    float(thong_diep.get("kich_thuoc_kb", 250.0))
-                )
-                if not bao_gia:
-                    return
-                await self.bo_dinh_tuyen.gui_don_huong(
-                    ma_nguoi_gui=self.ma_dinh_danh,
-                    ma_nguoi_nhan=nguoi_gui,
-                    thong_diep={
-                        "loai_tin": "PROPOSE_BAO_GIA",
-                        "ma_phien_dau_gia": thong_diep.get("ma_phien_dau_gia"),
-                        "chi_phi": bao_gia["chi_phi"],
-                        "loai_ung_vien": "TRẠM_MẶT_ĐẤT",
-                        "tuyen": bao_gia["tuyen"],
-                        "nang_luong_du_kien_joule": bao_gia["nang_luong_du_kien_joule"],
-                        "do_tre_du_kien_ms": bao_gia["do_tre_du_kien_ms"],
-                        "dung_luong_du_kien_mbps": bao_gia["dung_luong_du_kien_mbps"],
-                        "pin_pct": 100.0,
-                        "kich_thuoc_kb": 2.0
-                    }
-                )
-
-        elif loai_tin == "PROPOSE":
-            gcs_server = getattr(self.bo_dinh_tuyen, "ground_station_server", None)
-            if gcs_server:
-                gcs_server.nhan_propose(thong_diep)
-
-        elif loai_tin in ("REFUSE", "REFUSE_BAO_GIA"):
-            gcs_server = getattr(self.bo_dinh_tuyen, "ground_station_server", None)
-            if gcs_server:
-                gcs_server.nhan_refuse(thong_diep)
-
-        # 2. NHẬN DỮ LIỆU KHẨN CẤP (TỪ UAV TRUYỀN THẲNG HOẶC QUA FANET/VỆ TINH LEO CHUYỂN TIẾP)
-        elif loai_tin in ("GIAO_NHIEM_VU_DU_LIEU", "CHUYEN_TIEP_VE_TRAM"):
+        # NHẬN DỮ LIỆU KHẨN CẤP (TỪ UAV TRUYỀN THẲNG HOẶC QUA FANET/VỆ TINH LEO CHUYỂN TIẾP)
+        if loai_tin in ("GIAO_NHIEM_VU_DU_LIEU", "CHUYEN_TIEP_VE_TRAM"):
             self.chuyen_trang_thai(AgentState.RELAYING)
 
             thoi_diem_goc = thong_diep.get("thoi_diem_khoi_tao", time.time())
@@ -203,13 +164,15 @@ class GroundStationAgent(BaseAgent):
             }
             self.lich_su_goi_tin_thanh_cong.append(ban_ghi_ket_qua)
 
-            nhat_ky = (
-                f"🎯 [{self.ma_dinh_danh}] ĐÃ THU THẬP GÓI TIN ({loai_su_co}) | "
-                f"Lộ trình ({so_chang_hop} hops): {chuoi_lo_trinh} | "
-                f"Tổng trễ E2E: {tong_do_tre_e2e_ms} ms | SNR cuối: {thong_so_kenh.get('snr_db')} dB"
-            )
-            print(nhat_ky)
-            await self.bo_dinh_tuyen.gui_log_ra_web("SUCCESS", nhat_ky)
+            gcs_server = getattr(self.bo_dinh_tuyen, "ground_station_server", None)
+            if gcs_server and hasattr(gcs_server, "ghi_nhan_bao_cao_dijkstra") and toa_do_su_co:
+                await gcs_server.ghi_nhan_bao_cao_dijkstra(
+                    float(toa_do_su_co.get("vi_do", 0.0)),
+                    float(toa_do_su_co.get("kinh_do", 0.0)),
+                    lo_trinh[0],
+                    lo_trinh,
+                    do_tre_ms=tong_do_tre_e2e_ms,
+                )
 
             await self.bo_dinh_tuyen.phat_su_kien_ra_web("E2E_ROUTE_COMPLETED", ban_ghi_ket_qua)
             await self.bo_dinh_tuyen.phat_su_kien_ra_web("MISSION_COMPLETED", ban_ghi_ket_qua)

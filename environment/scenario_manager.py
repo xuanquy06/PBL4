@@ -5,6 +5,7 @@ import math
 import random
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional
 from skyfield.api import load
 
 
@@ -15,11 +16,19 @@ class HeatNode:
     - lat, lon: Tọa độ địa lý nằm gọn trong ranh giới đa giác vùng Z1-Z7.
     - risk_score: Chỉ số nguy cơ cháy rừng từ 0.05 (thấp) đến 1.0 (điểm nóng cực đại).
     - zone_id: Mã phân khu (ZONE_01 .. ZONE_07).
+    - locked_by: Mã UAV đã khóa mục tiêu cháy tại điểm nhiệt này (tránh trùng lặp).
+    - fire_center: Tọa độ tâm cháy gốc (lat, lon) nếu thuộc một đám cháy đang bùng phát.
+    - fire_status: Trạng thái đám cháy tại nút ("UNVERIFIED", "DETECTED", "CONTAINING" hoặc None).
+    - fire_id: Mã định danh sự cố cháy gắn với nút nhiệt.
     """
     lat: float
     lon: float
     risk_score: float = 0.05
     zone_id: str = "ZONE_01"
+    locked_by: Optional[str] = None
+    fire_center: Optional[tuple[float, float]] = None
+    fire_status: Optional[str] = None
+    fire_id: Optional[str] = None
 
     def __post_init__(self):
         self.lat = round(float(self.lat), 6)
@@ -28,12 +37,21 @@ class HeatNode:
         self.zone_id = str(self.zone_id)
 
     def to_dict(self) -> dict:
-        return {
+        data = {
             "lat": round(self.lat, 6),
             "lon": round(self.lon, 6),
             "risk_score": round(min(1.0, max(0.05, self.risk_score)), 4),
             "zone_id": self.zone_id,
         }
+        if self.locked_by:
+            data["locked_by"] = self.locked_by
+        if self.fire_status:
+            data["fire_status"] = self.fire_status
+        if self.fire_id:
+            data["fire_id"] = self.fire_id
+        if self.fire_center:
+            data["fire_center"] = [round(self.fire_center[0], 6), round(self.fire_center[1], 6)]
+        return data
 
     def __getitem__(self, key: str):
         return getattr(self, key)
@@ -128,27 +146,16 @@ class ScenarioManager:
                 if row.get("zone_id") != f"ZONE_{reserve_zone_idx:02d}" or battery < 95.0:
                     return True
 
-        waypoint_routes = {}
-        with open(self.waypoints_csv_path, mode="r", encoding="utf-8") as file:
-            for row in csv.DictReader(file):
-                ma_uav = row["ma_uav"]
-                waypoint_routes.setdefault(ma_uav, []).append(row)
-        if set(waypoint_routes) != expected_uavs or any(
-            len(route) != 6 for route in waypoint_routes.values()
-        ):
-            return True
-
-        for ma_uav, route in waypoint_routes.items():
-            uav_index = int(ma_uav.rsplit("_", 1)[-1]) - 1
+        for row in nodes:
+            if row["loai_tac_nhan"] != "MÁY_BAY":
+                continue
+            uav_index = int(row["ma_dinh_danh"].rsplit("_", 1)[-1]) - 1
             if uav_index < 21:
                 zone = self.patrol_zones["features"][uav_index // 3]
-                if any(
-                    not self._diem_nam_trong_vung(
-                        float(point["vi_do"]),
-                        float(point["kinh_do"]),
-                        zone
-                    )
-                    for point in route
+                if not self._diem_nam_trong_vung(
+                    float(row["vi_do"]),
+                    float(row["kinh_do"]),
+                    zone
                 ):
                     return True
         return False
@@ -218,9 +225,9 @@ class ScenarioManager:
     def _khoi_tao_heat_nodes(self, so_diem_moi_vung: int = 30) -> list[HeatNode]:
         """
         Dùng thuật toán Ray-Casting (Point-in-Polygon) để đọc các đa giác từ
-        `data/son_tra_zones.geojson` và rải các điểm nhiệt (HeatNode: lat, lon,
-        risk_score từ 0.05 đến 1.0, zone_id) nằm gọn bên trong ranh giới 7 vùng Z1-Z7,
-        tuyệt đối không bị tràn ra ngoài biển.
+        `data/son_tra_zones.geojson` và rải tự nhiên các điểm nhiệt (HeatNode: lat, lon,
+        risk_score từ 0.05 đến 1.0, zone_id) kèm nhiễu ngẫu nhiên (Random Noise)
+        nằm gọn bên trong ranh giới 7 vùng Z1-Z7, tuyệt đối không bị tràn ra ngoài biển.
         """
         danh_sach_heat_nodes: list[HeatNode] = []
         rng = random.Random(42)
@@ -242,45 +249,36 @@ class ScenarioManager:
             min_lat, max_lat = min(all_lats), max(all_lats)
             nodes_trong_vung: list[HeatNode] = []
 
-            # Bước 1: Rải lưới phân tầng (Stratified Grid + Jitter) kết hợp kiểm tra Ray-Casting có lề an toàn
-            grid_rows = 7
-            grid_cols = 6
-            step_lat = (max_lat - min_lat) / (grid_rows + 1)
-            step_lon = (max_lon - min_lon) / (grid_cols + 1)
-
-            for r in range(1, grid_rows + 1):
-                for c in range(1, grid_cols + 1):
-                    if len(nodes_trong_vung) >= so_diem_moi_vung:
-                        break
-                    cand_lat = min_lat + r * step_lat + rng.uniform(-0.35, 0.35) * step_lat
-                    cand_lon = min_lon + c * step_lon + rng.uniform(-0.35, 0.35) * step_lon
-                    if self._diem_nam_gon_trong_vung(cand_lat, cand_lon, zone, margin_deg=0.00035):
-                        nodes_trong_vung.append(
-                            HeatNode(
-                                lat=cand_lat,
-                                lon=cand_lon,
-                                risk_score=round(rng.uniform(0.05, 0.25), 4),
-                                zone_id=zone_id,
-                            )
-                        )
-
-            # Bước 2: Lấy mẫu bổ sung bằng Ray-Casting cho đủ số điểm nhiệt mỗi vùng
-            max_attempts = so_diem_moi_vung * 80
+            # Rải tự nhiên (Organic Random Sampling + Random Noise random.uniform(-0.001, 0.001))
+            # kết hợp khoảng cách tối thiểu tự nhiên để các điểm nhiệt phân bố tự nhiên như địa hình thực
+            max_attempts = so_diem_moi_vung * 150
             attempts = 0
             while len(nodes_trong_vung) < so_diem_moi_vung and attempts < max_attempts:
                 attempts += 1
-                cand_lat = rng.uniform(min_lat, max_lat)
-                cand_lon = rng.uniform(min_lon, max_lon)
+                base_lat = rng.uniform(min_lat, max_lat)
+                base_lon = rng.uniform(min_lon, max_lon)
+                cand_lat = base_lat + random.uniform(-0.001, 0.001)
+                cand_lon = base_lon + random.uniform(-0.001, 0.001)
+
                 margin = 0.00035 if attempts < max_attempts // 2 else 0.0
-                if self._diem_nam_gon_trong_vung(cand_lat, cand_lon, zone, margin_deg=margin):
-                    nodes_trong_vung.append(
-                        HeatNode(
-                            lat=cand_lat,
-                            lon=cand_lon,
-                            risk_score=round(rng.uniform(0.05, 0.25), 4),
-                            zone_id=zone_id,
-                        )
+                if not self._diem_nam_gon_trong_vung(cand_lat, cand_lon, zone, margin_deg=margin):
+                    continue
+
+                min_spacing_m = 135.0 if attempts < max_attempts // 3 else (75.0 if attempts < (2 * max_attempts) // 3 else 0.0)
+                if min_spacing_m > 0.0 and any(
+                    self._khoang_cach_mot_phang_m(cand_lat, cand_lon, existing.lat, existing.lon) < min_spacing_m
+                    for existing in nodes_trong_vung
+                ):
+                    continue
+
+                nodes_trong_vung.append(
+                    HeatNode(
+                        lat=cand_lat,
+                        lon=cand_lon,
+                        risk_score=round(rng.uniform(0.15, 0.42), 4),
+                        zone_id=zone_id,
                     )
+                )
 
             danh_sach_heat_nodes.extend(nodes_trong_vung)
 
@@ -306,14 +304,14 @@ class ScenarioManager:
         self,
         lat: float,
         lon: float,
-        radius_m: float = 800.0
+        radius_m: float = 800.0,
+        fire_id: Optional[str] = None
     ) -> list[HeatNode]:
         """
         Khi có sự kiện cháy tại (lat, lon):
+        - Đánh dấu đám cháy ở trạng thái "UNVERIFIED" (Trạm chưa biết).
         - Tìm các HeatNode xung quanh tâm cháy trong bán kính `radius_m` (mét)
           và đẩy `risk_score` lên 1.0 (tạo điểm nóng cực đại).
-        - Nếu bán kính nhỏ chưa chạm tới HeatNode nào nhưng điểm cháy nằm trong vùng,
-          đẩy HeatNode gần nhất lên 1.0 để luôn hình thành điểm nóng cực đại.
         - KHÔNG kích hoạt cơ chế đấu thầu của Trạm Kiểm Lâm.
         """
         fire_lat = float(lat)
@@ -325,6 +323,10 @@ class ScenarioManager:
             dist_m = self._khoang_cach_mot_phang_m(fire_lat, fire_lon, node.lat, node.lon)
             if dist_m <= ban_kinh_m:
                 node.risk_score = 1.0
+                node.locked_by = None
+                node.fire_center = (fire_lat, fire_lon)
+                node.fire_status = "UNVERIFIED"
+                node.fire_id = fire_id
                 affected_nodes.append(node)
 
         if not affected_nodes and self.heat_nodes:
@@ -334,9 +336,23 @@ class ScenarioManager:
             )
             if self._khoang_cach_mot_phang_m(fire_lat, fire_lon, nearest_node.lat, nearest_node.lon) <= max(ban_kinh_m * 2.5, 1500.0):
                 nearest_node.risk_score = 1.0
+                nearest_node.locked_by = None
+                nearest_node.fire_center = (fire_lat, fire_lon)
+                nearest_node.fire_status = "UNVERIFIED"
+                nearest_node.fire_id = fire_id
                 affected_nodes.append(nearest_node)
 
         return affected_nodes
+
+    def tinh_diem_rui_ro_nhiet_tb(self, zone_id: Optional[str] = None) -> float:
+        """Tính điểm rủi ro nhiệt trung bình của một phân khu hoặc toàn bộ 7 phân khu."""
+        nodes = [
+            n for n in self.heat_nodes
+            if zone_id is None or n.zone_id == zone_id
+        ]
+        if not nodes:
+            return 0.05
+        return round(sum(float(n.risk_score) for n in nodes) / len(nodes), 4)
 
     def xuat_heatmap(self) -> list[dict]:
         """Xuất danh sách điểm nhiệt dạng dict JSON phục vụ đồng bộ giao diện Web."""
@@ -800,20 +816,16 @@ class ScenarioManager:
                 else:
                     s_lat, s_lon, s_rad = c_lat, c_lon, default_r
 
-                waypoints = self.sinh_quy_dao_tuan_tra_vong_tron(
-                    s_lat,
-                    s_lon,
-                    altitude,
-                    ban_kinh_m=s_rad,
-                    so_diem_da_giac=6,
-                    van_toc_m_s=40.0,
-                    lech_pha_rad=0.0,
-                )
+                init_lat = float(s_lat) + random.uniform(-0.001, 0.001)
+                init_lon = float(s_lon) + random.uniform(-0.001, 0.001)
+                if not self._diem_nam_trong_vung(init_lat, init_lon, zone):
+                    init_lat, init_lon = float(s_lat), float(s_lon)
+
                 nodes_mac_dinh.append({
                     "ma_dinh_danh": ma_uav,
                     "loai_tac_nhan": "MÁY_BAY",
-                    "vi_do": waypoints[0]["vi_do"],
-                    "kinh_do": waypoints[0]["kinh_do"],
+                    "vi_do": round(init_lat, 5),
+                    "kinh_do": round(init_lon, 5),
                     "do_cao": altitude,
                     "pin_max_joule": 50000.0,
                     "pin_khoi_tao_pct": random.randint(*battery_ranges[sub_index]),
@@ -822,9 +834,14 @@ class ScenarioManager:
                     "tan_so_hz": 2400000000.0,
                     "bang_thong_hz": 20000000.0,
                 })
-                tat_ca_wp.extend(
-                    {"ma_uav": ma_uav, **waypoint} for waypoint in waypoints
-                )
+                tat_ca_wp.append({
+                    "ma_uav": ma_uav,
+                    "thu_tu_diem": 1,
+                    "vi_do": round(init_lat, 5),
+                    "kinh_do": round(init_lon, 5),
+                    "do_cao": altitude,
+                    "van_toc_m_s": 40.0,
+                })
 
         # 7 UAV dự phòng đỗ sẵn tại TRẠM_KIỂM_LÂM_SƠN_TRÀ, mỗi chiếc phụ trách 1 phân khu
         for zone_index, zone in enumerate(self.patrol_zones["features"]):
