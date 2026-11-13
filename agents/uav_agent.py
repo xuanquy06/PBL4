@@ -442,20 +442,34 @@ class UAVAgent(BaseAgent):
             if d_node <= 160.0 and node.risk_score < FIRE_RISK_THRESHOLD:
                 node.risk_score = 0.05
 
+        dong_doi_hoat_dong = [
+            other for other in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()
+            if (
+                other is not self
+                and other.loai_tac_nhan == "MÁY_BAY"
+                and other.trang_thai != AgentState.OFFLINE
+                and not getattr(other, "is_reserve", False)
+                and not other._dang_o_tai_tram()
+            )
+        ]
+
         fx_attr = 0.0
         fy_attr = 0.0
         ux_max = 0.0
         uy_max = 0.0
 
         if heat_nodes:
-            # 1. Lực hút từ các HeatNode trong phân khu (hướng mạnh nhất về tâm nhiệt đỏ có risk_score cao nhất)
-            node_max = max(
-                heat_nodes,
-                key=lambda n: (
-                    round(float(n.risk_score), 3),
-                    -self._khoang_cach_m(cur_lat, cur_lon, n.lat, n.lon)
+            def _hieu_dung_hap_dan(n):
+                dist_self = self._khoang_cach_m(cur_lat, cur_lon, n.lat, n.lon)
+                co_dong_doi_gan_hon = any(
+                    self._khoang_cach_m(other.lat, other.lon, n.lat, n.lon) < dist_self
+                    for other in dong_doi_hoat_dong
                 )
-            )
+                he_so_claiming = 0.2 if co_dong_doi_gan_hon else 1.0
+                return (round(float(n.risk_score) * he_so_claiming, 4), -dist_self)
+
+            # 1. Lực hút từ các HeatNode trong phân khu (Virtual Pheromone: giảm 80% nếu đồng đội gần hơn)
+            node_max = max(heat_nodes, key=_hieu_dung_hap_dan)
             if float(node_max.risk_score) >= FIRE_RISK_THRESHOLD:
                 fc = getattr(node_max, "fire_center", None) or (node_max.lat, node_max.lon)
                 pull_key = (round(float(fc[0]), 4), round(float(fc[1]), 4))
@@ -479,7 +493,12 @@ class UAVAgent(BaseAgent):
                 dist_m = math.hypot(dx_m, dy_m)
                 if dist_m < 1.0:
                     continue
-                weight = (float(node.risk_score) ** 2) / max(150.0, dist_m)
+                co_dong_doi_gan_hon = any(
+                    self._khoang_cach_m(other.lat, other.lon, node.lat, node.lon) < dist_m
+                    for other in dong_doi_hoat_dong
+                )
+                he_so_claiming = 0.2 if co_dong_doi_gan_hon else 1.0
+                weight = ((float(node.risk_score) ** 2) / max(150.0, dist_m)) * he_so_claiming
                 fx_attr += (dx_m / dist_m) * weight
                 fy_attr += (dy_m / dist_m) * weight
 
@@ -503,26 +522,26 @@ class UAVAgent(BaseAgent):
                 ux_max = dx_c / dist_c
                 uy_max = dy_c / dist_c
 
-        # Vector hướng về tâm nhiệt đỏ có risk_score cao nhất đóng vai trò dẫn đường chính
-        fx_total = ux_max * 2.4 + fx_attr * 0.8
-        fy_total = uy_max * 2.4 + fy_attr * 0.8
+        # Vector lực hút tổng hợp từ Heatmap chuẩn hóa về biên độ heat_force_mag
+        heat_force_mag = 3.2
+        fx_heat = ux_max * 2.4 + fx_attr * 0.8
+        fy_heat = uy_max * 2.4 + fy_attr * 0.8
+        mag_heat = math.hypot(fx_heat, fy_heat)
+        if mag_heat > 1e-9:
+            fx_heat = (fx_heat / mag_heat) * heat_force_mag
+            fy_heat = (fy_heat / mag_heat) * heat_force_mag
 
-        # 2. Lực đẩy giữa các UAV để tránh va chạm và phân tán đội hình trong vùng
-        for other in self.bo_dinh_tuyen.danh_sach_tac_nhan.values():
-            if (
-                other is self
-                or other.loai_tac_nhan != "MÁY_BAY"
-                or other.trang_thai == AgentState.OFFLINE
-                or other._dang_o_tai_tram()
-            ):
-                continue
+        fx_total = fx_heat
+        fy_total = fy_heat
+
+        # 2. Lực đẩy cực mạnh giữa các UAV khi khoảng cách < 1200m (>= 2.5x lực hút Heatmap)
+        for other in dong_doi_hoat_dong:
             rx_m = (cur_lon - float(other.toa_do["kinh_do"])) * met_tren_do_kinh
             ry_m = (cur_lat - float(other.toa_do["vi_do"])) * met_tren_do_vi
             d_uav = math.hypot(rx_m, ry_m)
-            if 0.1 < d_uav < 850.0:
-                rep_strength = 3.2 * ((850.0 - d_uav) / 850.0) ** 2
-                if d_uav < 320.0:
-                    rep_strength += 4.0 * ((320.0 - d_uav) / 320.0)
+            if 0.1 < d_uav < 1200.0:
+                ty_le_gan = (1200.0 - d_uav) / 1200.0
+                rep_strength = (2.5 * heat_force_mag) * (1.0 + 1.5 * ty_le_gan + 2.0 * (ty_le_gan ** 2))
                 fx_total += (rx_m / d_uav) * rep_strength
                 fy_total += (ry_m / d_uav) * rep_strength
 
@@ -537,26 +556,49 @@ class UAVAgent(BaseAgent):
         next_lat = cur_lat + (uy * quang_duong_m) / met_tren_do_vi
         next_lon = cur_lon + (ux * quang_duong_m) / met_tren_do_kinh
 
-        # 3. Tuân thủ biên giới đa giác phân khu Z_k bằng thuật toán Ray-Casting
+        # 3. Tuân thủ biên giới đa giác phân khu Z_k bằng thuật toán Ray-Casting (trượt biên mượt)
         zone_feat = self._lay_da_giac_vung_hien_tai()
         if zone_feat is not None and scenario is not None:
             dang_trong_vung = scenario._diem_nam_trong_vung(cur_lat, cur_lon, zone_feat)
-            nam_trong = (
-                scenario._diem_nam_gon_trong_vung(next_lat, next_lon, zone_feat, margin_deg=0.00025)
+            nam_trong_fn = (
+                (lambda la, lo: scenario._diem_nam_gon_trong_vung(la, lo, zone_feat, margin_deg=0.00025))
                 if hasattr(scenario, "_diem_nam_gon_trong_vung")
-                else scenario._diem_nam_trong_vung(next_lat, next_lon, zone_feat)
+                else (lambda la, lo: scenario._diem_nam_trong_vung(la, lo, zone_feat))
             )
-            if not nam_trong:
-                # Nếu đang ở ngoài vùng (vừa xuất kích từ Trạm) hoặc chạm biên đa giác, bẻ hướng về node_max trong vùng
-                next_lat = cur_lat + (uy_max * quang_duong_m) / met_tren_do_vi
-                next_lon = cur_lon + (ux_max * quang_duong_m) / met_tren_do_kinh
-                if dang_trong_vung and not scenario._diem_nam_trong_vung(next_lat, next_lon, zone_feat):
-                    c_lon, c_lat = zone_feat.get("properties", {}).get("patrol_center", [cur_lon, cur_lat])
-                    dx_c = (float(c_lon) - cur_lon) * met_tren_do_kinh
-                    dy_c = (float(c_lat) - cur_lat) * met_tren_do_vi
-                    d_c = max(1.0, math.hypot(dx_c, dy_c))
-                    next_lat = cur_lat + ((dy_c / d_c) * quang_duong_m) / met_tren_do_vi
-                    next_lon = cur_lon + ((dx_c / d_c) * quang_duong_m) / met_tren_do_kinh
+            if not nam_trong_fn(next_lat, next_lon):
+                c_lon, c_lat = zone_feat.get("properties", {}).get("patrol_center", [cur_lon, cur_lat])
+                dx_c = (float(c_lon) - cur_lon) * met_tren_do_kinh
+                dy_c = (float(c_lat) - cur_lat) * met_tren_do_vi
+                d_c = max(1.0, math.hypot(dx_c, dy_c))
+                ux_c, uy_c = dx_c / d_c, dy_c / d_c
+
+                ung_vien_huong = []
+                if dang_trong_vung:
+                    ung_vien_huong.extend([
+                        (ux, 0.0),
+                        (0.0, uy),
+                        (ux * 0.65 + ux_c * 0.35, uy * 0.65 + uy_c * 0.35),
+                        (ux * 0.30 + ux_c * 0.70, uy * 0.30 + uy_c * 0.70),
+                    ])
+                ung_vien_huong.extend([(ux_max, uy_max), (ux_c, uy_c)])
+
+                da_tim_duoc = False
+                for cx, cy in ung_vien_huong:
+                    cmag = math.hypot(cx, cy)
+                    if cmag <= 1e-6:
+                        continue
+                    cand_lat = cur_lat + ((cy / cmag) * quang_duong_m) / met_tren_do_vi
+                    cand_lon = cur_lon + ((cx / cmag) * quang_duong_m) / met_tren_do_kinh
+                    if dang_trong_vung and scenario._diem_nam_trong_vung(cand_lat, cand_lon, zone_feat):
+                        next_lat, next_lon = cand_lat, cand_lon
+                        da_tim_duoc = True
+                        break
+                if not da_tim_duoc:
+                    next_lat = cur_lat + (uy_max * quang_duong_m) / met_tren_do_vi
+                    next_lon = cur_lon + (ux_max * quang_duong_m) / met_tren_do_kinh
+                    if dang_trong_vung and not scenario._diem_nam_trong_vung(next_lat, next_lon, zone_feat):
+                        next_lat = cur_lat + (uy_c * quang_duong_m) / met_tren_do_vi
+                        next_lon = cur_lon + (ux_c * quang_duong_m) / met_tren_do_kinh
 
         self.lat = next_lat
         self.lon = next_lon

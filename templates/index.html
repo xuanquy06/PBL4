@@ -912,6 +912,24 @@
 
         const markersById = new Map();
         const scanCirclesById = new Map();
+        const uavLerpState = new Map();
+        const LERP_FACTOR = 0.15;
+        const SNAP_DISTANCE_M = 500.0;
+
+        function calcDistanceMeters(lat1, lng1, lat2, lng2) {
+            const dLat = (lat2 - lat1) * 111320.0;
+            const dLng = (lng2 - lng1) * 111320.0 * Math.cos((lat1 * Math.PI) / 180.0);
+            return Math.hypot(dLat, dLng);
+        }
+
+        function getNodeRenderPos(nodeOrId) {
+            const id = typeof nodeOrId === 'string' ? nodeOrId : (nodeOrId && nodeOrId.id);
+            const st = id ? uavLerpState.get(id) : null;
+            if (st) return [st.currentLat, st.currentLng];
+            if (nodeOrId && typeof nodeOrId === 'object') return [nodeOrId.vi_do, nodeOrId.kinh_do];
+            return null;
+        }
+
         const zonePolygons = new Map();
         const zoneBounds = new Map();
         let nodesCache = [];
@@ -1178,18 +1196,58 @@
 
             nodesCache.forEach(n => {
                 let m = markersById.get(n.id);
-                const pos = [n.vi_do, n.kinh_do];
+                const targetLat = Number(n.vi_do);
+                const targetLng = Number(n.kinh_do);
+                const isUav = n.loai === 'MÁY_BAY';
+                let lerpSt = uavLerpState.get(n.id);
+                let shouldSnap = false;
+
+                if (!lerpSt) {
+                    lerpSt = {
+                        currentLat: targetLat,
+                        currentLng: targetLng,
+                        targetLat: targetLat,
+                        targetLng: targetLng,
+                        isUav: isUav
+                    };
+                    uavLerpState.set(n.id, lerpSt);
+                    shouldSnap = true;
+                } else {
+                    const jumpDistM = calcDistanceMeters(lerpSt.currentLat, lerpSt.currentLng, targetLat, targetLng);
+                    if (!isUav || jumpDistM > SNAP_DISTANCE_M) {
+                        lerpSt.currentLat = targetLat;
+                        lerpSt.currentLng = targetLng;
+                        lerpSt.targetLat = targetLat;
+                        lerpSt.targetLng = targetLng;
+                        shouldSnap = true;
+                    } else {
+                        lerpSt.targetLat = targetLat;
+                        lerpSt.targetLng = targetLng;
+                    }
+                }
+
+                const renderPos = [lerpSt.currentLat, lerpSt.currentLng];
                 const label = n.id.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '').replace('VỆ_TINH_', '');
                 const stateKey = `${n.state}_${n.pin_pct < 25 ? 'crit' : (n.pin_pct < 50 ? 'low' : 'ok')}_${selectedNodeId === n.id}_${n.is_reserve ? 1 : 0}`;
                 if (!m) {
-                    m = L.marker(pos, { icon: createNodeIcon(n) }).addTo(nodeLayer);
+                    m = L.marker(renderPos, { icon: createNodeIcon(n) }).addTo(nodeLayer);
                     m._lastStateKey = stateKey;
+                    m.currentLat = lerpSt.currentLat;
+                    m.currentLng = lerpSt.currentLng;
+                    m.targetLat = lerpSt.targetLat;
+                    m.targetLng = lerpSt.targetLng;
                     m.bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -8], className: 'node-label' });
                     if (!showLabels) m.closeTooltip();
                     m.on('click', () => selectNode(n.id, false));
                     markersById.set(n.id, m);
                 } else {
-                    m.setLatLng(pos);
+                    m.targetLat = lerpSt.targetLat;
+                    m.targetLng = lerpSt.targetLng;
+                    if (shouldSnap) {
+                        m.currentLat = lerpSt.currentLat;
+                        m.currentLng = lerpSt.currentLng;
+                        m.setLatLng(renderPos);
+                    }
                     if (m._lastStateKey !== stateKey) {
                         m.setIcon(createNodeIcon(n));
                         m._lastStateKey = stateKey;
@@ -1197,7 +1255,7 @@
                 }
 
                 // Vẽ vòng tròn bán kính quét 600m quanh các UAV đang hoạt động trên không
-                if (n.loai === 'MÁY_BAY') {
+                if (isUav) {
                     const isActiveScanning = !n.is_reserve && n.state !== 'OFFLINE' && n.state !== 'CHARGING';
                     let sc = scanCirclesById.get(n.id);
                     if (isActiveScanning) {
@@ -1209,7 +1267,7 @@
                         const weight = isResponding || isSelected ? 1.6 : 1.0;
                         const scanRadius = Number(n.scan_radius_m || 600);
                         if (!sc) {
-                            sc = L.circle(pos, {
+                            sc = L.circle(renderPos, {
                                 radius: scanRadius,
                                 color: strokeColor,
                                 weight: weight,
@@ -1221,7 +1279,7 @@
                             }).addTo(scanRadiusLayer);
                             scanCirclesById.set(n.id, sc);
                         } else {
-                            sc.setLatLng(pos);
+                            if (shouldSnap) sc.setLatLng(renderPos);
                             sc.setRadius(scanRadius);
                             sc.setStyle({
                                 color: strokeColor,
@@ -1247,9 +1305,8 @@
                 const selNode = byId.get(selectedNodeId);
                 if (selNode && selNode.tuyen_ve_tram && selNode.tuyen_ve_tram.length >= 2) {
                     const coords = selNode.tuyen_ve_tram
-                        .map(id => byId.get(id))
-                        .filter(Boolean)
-                        .map(x => [x.vi_do, x.kinh_do]);
+                        .map(id => getNodeRenderPos(byId.get(id) || id))
+                        .filter(Boolean);
                     if (coords.length >= 2) {
                         L.polyline(coords, { color: '#38bdf8', weight: 3.5, opacity: 0.95 }).addTo(focusLayer);
                     }
@@ -1265,25 +1322,26 @@
                     if (n.is_reserve || (st && Math.hypot(n.vi_do - st.vi_do, n.kinh_do - st.kinh_do) < 0.001)) {
                         return;
                     }
+                    const nPos = getNodeRenderPos(n);
 
                     if (n.current_link === 'GROUND_LINK') {
                         const targetStation = byId.get(n.relay_target_id) || st;
                         if (targetStation) {
-                            L.polyline([[n.vi_do, n.kinh_do], [targetStation.vi_do, targetStation.kinh_do]], {
+                            L.polyline([nPos, getNodeRenderPos(targetStation)], {
                                 color: '#22c55e', weight: 1.4, opacity: 0.65
                             }).addTo(a2gLinkLayer);
                         }
                     } else if (n.current_link === 'FANET_RELAY' && n.relay_target_id) {
                         const rl = byId.get(n.relay_target_id);
                         if (rl) {
-                            L.polyline([[n.vi_do, n.kinh_do], [rl.vi_do, rl.kinh_do]], {
+                            L.polyline([nPos, getNodeRenderPos(rl)], {
                                 color: '#f59e0b', weight: 2.2, dashArray: '5,4', opacity: 0.88
                             }).addTo(fanetLinkLayer);
                         }
                     } else if (n.current_link === 'LEO_SATELLITE') {
                         const sat = byId.get(n.relay_target_id) || sats[0];
                         if (sat) {
-                            L.polyline([[n.vi_do, n.kinh_do], [sat.vi_do, sat.kinh_do]], {
+                            L.polyline([nPos, getNodeRenderPos(sat)], {
                                 color: '#a855f7', weight: 1.6, dashArray: '3,6', opacity: 0.8
                             }).addTo(leoLinkLayer);
                         }
@@ -1291,7 +1349,7 @@
                 } else if (n.loai && n.loai.includes('VỆ_TINH') && n.relay_target_id) {
                     const tgt = byId.get(n.relay_target_id);
                     if (tgt) {
-                        L.polyline([[n.vi_do, n.kinh_do], [tgt.vi_do, tgt.kinh_do]], {
+                        L.polyline([getNodeRenderPos(n), getNodeRenderPos(tgt)], {
                             color: '#06b6d4', weight: 1.5, dashArray: '4,5', opacity: 0.65
                         }).addTo(leoLinkLayer);
                     }
@@ -1448,7 +1506,7 @@
             const routesToDraw = hasActiveFireRoute ? activeFireRoutesCache : [data];
             routesToDraw.forEach(route => {
                 if (!route || !Array.isArray(route.lo_trinh_hop)) return;
-                const coords = route.lo_trinh_hop.map(id => byId.get(id)).filter(Boolean).map(n => [n.vi_do, n.kinh_do]);
+                const coords = route.lo_trinh_hop.map(id => getNodeRenderPos(byId.get(id) || id)).filter(Boolean);
                 if (coords.length >= 2) {
                     L.polyline(coords, {
                         color: '#38bdf8',
@@ -1678,7 +1736,40 @@
             };
         }
 
+        function animateUavLerp() {
+            uavLerpState.forEach((st, id) => {
+                if (!st.isUav) return;
+                const dLat = st.targetLat - st.currentLat;
+                const dLng = st.targetLng - st.currentLng;
+                if (Math.abs(dLat) <= 1e-7 && Math.abs(dLng) <= 1e-7) return;
+
+                if (calcDistanceMeters(st.currentLat, st.currentLng, st.targetLat, st.targetLng) > SNAP_DISTANCE_M) {
+                    st.currentLat = st.targetLat;
+                    st.currentLng = st.targetLng;
+                } else {
+                    st.currentLat += dLat * LERP_FACTOR;
+                    st.currentLng += dLng * LERP_FACTOR;
+                }
+
+                const newPos = [st.currentLat, st.currentLng];
+                const m = markersById.get(id);
+                if (m) {
+                    m.currentLat = st.currentLat;
+                    m.currentLng = st.currentLng;
+                    m.targetLat = st.targetLat;
+                    m.targetLng = st.targetLng;
+                    m.setLatLng(newPos);
+                }
+                const sc = scanCirclesById.get(id);
+                if (sc) {
+                    sc.setLatLng(newPos);
+                }
+            });
+            requestAnimationFrame(animateUavLerp);
+        }
+
         async function init() {
+            requestAnimationFrame(animateUavLerp);
             await fetchInitState();
             connectWebSocket();
         }
