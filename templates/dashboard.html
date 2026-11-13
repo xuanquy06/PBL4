@@ -540,7 +540,7 @@
             <div class="brand">
                 <div id="wsDot" class="ws-dot" title="Trạng thái kết nối thời gian thực"></div>
                 <span>Hệ thống MAS_SAGSINS</span>
-                <span class="brand-badge">28 UAV</span>
+                <span class="brand-badge">35 UAV</span>
             </div>
             <nav class="nav-tabs" aria-label="Điều hướng chính">
                 <a href="/" class="nav-link">
@@ -575,7 +575,7 @@
         <section class="kpi-row" aria-label="Chỉ số hiệu năng toàn mạng">
             <div class="kpi-card" style="--card-accent: var(--accent-green);">
                 <div class="k-label">UAV Kết nối</div>
-                <div id="kUav" class="k-val" style="color:var(--accent-green)">28 / 28</div>
+                <div id="kUav" class="k-val" style="color:var(--accent-green)">35 / 35</div>
                 <div id="kAvail" class="k-sub">Khả dụng: 100%</div>
             </div>
             <div class="kpi-card" style="--card-accent: var(--accent-blue);">
@@ -640,7 +640,7 @@
                 <div class="panel-head">
                     <span class="panel-head-title">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-                        <span>2. Ma trận 7 Phân khu &amp; 28 UAV</span>
+                        <span>2. Ma trận 7 Phân khu &amp; 35 UAV</span>
                     </span>
                     <span id="zoneSummary" style="font-family:var(--font-mono);color:var(--accent-green);font-size:10.5px;">7/7 An toàn</span>
                 </div>
@@ -669,7 +669,7 @@
 
         function updateKpis(net, conn) {
             if (conn) {
-                const total = conn.tong_uav || 28;
+                const total = conn.tong_uav || 35;
                 const a2g = conn.uav_ground_link || 0;
                 const fanet = conn.uav_fanet_relay || 0;
                 const leo = conn.uav_leo_satellite || 0;

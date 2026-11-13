@@ -309,10 +309,14 @@ class SimulationLoop:
         self.broker.thong_ke_toan_mang["nang_luong_tieu_hao_joule"] = tong_nang_luong
         self.scenario.ghi_log_lien_lac_lien_tuc(self._chi_so_lien_lac)
 
-        # Luân phiên gửi telemetry qua broker để đường truyền và QoS phản ánh cùng một mô hình.
+        # Luân phiên gửi telemetry qua broker cho các UAV đang bay trên không (bỏ qua UAV STANDBY/CHARGING tại trạm).
         uav_ung_vien = [
             u for u in cac_uav
-            if u.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY, AgentState.CHARGING)
+            if u.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY, AgentState.CHARGING, AgentState.IDLE)
+            and not u._dang_o_tai_tram()
+            and getattr(getattr(u, "uav_state", None), "value", getattr(u, "uav_state", None)) not in (
+                "STANDBY", "CHARGING", "OFFLINE"
+            )
         ]
         if uav_ung_vien:
             idx_chon = (self.so_buoc_thoi_gian // 5) % len(uav_ung_vien)
@@ -336,94 +340,46 @@ class SimulationLoop:
                 )
 
     async def _lap_lich_ban_giao_vung(self, cac_uav: list):
-        """Đồng bộ trạng thái bàn giao vùng giữa các UAV trong cùng phân khu."""
-        by_id = {uav.ma_dinh_danh: uav for uav in cac_uav}
-        for ma_chu_vung, ma_uav_nhan in list(self._ban_giao_vung_uav.items()):
-            chu_vung = by_id.get(ma_chu_vung)
-            uav_nhan = by_id.get(ma_uav_nhan)
-            if (
-                chu_vung
-                and uav_nhan
-                and chu_vung.trang_thai in (AgentState.PATROLLING, AgentState.RELAYING)
-                and chu_vung.phan_tram_pin >= 95.0
-            ):
-                uav_nhan.tra_lai_vung_tuan_tra(ma_chu_vung)
-                del self._ban_giao_vung_uav[ma_chu_vung]
-                await self.broker.gui_log_ra_web(
-                    "INFO", f"[LỊCH UAV] {ma_chu_vung} nhận lại tuyến tuần tra từ {ma_uav_nhan}."
-                )
+        """Đảm bảo mỗi phân khu Z1..Z7 luôn duy trì đủ 4 UAV hoạt động bằng cách đánh thức UAV STANDBY khi thiếu quân."""
+        active_air_states = ("PATROLLING", "RELAYING", "CONTAINING", "RESPONDING")
+        standby_pool = [
+            u for u in cac_uav
+            if u.trang_thai != AgentState.OFFLINE
+            and getattr(getattr(u, "uav_state", None), "value", getattr(u, "uav_state", None)) == "STANDBY"
+            and u._dang_o_tai_tram()
+            and u.phan_tram_pin >= 99.0
+        ]
 
-        for chu_vung in cac_uav:
-            if (
-                chu_vung is None
-                or chu_vung.ma_dinh_danh in self._ban_giao_vung_uav
-                or chu_vung.trang_thai not in (
-                    AgentState.RETURNING, AgentState.CHARGING, AgentState.LOW_BATTERY, AgentState.OFFLINE
+        for idx in range(1, 8):
+            zone_id = f"ZONE_{idx:02d}"
+            uavs_active_in_zone = [
+                u for u in cac_uav
+                if getattr(u, "zone_id", None) == zone_id
+                and u.trang_thai != AgentState.OFFLINE
+                and not u._dang_o_tai_tram()
+                and getattr(getattr(u, "uav_state", None), "value", getattr(u, "uav_state", None)) in active_air_states
+            ]
+            while len(uavs_active_in_zone) < 4 and standby_pool:
+                standby_pool.sort(
+                    key=lambda u: (0 if getattr(u, "zone_id", None) == zone_id else 1, u.ma_dinh_danh)
                 )
-                or not getattr(chu_vung, "zone_id", None)
-            ):
-                continue
-            # Kiểm tra xem đã có UAV cùng vùng nào tự trị nhận bàn giao qua gói tin YEU_CAU_BAN_GIAO_VUNG chưa
-            uav_da_nhan = next(
-                (
-                    uav for uav in cac_uav
-                    if chu_vung.ma_dinh_danh in getattr(uav, "_vung_tuan_tra_phu", {})
-                ),
-                None
-            )
-            if uav_da_nhan:
-                self._ban_giao_vung_uav[chu_vung.ma_dinh_danh] = uav_da_nhan.ma_dinh_danh
-                continue
-
-            # 1. Ưu tiên điều động UAV dự bị của phân khu đang đỗ tại trạm (pin >= 90%)
-            u_reserve = next(
-                (
-                    u for u in cac_uav
-                    if u.ma_dinh_danh != chu_vung.ma_dinh_danh
-                    and getattr(u, "zone_id", None) == getattr(chu_vung, "zone_id", None)
-                    and u._dang_o_tai_tram()
-                    and u.phan_tram_pin >= 90.0
-                ),
-                None
-            )
-            if u_reserve:
-                u_reserve.toa_do["do_cao"] = max(1000.0, float(chu_vung.toa_do.get("do_cao", 1000.0)))
+                u_reserve = standby_pool.pop(0)
+                u_reserve.zone_id = zone_id
+                u_reserve.toa_do["do_cao"] = 1000.0
                 u_reserve.toa_do["van_toc_m_s"] = 45.0
                 u_reserve.toa_do_tram_sac = None
+                u_reserve.toa_do_muc_tieu = None
+                u_reserve._yeu_cau_ban_giao_da_phat = False
+                u_reserve._da_goi_du_bi_thay_ca = False
+                u_reserve._waiting_for_relief_id = None
+                u_reserve._da_ban_giao_tai_cho = False
                 u_reserve.chuyen_trang_thai(AgentState.PATROLLING)
-                self._ban_giao_vung_uav[chu_vung.ma_dinh_danh] = u_reserve.ma_dinh_danh
+                uavs_active_in_zone.append(u_reserve)
                 await self.broker.gui_log_ra_web(
                     "INFO",
-                    f"🔄 [LUÂN PHIÊN TAG-TEAM] Điều động UAV dự phòng {u_reserve.ma_dinh_danh} (Pin {u_reserve.phan_tram_pin:.0f}%) "
-                    f"từ trạm ra thay thế {chu_vung.ma_dinh_danh} tại phân khu {chu_vung.zone_id}."
+                    f"[P2P_HANDOVER] 🔄 Điều động dự bị [{u_reserve.ma_dinh_danh}] (STANDBY 100%) "
+                    f"cất cánh bù quân số cho {zone_id} ({len(uavs_active_in_zone)}/4)."
                 )
-                continue
-
-            # 2. Nếu trạm chưa kịp sạc xong UAV dự phòng, bàn giao tạm thời cho UAV tuần tra cùng phân khu
-            cac_ung_vien = [
-                uav for uav in cac_uav
-                if uav.ma_dinh_danh != chu_vung.ma_dinh_danh
-                and getattr(uav, "zone_id", None) == getattr(chu_vung, "zone_id", None)
-                and uav.trang_thai in (AgentState.PATROLLING, AgentState.RELAYING)
-                and uav.phan_tram_pin >= 45.0
-                and not getattr(uav, "_tac_vu_su_co", None)
-            ]
-            if not cac_ung_vien:
-                continue
-            uav_nhan = min(
-                cac_ung_vien,
-                key=lambda uav: (
-                    len(getattr(uav, "_vung_tuan_tra_phu", {})) * 10000.0
-                    + self.physics.tinh_khoang_cach_3d(uav.toa_do, chu_vung.toa_do)
-                )
-            )
-            uav_nhan.nhan_vung_tuan_tra(chu_vung.ma_dinh_danh, getattr(chu_vung, "zone_id", None))
-            self._ban_giao_vung_uav[chu_vung.ma_dinh_danh] = uav_nhan.ma_dinh_danh
-            await self.broker.gui_log_ra_web(
-                "WARN",
-                f"[LỊCH UAV] {uav_nhan.ma_dinh_danh} tạm nhận tuyến tuần tra của "
-                f"{chu_vung.ma_dinh_danh} trong lúc UAV quay về sạc."
-            )
 
     async def xu_ly_uav_gap_su_co_nhiem_vu(self, ma_phien: str, uav_id: str, ly_do: str):
         """Giải phóng khóa mục tiêu khi UAV gặp sự cố giữa nhiệm vụ để đồng đội cùng phân khu tiếp ứng."""

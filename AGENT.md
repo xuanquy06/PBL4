@@ -27,8 +27,8 @@
   - Do NOT modify files without reading their current structure first.
 
 ## 5. Key Domain Entities (Mental Model)
-- **3-Tier SAGSINS:** Space (3 LEO Satellites) + Air (28 UAVs across 7 zones Z1–Z7) + Ground (Son Tra Ranger Station + WSN Heatmap grid).
-- **UAV States:** `PATROLLING`, `TARGET_LOCKED` / `CONTAINING` (circling active fire within `600m`), `RETURNING` (battery `< 25%` after P2P handover), `STANDBY` (hot-swap reserve), `OFFLINE` (crashed/simulated failure).
+- **3-Tier SAGSINS:** Space (3 LEO Satellites) + Air (35 UAVs: 28 Active across 7 zones Z1–Z7 [4 UAVs/zone] + 7 Standby reserve at Ranger Station) + Ground (Son Tra Ranger Station + WSN Heatmap grid).
+- **UAV States & Hot-Swap Lifecycle:** `PATROLLING` (45–100% staggered initial battery), `RESPONDING` / `CONTAINING` (circling active fire within `600m`), `RETURNING` (`< 25%` battery triggers P2P handover, wakes a `STANDBY` reserve UAV to replace it, and flies straight to `TRẠM_KIỂM_LÂM_SƠN_TRÀ`), `CHARGING` (`<= 100m` around Station, fast-recharging at `+15%/s -> 100%`), `STANDBY` (`100%` reserve ready at Station), `OFFLINE` (crashed/simulated failure).
 
 ## 6. Verification & Workflow Rules
 - Always inspect target files (`@filename`) before proposing or applying edits.

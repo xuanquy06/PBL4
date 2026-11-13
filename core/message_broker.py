@@ -168,6 +168,13 @@ class MessageBroker:
         cac_node_loai_tru = loai_tru or set()
         if bat_dau.loai_tac_nhan == "TRẠM_MẶT_ĐẤT":
             return {"nodes": [ma_bat_dau], "channels": [], "cost": 0.0, "energy_j": 0.0, "delay_ms": 0.0}
+        if bat_dau.loai_tac_nhan == "MÁY_BAY" and getattr(bat_dau, "_dang_o_tai_tram", lambda: False)():
+            tram_id = next(
+                (mid for mid, ag in self.danh_sach_tac_nhan.items() if ag.loai_tac_nhan == "TRẠM_MẶT_ĐẤT"),
+                None
+            )
+            if tram_id:
+                return {"nodes": [ma_bat_dau, tram_id], "channels": [], "cost": 0.0, "energy_j": 0.0, "delay_ms": 0.0}
 
         hang_doi: List[RouteState] = [(0.0, ma_bat_dau, (ma_bat_dau,), ())]
         chi_phi_tot_nhat = {ma_bat_dau: 0.0}
@@ -286,6 +293,23 @@ class MessageBroker:
                 "delay_ms": 0.0,
                 "capacity_mbps": float("inf")
             }
+        if bat_dau.loai_tac_nhan == "MÁY_BAY" and getattr(bat_dau, "_dang_o_tai_tram", lambda: False)():
+            tram_id = next(
+                (mid for mid, ag in self.danh_sach_tac_nhan.items() if ag.loai_tac_nhan == "TRẠM_MẶT_ĐẤT"),
+                None
+            )
+            if tram_id:
+                route_tram = {
+                    "nodes": [ma_bat_dau, tram_id],
+                    "channels": [],
+                    "cost": 0.0,
+                    "energy_j": 0.0,
+                    "delay_ms": 0.0,
+                    "capacity_mbps": float("inf")
+                }
+                bat_dau.tuyen_ve_tram_cuc_bo = list(route_tram["nodes"])
+                bat_dau.chi_phi_ve_tram_cuc_bo = 0.0
+                return route_tram
 
         excluded = loai_tru or set()
         now = time.time()
@@ -836,19 +860,20 @@ class MessageBroker:
         })
 
     def tinh_thong_ke_phu_song_vung(self) -> Dict[str, dict]:
-        """Tính trạng thái độ phủ sóng thực tế của 7 phân khu rừng Sơn Trà."""
+        """Tính trạng thái độ phủ sóng thực tế của 7 phân khu rừng Sơn Trà (định mức 4/4 UAV tuần tra/vùng)."""
         vung_stats: Dict[str, dict] = {}
         for idx in range(1, 8):
             zone_id = f"ZONE_{idx:02d}"
             vung_stats[zone_id] = {
                 "zone_id": zone_id,
-                "tong_uav": 0,
+                "tong_uav": 4,
                 "uav_hoat_dong": 0,
                 "uav_dang_sac_hoac_rtb": 0,
                 "uav_nhan_ban_giao": 0,
                 "trang_thai": "DU_PHU_SONG"
             }
 
+        active_air_states = ("PATROLLING", "RELAYING", "CONTAINING", "RESPONDING")
         for agent in self.danh_sach_tac_nhan.values():
             if agent.loai_tac_nhan != "MÁY_BAY":
                 continue
@@ -856,17 +881,24 @@ class MessageBroker:
             if not z_id or z_id not in vung_stats:
                 continue
             entry = vung_stats[z_id]
-            entry["tong_uav"] += 1
-            if agent.trang_thai.value in ("NGẮT_KẾT_NỐI", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC", "ĐANG_SẠC"):
+            fsm_val = getattr(getattr(agent, "trang_thai", None), "value", str(getattr(agent, "trang_thai", "")))
+            uav_state_obj = getattr(agent, "uav_state", None)
+            uav_state_val = str(getattr(uav_state_obj, "value", uav_state_obj or "")).upper()
+            at_station = callable(getattr(agent, "_dang_o_tai_tram", None)) and agent._dang_o_tai_tram()
+
+            if fsm_val == "NGẮT_KẾT_NỐI" or uav_state_val in ("RETURNING", "CHARGING", "OFFLINE") or fsm_val in (
+                "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC", "ĐANG_SẠC"
+            ):
                 entry["uav_dang_sac_hoac_rtb"] += 1
-            else:
+            elif uav_state_val in active_air_states and not at_station:
                 entry["uav_hoat_dong"] += 1
+
             vung_phu = getattr(agent, "_vung_tuan_tra_phu", None)
             if vung_phu:
                 entry["uav_nhan_ban_giao"] += len(vung_phu)
 
         for z_id, entry in vung_stats.items():
-            nguong_du = min(3, entry["tong_uav"])
+            nguong_du = 4
             if entry["uav_hoat_dong"] == 0:
                 entry["trang_thai"] = "MAT_PHU_SONG"
             elif entry["uav_hoat_dong"] < nguong_du:
