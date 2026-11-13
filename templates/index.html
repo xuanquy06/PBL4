@@ -898,7 +898,9 @@
             radius: 22,
             blur: Math.round(22 * 0.8),
             maxZoom: 15,
-            gradient: { 0.4: 'green', 0.65: 'yellow', 1.0: 'red' }
+            minOpacity: 0.0,
+            max: 1.8,
+            gradient: { 0.25: '#22c55e', 0.55: '#eab308', 0.80: '#f97316', 1.0: '#ef4444' }
         }).addTo(map);
         const scanRadiusLayer = L.layerGroup().addTo(map);
         const a2gLinkLayer = L.layerGroup();
@@ -988,14 +990,47 @@
             syncLayer('chkE2E', e2eLayer);
         }
 
+        function distMeters(lat1, lon1, lat2, lon2) {
+            const dLat = (lat2 - lat1) * 111320;
+            const dLon = (lon2 - lon1) * 111320 * Math.max(0.2, Math.cos(lat1 * Math.PI / 180));
+            return Math.hypot(dLat, dLon);
+        }
+
         function renderHeatmap(heatNodes) {
             if (!Array.isArray(heatNodes)) return;
             heatmapCache = heatNodes;
-            pendingHeatLatLngs = heatNodes.map(node => [
-                Number(node.lat),
-                Number(node.lon),
-                Math.max(0.05, Math.min(1.0, Number(node.risk_score ?? node.intensity ?? 0.05)))
-            ]);
+            const activeUavs = nodesCache.filter(n =>
+                n.loai === 'MÁY_BAY'
+                && !n.is_reserve
+                && n.state !== 'OFFLINE'
+                && n.state !== 'CHARGING'
+                && n.state !== 'STANDBY'
+            );
+
+            pendingHeatLatLngs = [];
+            for (const node of heatNodes) {
+                const nLat = Number(node.lat);
+                const nLon = Number(node.lon);
+                const risk = Math.max(0.05, Math.min(1.0, Number(node.risk_score ?? node.intensity ?? 0.05)));
+                const isRealFire = Boolean(node.fire_id || node.fire_status === 'BURNING' || node.fire_status === 'CONTAINING' || risk >= 0.85);
+                if (isRealFire) {
+                    pendingHeatLatLngs.push([nLat, nLon, 1.0]);
+                    continue;
+                }
+                if (risk <= 0.05) continue;
+
+                let dMin = Infinity;
+                for (const u of activeUavs) {
+                    const d = distMeters(nLat, nLon, Number(u.vi_do), Number(u.kinh_do));
+                    if (d < dMin) dMin = d;
+                }
+                // Làm mượt hiển thị tỏa từ tâm UAV (0m -> 0.15) ra mép bán kính quét (600m -> 1.0)
+                const radialFactor = dMin <= 600 ? (0.15 + 0.85 * (dMin / 600)) : 1.0;
+                const displayIntensity = (risk - 0.05) * radialFactor;
+                if (displayIntensity > 0.015) {
+                    pendingHeatLatLngs.push([nLat, nLon, displayIntensity]);
+                }
+            }
 
             if (isMapInteracting) return;
 
@@ -1624,8 +1659,8 @@
                 if (!res.ok) return;
                 const d = await res.json();
                 drawZones(d.patrol_zones);
-                renderHeatmap(d.heatmap || d.heatmap_nodes || []);
                 updateNodesAndLinks(d.nodes);
+                renderHeatmap(d.heatmap || d.heatmap_nodes || []);
                 syncActiveFires(d.active_fires || []);
                 updateZoneStrip(d.zone_coverage);
                 updateKpis(d.network_metrics, d.connectivity_metrics);
@@ -1652,10 +1687,10 @@
             ws.onmessage = (ev) => {
                 const msg = JSON.parse(ev.data);
                 if (msg.type === 'WORLD_STATE') {
+                    updateNodesAndLinks(msg.data.nodes);
                     if (msg.data.heatmap || msg.data.heatmap_nodes) {
                         renderHeatmap(msg.data.heatmap || msg.data.heatmap_nodes);
                     }
-                    updateNodesAndLinks(msg.data.nodes);
                     if (Array.isArray(msg.data.active_fires)) {
                         syncActiveFires(msg.data.active_fires);
                     }

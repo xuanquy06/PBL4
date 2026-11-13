@@ -195,34 +195,40 @@ class SimulationLoop:
             self.so_buoc_thoi_gian += 1
             dt_mo_phong = dt_thuc * self.time_scale
 
-            cac_tac_vu_vat_ly = [
-                agent.cap_nhat_vat_ly(dt_mo_phong)
-                for agent in self.broker.danh_sach_tac_nhan.values()
-            ]
-            await asyncio.gather(*cac_tac_vu_vat_ly)
+            try:
+                cac_tac_vu_vat_ly = [
+                    agent.cap_nhat_vat_ly(dt_mo_phong)
+                    for agent in self.broker.danh_sach_tac_nhan.values()
+                ]
+                results = await asyncio.gather(*cac_tac_vu_vat_ly, return_exceptions=True)
+                for res in results:
+                    if isinstance(res, Exception):
+                        print(f"[SIMULATION WARN] Lỗi cập nhật tác nhân: {res}")
 
-            # Cập nhật Heatmap sau khi UAV cập nhật tọa độ: làm mát <= 600m và tăng staleness 0.01/s ngoài tầm quét
-            self.update_heatmap(dt_mo_phong)
+                # Cập nhật Heatmap sau khi UAV cập nhật tọa độ: làm mát <= 600m và tăng staleness 0.01/s ngoài tầm quét
+                self.update_heatmap(dt_mo_phong)
 
-            # Watchdog kiểm tra các nhiệm vụ cháy: nếu UAV trúng thầu gặp nạn/OFFLINE thì kích hoạt tái đấu thầu ngay
-            for ma_phien, mission in list(self._active_fire_missions.items()):
-                wid = mission.get("winner_id")
-                w_agent = self.broker.danh_sach_tac_nhan.get(wid)
-                if w_agent and (w_agent.trang_thai == AgentState.OFFLINE or w_agent.phan_tram_pin <= 5.0):
-                    if wid not in mission.get("failed_uavs", set()):
-                        asyncio.create_task(self.xu_ly_uav_gap_su_co_nhiem_vu(ma_phien, wid, "UAV sập nguồn/OFFLINE"))
+                # Watchdog kiểm tra các nhiệm vụ cháy: nếu UAV trúng thầu gặp nạn/OFFLINE thì kích hoạt tái đấu thầu ngay
+                for ma_phien, mission in list(self._active_fire_missions.items()):
+                    wid = mission.get("winner_id")
+                    w_agent = self.broker.danh_sach_tac_nhan.get(wid)
+                    if w_agent and (w_agent.trang_thai == AgentState.OFFLINE or w_agent.phan_tram_pin <= 5.0):
+                        if wid not in mission.get("failed_uavs", set()):
+                            asyncio.create_task(self.xu_ly_uav_gap_su_co_nhiem_vu(ma_phien, wid, "UAV sập nguồn/OFFLINE"))
 
-            self._thoi_gian_tich_luy_kiem_tra_lien_lac += dt_mo_phong
-            if self._thoi_gian_tich_luy_kiem_tra_lien_lac >= 5.0:
-                await self._kiem_tra_lien_lac_lien_tuc(self._thoi_gian_tich_luy_kiem_tra_lien_lac)
-                self._thoi_gian_tich_luy_kiem_tra_lien_lac = 0.0
+                self._thoi_gian_tich_luy_kiem_tra_lien_lac += dt_mo_phong
+                if self._thoi_gian_tich_luy_kiem_tra_lien_lac >= 5.0:
+                    await self._kiem_tra_lien_lac_lien_tuc(self._thoi_gian_tich_luy_kiem_tra_lien_lac)
+                    self._thoi_gian_tich_luy_kiem_tra_lien_lac = 0.0
 
-            heatmap_payload = (
-                self.scenario.xuat_heatmap()
-                if hasattr(self.scenario, "xuat_heatmap")
-                else []
-            )
-            await self.broker.dong_bo_trang_thai_toan_mang(heatmap_nodes=heatmap_payload)
+                heatmap_payload = (
+                    self.scenario.xuat_heatmap()
+                    if hasattr(self.scenario, "xuat_heatmap")
+                    else []
+                )
+                await self.broker.dong_bo_trang_thai_toan_mang(heatmap_nodes=heatmap_payload)
+            except Exception as exc:
+                print(f"[SIMULATION ERROR] Lỗi tại bước {self.so_buoc_thoi_gian}: {exc}")
 
     async def _kiem_tra_lien_lac_lien_tuc(self, khoang_thoi_gian_giay: float):
         """Đo định kỳ khả năng mỗi UAV tạo được tuyến tới ít nhất một trạm mặt đất."""

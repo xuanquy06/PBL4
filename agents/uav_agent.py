@@ -8,6 +8,8 @@ from typing import Dict, Optional
 from core.base_agent import AgentState, BaseAgent
 
 LOW_BATTERY_THRESHOLD = 25.0
+SCAN_RADIUS_M = 600.0
+COOLING_RADIUS_M = 600.0
 FIRE_DETECTION_RADIUS_M = 600.0
 FIRE_RISK_THRESHOLD = 0.85
 FIRE_CONTAINMENT_RADIUS_M = 130.0
@@ -427,20 +429,7 @@ class UAVAgent(BaseAgent):
         met_tren_do_vi = 111320.0
         met_tren_do_kinh = 111320.0 * max(0.2, math.cos(math.radians(cur_lat)))
 
-        # Làm mát các HeatNode không phải active_fire trong toàn tầm quét cảm biến (Cooling Radius = 600m)
-        scenario = getattr(self.bo_dinh_tuyen, "scenario", None)
-        if getattr(self, "uav_state", None) in (UAVState.PATROLLING, UAVState.CONTAINING):
-            for node in all_heat_nodes:
-                if (
-                    getattr(node, "is_fire_hotspot", False)
-                    or getattr(node, "fire_center", False)
-                    or getattr(node, "fire_status", "") in ("BURNING", "CONTAINING")
-                    or (scenario and hasattr(scenario, "is_in_active_fire") and scenario.is_in_active_fire(node.lat, node.lon, node=node))
-                ):
-                    continue
-                d_node = self._khoang_cach_m(cur_lat, cur_lon, node.lat, node.lon)
-                if d_node <= SCAN_RADIUS_M and node.risk_score < FIRE_RISK_THRESHOLD:
-                    node.risk_score = 0.05
+        # Việc làm mát HeatNode được ScenarioManager.update_heatmap xử lý tập trung theo tốc độ mượt 0.35/s tỏa từ tâm UAV ra 600m.
 
         dong_doi_hoat_dong = [
             other for other in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()
@@ -534,22 +523,41 @@ class UAVAgent(BaseAgent):
         fx_total = fx_heat
         fy_total = fy_heat
 
-        # 2. Lực đẩy cực mạnh giữa các UAV khi khoảng cách < 1200m (>= 2.5x lực hút Heatmap)
+        # 2. Lực đẩy mượt giữa các UAV (< 1200m cùng vùng, < 650m khác vùng) kèm trượt tiếp tuyến chống khựng
         for other in dong_doi_hoat_dong:
             rx_m = (cur_lon - float(other.toa_do["kinh_do"])) * met_tren_do_kinh
             ry_m = (cur_lat - float(other.toa_do["vi_do"])) * met_tren_do_vi
             d_uav = math.hypot(rx_m, ry_m)
-            if 0.1 < d_uav < 1200.0:
+            cung_vung = (getattr(other, "zone_id", None) == self.zone_id)
+            if cung_vung and 0.1 < d_uav < 1200.0:
                 ty_le_gan = (1200.0 - d_uav) / 1200.0
-                rep_strength = (2.5 * heat_force_mag) * (1.0 + 1.5 * ty_le_gan + 2.0 * (ty_le_gan ** 2))
-                fx_total += (rx_m / d_uav) * rep_strength
-                fy_total += (ry_m / d_uav) * rep_strength
+                rep_strength = (2.5 * heat_force_mag) * (ty_le_gan ** 1.15)
+                ux_r, uy_r = rx_m / d_uav, ry_m / d_uav
+                fx_total += (ux_r - 0.32 * uy_r) * rep_strength
+                fy_total += (uy_r + 0.32 * ux_r) * rep_strength
+            elif not cung_vung and 0.1 < d_uav < 650.0:
+                ty_le_gan = (650.0 - d_uav) / 650.0
+                rep_strength = (0.85 * heat_force_mag) * ty_le_gan
+                ux_r, uy_r = rx_m / d_uav, ry_m / d_uav
+                fx_total += (ux_r - 0.32 * uy_r) * rep_strength
+                fy_total += (uy_r + 0.32 * ux_r) * rep_strength
 
         mag_total = math.hypot(fx_total, fy_total)
         if mag_total <= 1e-9:
             ux, uy = ux_max, uy_max
         else:
             ux, uy = fx_total / mag_total, fy_total / mag_total
+
+        # Quán tính hướng bay mượt (0.30 hướng cũ + 0.70 hướng mới) để không đổi hướng giật cục ở mép 600m
+        ux_truoc = getattr(self, "_ux_truoc", None)
+        uy_truoc = getattr(self, "_uy_truoc", None)
+        if ux_truoc is not None and uy_truoc is not None:
+            ux_smooth = 0.30 * ux_truoc + 0.70 * ux
+            uy_smooth = 0.30 * uy_truoc + 0.70 * uy
+            mag_smooth = math.hypot(ux_smooth, uy_smooth)
+            if mag_smooth > 1e-9:
+                ux, uy = ux_smooth / mag_smooth, uy_smooth / mag_smooth
+        self._ux_truoc, self._uy_truoc = ux, uy
 
         van_toc_m_s = 40.0
         quang_duong_m = van_toc_m_s * dt_giay

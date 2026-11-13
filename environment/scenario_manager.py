@@ -75,6 +75,7 @@ class ScenarioManager:
     4. Quản lý đọc/ghi cấu hình mạng và xuất dữ liệu thực nghiệm QoS ra file CSV.
     """
     COOLING_RADIUS_M = 600.0
+    COOLING_RATE_PER_SEC = 0.35
     STALENESS_RATE_PER_SEC = 0.01
     MAX_STALENESS_RISK = 0.65
     MIN_SAFE_RISK = 0.05
@@ -114,8 +115,8 @@ class ScenarioManager:
         return zones
 
     def _kich_ban_can_tai_sinh(self) -> bool:
-        """Nhận diện bộ CSV cũ hoặc thiếu tuyến của đội UAV 28 chiếc (21 tuần tra + 7 dự phòng)."""
-        expected_uavs = {f"MÁY_BAY_UAV_{index:02d}" for index in range(1, 29)}
+        """Nhận diện bộ CSV cũ hoặc thiếu tuyến của đội UAV 35 chiếc (28 tuần tra + 7 dự bị)."""
+        expected_uavs = {f"MÁY_BAY_UAV_{index:02d}" for index in range(1, 36)}
         if not os.path.exists(self.nodes_csv_path) or not os.path.exists(self.waypoints_csv_path):
             return True
 
@@ -132,7 +133,9 @@ class ScenarioManager:
         if uavs != expected_uavs or len(stations) != 1:
             return True
 
-        battery_ranges = ((95.0, 100.0), (70.0, 85.0), (50.0, 65.0))
+        battery_ranges = ((90.0, 100.0), (75.0, 86.0), (60.0, 72.0), (45.0, 56.0))
+        station_lat = float(stations[0]["vi_do"])
+        station_lon = float(stations[0]["kinh_do"])
         for row in nodes:
             if row["loai_tac_nhan"] != "MÁY_BAY":
                 continue
@@ -141,24 +144,27 @@ class ScenarioManager:
                 battery = float(row.get("pin_khoi_tao_pct", ""))
             except ValueError:
                 return True
-            if uav_index < 21:
-                battery_min, battery_max = battery_ranges[uav_index % 3]
+            if uav_index < 28:
+                battery_min, battery_max = battery_ranges[uav_index % 4]
                 if (
-                    row.get("zone_id") != f"ZONE_{uav_index // 3 + 1:02d}"
+                    row.get("zone_id") != f"ZONE_{uav_index // 4 + 1:02d}"
                     or not (battery_min <= battery <= battery_max)
                 ):
                     return True
             else:
-                reserve_zone_idx = uav_index - 21 + 1
-                if row.get("zone_id") != f"ZONE_{reserve_zone_idx:02d}" or battery < 95.0:
+                reserve_zone_idx = uav_index - 28 + 1
+                dist_station = self._khoang_cach_mot_phang_m(
+                    float(row["vi_do"]), float(row["kinh_do"]), station_lat, station_lon
+                )
+                if row.get("zone_id") != f"ZONE_{reserve_zone_idx:02d}" or battery < 99.0 or dist_station > 100.0:
                     return True
 
         for row in nodes:
             if row["loai_tac_nhan"] != "MÁY_BAY":
                 continue
             uav_index = int(row["ma_dinh_danh"].rsplit("_", 1)[-1]) - 1
-            if uav_index < 21:
-                zone = self.patrol_zones["features"][uav_index // 3]
+            if uav_index < 28:
+                zone = self.patrol_zones["features"][uav_index // 4]
                 if not self._diem_nam_trong_vung(
                     float(row["vi_do"]),
                     float(row["kinh_do"]),
@@ -282,7 +288,7 @@ class ScenarioManager:
                     HeatNode(
                         lat=cand_lat,
                         lon=cand_lon,
-                        risk_score=round(rng.uniform(0.15, 0.42), 4),
+                        risk_score=round(rng.uniform(0.05, 0.22), 4),
                         zone_id=zone_id,
                     )
                 )
@@ -337,7 +343,8 @@ class ScenarioManager:
 
     @staticmethod
     def _lay_toa_do_uav_dang_hoat_dong(active_uavs: Optional[list]) -> list[tuple[float, float]]:
-        """Lấy tọa độ (lat, lon) của các UAV đang bay giám sát (PATROLLING hoặc CONTAINING)."""
+        """Lấy tọa độ (lat, lon) của các UAV đang bay trên không (PATROLLING, RELAYING, CONTAINING, RESPONDING)."""
+        active_states = ("PATROLLING", "RELAYING", "CONTAINING", "RESPONDING")
         coords: list[tuple[float, float]] = []
         if not active_uavs:
             return coords
@@ -345,8 +352,10 @@ class ScenarioManager:
             if isinstance(uav, dict):
                 if uav.get("loai") not in (None, "MÁY_BAY", "UAV"):
                     continue
+                if uav.get("is_reserve"):
+                    continue
                 state = str(uav.get("state", "")).upper()
-                if state not in ("PATROLLING", "CONTAINING"):
+                if state not in active_states:
                     continue
                 lat = uav.get("vi_do", uav.get("lat"))
                 lon = uav.get("kinh_do", uav.get("lon"))
@@ -356,12 +365,14 @@ class ScenarioManager:
 
             if getattr(uav, "loai_tac_nhan", None) != "MÁY_BAY":
                 continue
+            if callable(getattr(uav, "_dang_o_tai_tram", None)) and uav._dang_o_tai_tram():
+                continue
             fsm_val = getattr(getattr(uav, "trang_thai", None), "value", str(getattr(uav, "trang_thai", "")))
             uav_state_obj = getattr(uav, "uav_state", None)
             uav_state_val = str(getattr(uav_state_obj, "value", uav_state_obj or "")).upper()
             if fsm_val in ("NGẮT_KẾT_NỐI", "CHỜ_DỰ_BỊ", "ĐANG_SẠC", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC"):
                 continue
-            if uav_state_val not in ("PATROLLING", "CONTAINING"):
+            if uav_state_val not in active_states:
                 continue
             toa_do = getattr(uav, "toa_do", None) or {}
             lat = getattr(uav, "lat", toa_do.get("vi_do"))
@@ -373,8 +384,9 @@ class ScenarioManager:
     def update_heatmap(self, dt: float, active_uavs: Optional[list] = None) -> list[HeatNode]:
         """
         Cập nhật Bản đồ độ cũ dữ liệu / Độ bất định giám sát (Uncertainty / Staleness Map):
-        - Cooling Radius = 600m: HeatNode nằm trong bán kính <= 600m của ít nhất 1 UAV đang
-          PATROLLING hoặc CONTAINING (không phải active_fire) lập tức reset risk_score = 0.05.
+        - Cooling Radius = 600m, Cooling Rate = 0.35/s: HeatNode trong bán kính <= 600m của UAV
+          đang hoạt động giảm dần risk_score theo hiệu ứng làm mượt tỏa từ tâm UAV (nhanh hơn ở tâm,
+          chậm dần ra biên 600m, mất ~1.5-2s để dọn sạch từ 0.65 về 0.05), giúp UAV lướt mượt qua tâm.
         - Staleness Rate = 0.01/s: HeatNode ngoài tầm quét (> 600m) tăng dần 0.01/giây,
           khóa trần tối đa ở 0.65 (chỉ active_fires mới giữ mức 1.0).
         """
@@ -389,12 +401,23 @@ class ScenarioManager:
             if self.is_in_active_fire(node.lat, node.lon, node=node):
                 continue
 
-            trong_tam_quet = any(
-                self._khoang_cach_mot_phang_m(u_lat, u_lon, node.lat, node.lon) <= self.COOLING_RADIUS_M
-                for u_lat, u_lon in uav_coords
+            d_min = min(
+                (
+                    self._khoang_cach_mot_phang_m(u_lat, u_lon, node.lat, node.lon)
+                    for u_lat, u_lon in uav_coords
+                ),
+                default=float("inf"),
             )
-            if trong_tam_quet:
-                node.risk_score = self.MIN_SAFE_RISK
+            if d_min <= self.COOLING_RADIUS_M:
+                if dt_sec > 0.0 and float(node.risk_score) > self.MIN_SAFE_RISK:
+                    # Tỏa mượt từ tâm UAV (d=0m -> 1.25x) ra mép bán kính quét (d=600m -> 0.75x)
+                    ty_le_tam = max(0.0, min(1.0, d_min / self.COOLING_RADIUS_M))
+                    he_so_toa_tam = 1.25 - 0.50 * ty_le_tam
+                    delta_cool = self.COOLING_RATE_PER_SEC * he_so_toa_tam * dt_sec
+                    node.risk_score = round(
+                        max(self.MIN_SAFE_RISK, float(node.risk_score) - delta_cool),
+                        4,
+                    )
             elif dt_sec > 0.0 and float(node.risk_score) < self.MAX_STALENESS_RISK:
                 delta_risk = self.STALENESS_RATE_PER_SEC * dt_sec
                 node.risk_score = round(
@@ -781,17 +804,17 @@ class ScenarioManager:
             ]
             uav_theo_vung = {}
             for index, uav in enumerate(cac_uav):
-                if index < 21:
-                    ma_vung = f"ZONE_{index // 3 + 1:02d}"
+                if index < 28:
+                    ma_vung = f"ZONE_{index // 4 + 1:02d}"
                 else:
-                    ma_vung = f"ZONE_{index - 21 + 1:02d}"
+                    ma_vung = f"ZONE_{index - 28 + 1:02d}"
                 uav_theo_vung.setdefault(ma_vung, []).append(uav["ma_dinh_danh"])
             return {
                 "thuat_toan": "Phân cụm tuần tra cố định theo ranh giới Sơn Trà",
                 "so_uav": len(cac_uav),
                 "so_tram": 1,
                 "so_vung_geofence": len(self.patrol_zones["features"]),
-                "uav_moi_vung": 3,
+                "uav_moi_vung": 4,
                 "uav_theo_vung": uav_theo_vung,
                 "phan_bo_theo_tram": {tram["ma_dinh_danh"]: len(cac_uav)},
                 "tram_cua_uav": {
@@ -934,8 +957,8 @@ class ScenarioManager:
         return 6371000.0 * 2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a))
 
     def _sinh_du_lieu_csv_mac_dinh(self):
-        """Sinh một trạm, 21 UAV tuần tra ba chiếc/vùng (3 vòng Bắc-Trung-Nam riêng biệt) và 7 UAV dự phòng tại trạm."""
-        print("[SCENARIO] Đang khởi tạo 28 UAV (21 tuần tra 3 dải + 7 dự phòng tại trạm)...")
+        """Sinh một trạm, 28 UAV tuần tra 4 chiếc/vùng (pin lệch pha 45-100%) và 7 UAV dự bị tại trạm."""
+        print("[SCENARIO] Đang khởi tạo 35 UAV (28 tuần tra 4 chiếc/vùng + 7 dự bị tại trạm)...")
         nodes_mac_dinh = [{
             "ma_dinh_danh": "TRẠM_KIỂM_LÂM_SƠN_TRÀ",
             "loai_tac_nhan": "TRẠM_MẶT_ĐẤT",
@@ -948,7 +971,7 @@ class ScenarioManager:
             "bang_thong_hz": 50000000.0,
         }]
         tat_ca_wp = []
-        battery_ranges = ((95, 100), (75, 85), (55, 65))
+        battery_ranges = ((90, 100), (75, 86), (60, 72), (45, 56))
 
         for zone_index, zone in enumerate(self.patrol_zones["features"]):
             zid = zone["properties"]["zone_id"]
@@ -956,20 +979,22 @@ class ScenarioManager:
             c_lon, c_lat = zone["properties"]["patrol_center"]
             default_r = float(zone["properties"].get("patrol_radius_m", 400.0))
 
-            for sub_index in range(3):
-                uav_index = zone_index * 3 + sub_index + 1
-                altitude = 1000.0 + sub_index * 150.0
+            for sub_index in range(4):
+                uav_index = zone_index * 4 + sub_index + 1
+                altitude = 1000.0 + sub_index * 120.0
                 ma_uav = f"MÁY_BAY_UAV_{uav_index:02d}"
 
-                if subcenters and len(subcenters) > sub_index:
-                    s_lat, s_lon, s_rad = subcenters[sub_index]
+                if subcenters and sub_index < len(subcenters):
+                    s_lat, s_lon, _ = subcenters[sub_index]
+                    init_lat = float(s_lat) + random.uniform(-0.001, 0.001)
+                    init_lon = float(s_lon) + random.uniform(-0.001, 0.001)
+                    if not self._diem_nam_trong_vung(init_lat, init_lon, zone):
+                        init_lat, init_lon = float(s_lat), float(s_lon)
                 else:
-                    s_lat, s_lon, s_rad = c_lat, c_lon, default_r
-
-                init_lat = float(s_lat) + random.uniform(-0.001, 0.001)
-                init_lon = float(s_lon) + random.uniform(-0.001, 0.001)
-                if not self._diem_nam_trong_vung(init_lat, init_lon, zone):
-                    init_lat, init_lon = float(s_lat), float(s_lon)
+                    init_lat = float(c_lat) + random.uniform(-0.0018, 0.0018)
+                    init_lon = float(c_lon) + random.uniform(-0.0018, 0.0018)
+                    if not self._diem_nam_trong_vung(init_lat, init_lon, zone):
+                        init_lat, init_lon = float(c_lat), float(c_lon)
 
                 nodes_mac_dinh.append({
                     "ma_dinh_danh": ma_uav,
@@ -993,9 +1018,9 @@ class ScenarioManager:
                     "van_toc_m_s": 40.0,
                 })
 
-        # 7 UAV dự phòng đỗ sẵn tại TRẠM_KIỂM_LÂM_SƠN_TRÀ, mỗi chiếc phụ trách 1 phân khu
+        # 7 UAV dự bị (UAV_29..UAV_35) đỗ sẵn tại TRẠM_KIỂM_LÂM_SƠN_TRÀ ở trạng thái STANDBY (pin 100%)
         for zone_index, zone in enumerate(self.patrol_zones["features"]):
-            reserve_idx = 21 + zone_index + 1
+            reserve_idx = 28 + zone_index + 1
             ma_uav = f"MÁY_BAY_UAV_{reserve_idx:02d}"
             zid = zone["properties"]["zone_id"]
             nodes_mac_dinh.append({
