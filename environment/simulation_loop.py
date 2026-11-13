@@ -594,6 +594,48 @@ class SimulationLoop:
             "thong_bao": thong_bao_kq,
         }
 
+    async def xoa_tat_ca_dam_chay(self) -> dict:
+        """Xóa toàn bộ đám cháy active_fires theo yêu cầu người dùng và giải phóng các UAV đang khoanh vùng."""
+        so_dam_chay = 0
+        if hasattr(self.scenario, "clear_active_fires"):
+            so_dam_chay = int(self.scenario.clear_active_fires())
+        elif hasattr(self.scenario, "active_fires"):
+            so_dam_chay = len(self.scenario.active_fires)
+            self.scenario.active_fires.clear()
+
+        self.broker.muc_tieu_chay_da_khoa.clear()
+        self.broker.tuyen_e2e_chay_hien_tai = None
+        self.broker.danh_sach_tuyen_e2e_chay = []
+        if isinstance(self.broker.tuyen_e2e_gan_nhat, dict) and self.broker.tuyen_e2e_gan_nhat.get("is_fire_route"):
+            self.broker.tuyen_e2e_gan_nhat = None
+
+        for agent in self.broker.danh_sach_tac_nhan.values():
+            if getattr(agent, "loai_tac_nhan", None) != "MÁY_BAY":
+                continue
+            had_containment = getattr(agent, "_tam_khoanh_vung_chay", None) is not None
+            uav_state_val = getattr(getattr(agent, "uav_state", None), "value", getattr(agent, "uav_state", None))
+            if hasattr(agent, "_ket_thuc_khoanh_vung_chay"):
+                agent._ket_thuc_khoanh_vung_chay()
+            if hasattr(agent, "_su_co_da_nho_dong_doi"):
+                agent._su_co_da_nho_dong_doi.clear()
+            if had_containment or uav_state_val in ("CONTAINING", "RESPONDING"):
+                if agent.trang_thai.value not in ("NGẮT_KẾT_NỐI", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC", "ĐANG_SẠC"):
+                    agent.chuyen_trang_thai(type(agent.trang_thai).PATROLLING)
+                    if hasattr(agent, "uav_state"):
+                        agent.uav_state = type(agent.uav_state).PATROLLING
+
+        if hasattr(self, "ground_station_server") and self.ground_station_server:
+            self.ground_station_server.su_co_hien_tai = None
+            self.ground_station_server.danh_sach_su_co.clear()
+
+        await self.broker.phat_su_kien_ra_web("SWARM_RESPONSE_UPDATE", None)
+        await self.broker.dong_bo_trang_thai_toan_mang()
+        return {
+            "thanh_cong": True,
+            "so_dam_chay_da_xoa": so_dam_chay,
+            "thong_bao": f"Đã xóa {so_dam_chay} đám cháy và giải phóng UAV khoanh vùng.",
+        }
+
     def lay_du_lieu_khoi_tao_ban_do(self) -> dict:
         """
         Trả về trạng thái node, waypoint tuần tra, bản đồ nhiệt HeatNode, độ phủ 7 phân khu và chỉ số mạng.
@@ -608,19 +650,22 @@ class SimulationLoop:
             if hasattr(self, "ground_station_server") and hasattr(self.ground_station_server, "xuat_trang_thai_phan_ung")
             else self.broker.phien_dau_gia_gan_nhat
         )
+        fire_routes = list(getattr(self.broker, "danh_sach_tuyen_e2e_chay", []) or [])
         return {
             "nodes": [a.xuat_ho_so_trang_thai() for a in self.broker.danh_sach_tac_nhan.values()],
             "uav_waypoints": self.ban_do_waypoints_uav,
             "patrol_zones": self.scenario.patrol_zones,
             "heatmap": heatmap_nodes,
             "heatmap_nodes": heatmap_nodes,
+            "active_fires": list(getattr(self.scenario, "active_fires", []) or []),
+            "fire_e2e_routes": fire_routes,
             "zone_coverage": self.broker.tinh_thong_ke_phu_song_vung(),
             "deployment_plan": self.scenario.ke_hoach_bo_tri_ban_dau,
             "network_metrics": self.broker.thong_ke_toan_mang,
             "connectivity_metrics": self._chi_so_lien_lac,
             "swarm_response": swarm_state,
             "last_auction": swarm_state,
-            "last_e2e_route": self.broker.tuyen_e2e_gan_nhat,
+            "last_e2e_route": getattr(self.broker, "tuyen_e2e_chay_hien_tai", None) or self.broker.tuyen_e2e_gan_nhat,
             "recent_logs": list(getattr(self.broker, "nhat_ky_gan_day", [])),
             "uav_energy_model": {
                 agent.ma_dinh_danh: {

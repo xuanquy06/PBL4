@@ -595,7 +595,7 @@
             <div class="kpi-card" style="--card-accent: var(--text-secondary);">
                 <div class="k-label">Độ trễ TB</div>
                 <div id="kDelay" class="k-val">0.0 ms</div>
-                <div id="kDrops" class="k-sub">Rớt PER: 0 · Mất LoS: 0</div>
+                <div id="kDrops" class="k-sub">Rớt PER: 0 · Ngoài vùng phủ: 0</div>
             </div>
             <div class="kpi-card" style="--card-accent: var(--accent-amber);">
                 <div class="k-label">Năng lượng toàn mạng</div>
@@ -688,7 +688,8 @@
                 document.getElementById('kPdr').textContent = `${pdr}%`;
                 document.getElementById('kPackets').textContent = `${ok} / ${sent} gói thành công`;
                 document.getElementById('kDelay').textContent = `${net.do_tre_trung_binh_ms || 0} ms`;
-                document.getElementById('kDrops').textContent = `Rớt PER: ${net.tong_goi_tin_rot_per || 0} · Mất LoS: ${net.tong_goi_tin_mat_los || 0}`;
+                const outOfRange = net.tong_goi_tin_ngoai_vung_phu ?? net.tong_goi_tin_mat_los ?? 0;
+                document.getElementById('kDrops').textContent = `Rớt PER: ${net.tong_goi_tin_rot_per || 0} · Ngoài vùng phủ: ${outOfRange}`;
                 document.getElementById('kEnergy').textContent = `${Math.round(net.nang_luong_tieu_hao_joule || 0)} J`;
             }
         }

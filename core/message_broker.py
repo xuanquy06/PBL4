@@ -17,7 +17,7 @@ RouteState = tuple[float, str, tuple[str, ...], tuple[RouteChannel, ...]]
 class MessageBroker:
     """
     Môi trường truyền dẫn vô tuyến trung tâm (Wireless Channel & Event Broker):
-    - Kiểm tra điều kiện vật lý (LoS, SNR, PER, Delay) trước khi chuyển phát gói tin.
+    - Kiểm tra điều kiện vật lý (Bán kính phủ sóng Communication Range, SNR, PER theo khoảng cách, Delay).
     - Cập nhật tri thức láng giềng cục bộ cho nút nhận khi gói tin truyền qua kênh vật lý.
     - Đồng bộ trạng thái mạng, liên kết, độ phủ 7 phân khu và số liệu QoS ra giao diện Web.
     """
@@ -28,6 +28,8 @@ class MessageBroker:
         self.danh_sach_client_ws: List[WebSocket] = []
         self.phien_dau_gia_gan_nhat: Optional[dict[str, Any]] = None
         self.tuyen_e2e_gan_nhat: Optional[dict[str, Any]] = None
+        self.tuyen_e2e_chay_hien_tai: Optional[dict[str, Any]] = None
+        self.danh_sach_tuyen_e2e_chay: List[dict[str, Any]] = []
         self.nhat_ky_gan_day: List[dict[str, Any]] = []
         self.ground_station_server: Any = None
         self.thong_ke_lien_tuc: dict[str, Any] = {}
@@ -37,6 +39,7 @@ class MessageBroker:
             "tong_goi_tin_phat": 0,
             "tong_goi_tin_thanh_cong": 0,
             "tong_goi_tin_rot_per": 0,
+            "tong_goi_tin_ngoai_vung_phu": 0,
             "tong_goi_tin_mat_los": 0,
             "do_tre_trung_binh_ms": 0.0,
             "nang_luong_tieu_hao_joule": 0.0
@@ -98,22 +101,36 @@ class MessageBroker:
         return True
 
     def mo_khoa_muc_tieu_chay(self, uav_id: str, ha_nhiet: bool = False):
-        """Giải phóng khóa mục tiêu của `uav_id`; nếu `ha_nhiet=True` thì hạ nhiệt các HeatNode đã xử lý."""
+        """Giải phóng khóa mục tiêu của `uav_id`; tuyệt đối không tự hạ nhiệt nếu vẫn còn active_fires."""
         cac_tam = [e for e in self.muc_tieu_chay_da_khoa if e["uav_id"] == uav_id]
         self.muc_tieu_chay_da_khoa = [e for e in self.muc_tieu_chay_da_khoa if e["uav_id"] != uav_id]
+        has_active_fires = bool(getattr(self.scenario, "active_fires", None))
+        cho_phep_ha_nhiet = bool(ha_nhiet and not has_active_fires)
         heat_nodes = getattr(self.scenario, "heat_nodes", None) or []
+        giu_lai = []
         for node in heat_nodes:
+            gan_tam_chay = (
+                getattr(node, "locked_by", None) == uav_id
+                or any(self._khoang_cach_mat_dat_m(tam["lat"], tam["lon"], node.lat, node.lon) <= 850.0 for tam in cac_tam)
+            )
+            if cho_phep_ha_nhiet and gan_tam_chay and getattr(node, "is_fire_hotspot", False):
+                continue
             if getattr(node, "locked_by", None) == uav_id:
                 node.locked_by = None
-                if ha_nhiet:
+                if cho_phep_ha_nhiet:
                     node.risk_score = 0.15
                     node.fire_center = None
-            elif ha_nhiet:
-                for tam in cac_tam:
-                    if self._khoang_cach_mat_dat_m(tam["lat"], tam["lon"], node.lat, node.lon) <= 850.0:
-                        node.risk_score = 0.15
-                        node.locked_by = None
-                        node.fire_center = None
+                    node.fire_status = None
+                    node.fire_id = None
+            elif cho_phep_ha_nhiet and gan_tam_chay:
+                node.risk_score = 0.15
+                node.locked_by = None
+                node.fire_center = None
+                node.fire_status = None
+                node.fire_id = None
+            giu_lai.append(node)
+        if cho_phep_ha_nhiet and hasattr(self.scenario, "heat_nodes"):
+            self.scenario.heat_nodes = giu_lai
 
     def dang_ky_tac_nhan(self, tac_nhan: Any):
         """Đăng ký một Node mạng (UAV, Vệ tinh, Trạm mặt đất) vào không gian mô phỏng"""
@@ -282,6 +299,10 @@ class MessageBroker:
                     "NGẮT_KẾT_NỐI",
                     "ĐANG_ĐẤU_GIÁ",
                     "ĐANG_SẠC"
+                )
+                or (
+                    neighbor.loai_tac_nhan == "MÁY_BAY"
+                    and getattr(neighbor, "_dang_o_tai_tram", lambda: False)()
                 )
                 or (
                     info.get("loai_tac_nhan") in ("MÁY_BAY", "VỆ_TINH_LEO")
@@ -524,7 +545,7 @@ class MessageBroker:
             bang_thong_hz=nguoi_gui.radio_config["bang_thong_hz"]
         )
 
-        # Với bản tin quảng bá láng giềng 1-hop (HELLO_BEACON), các node ngoài vùng phủ LoS tự nhiên không thu được sóng
+        # Với bản tin quảng bá láng giềng 1-hop (HELLO_BEACON), các node ngoài bán kính phủ sóng tự nhiên không thu được sóng
         if la_beacon and not thong_so_kenh["kha_dung"]:
             return False
 
@@ -545,16 +566,17 @@ class MessageBroker:
         thong_so_kenh["thoi_gian_mat_lien_lac_giay"] = self.thong_ke_lien_tuc.get("thoi_gian_mat_lien_lac_giay", 0.0)
         thong_so_kenh["nang_luong_toan_mang_joule"] = self.thong_ke_toan_mang["nang_luong_tieu_hao_joule"]
 
-        # Kiểm tra 1: Mất tầm nhìn thẳng (Khuất núi Sơn Trà / Khuất bóng Trái Đất / Quá cự ly)
+        # Kiểm tra 1: Nằm ngoài Bán kính phủ sóng vô tuyến (d > R_max)
         if not thong_so_kenh["kha_dung"]:
-            self.thong_ke_toan_mang["tong_goi_tin_mat_los"] += 1
+            self.thong_ke_toan_mang["tong_goi_tin_ngoai_vung_phu"] += 1
+            self.thong_ke_toan_mang["tong_goi_tin_mat_los"] = self.thong_ke_toan_mang["tong_goi_tin_ngoai_vung_phu"]
             if hasattr(self.scenario, "ghi_log_thuc_nghiem_qos"):
                 self.scenario.ghi_log_thuc_nghiem_qos(
-                    ma_nguoi_gui, ma_nguoi_nhan, loai_tin, thong_so_kenh, "MAT_KET_NOI_LOS"
+                    ma_nguoi_gui, ma_nguoi_nhan, loai_tin, thong_so_kenh, "NGOAI_VUNG_PHU_SONG"
                 )
             return False
 
-        # Kiểm tra 2: Xét xác suất lỗi gói tin (Packet Error Rate - PER) do nhiễu nhiệt
+        # Kiểm tra 2: Xét xác suất lỗi gói tin (Packet Error Rate - PER) theo khoảng cách và SNR
         if random.random() < thong_so_kenh["per"]:
             if not la_beacon:
                 self.thong_ke_toan_mang["tong_goi_tin_rot_per"] += 1
@@ -642,7 +664,7 @@ class MessageBroker:
         danh_sach_nguoi_nhan: Optional[set[str]] = None
     ):
         """
-        Phát sóng quảng bá (Broadcast) đến tất cả các Node lân cận nằm trong tầm nhìn thẳng (LoS).
+        Phát sóng quảng bá (Broadcast) đến tất cả các Node lân cận nằm trong Bán kính phủ sóng (Communication Range).
         Chỉ khấu trừ năng lượng phát sóng 1 lần cho mỗi bản tin quảng bá vô hướng.
         """
         nguoi_gui = self.danh_sach_tac_nhan.get(ma_nguoi_gui)
@@ -720,12 +742,19 @@ class MessageBroker:
         if not ground_station:
             return False
 
+        is_fire_route = bool(
+            loai_tin in ("FIRE_ALERT", "FIRE_DETECTION", "GIAO_NHIEM_VU_DU_LIEU")
+            or getattr(getattr(source, "uav_state", None), "value", getattr(source, "uav_state", None)) == "CONTAINING"
+            or getattr(source, "_tam_khoanh_vung_chay", None) is not None
+        )
         last_ch = channels[-1] if channels else {}
         tong_tre_ms = round(sum(float(channel.get("do_tre_ms", 0.0)) for channel in channels), 2)
         tong_nang_luong = round(sum(float(channel.get("energy_j", 0.0)) for channel in channels), 3)
         ket_qua_e2e = {
             "ma_phien": thong_diep.get("ma_phien_dau_gia", "TELEM"),
+            "uav_id": ma_nguon,
             "loai_su_co": loai_tin,
+            "is_fire_route": is_fire_route,
             "lo_trinh": nodes,
             "lo_trinh_hop": nodes,
             "so_chang_hop": len(nodes) - 1,
@@ -737,7 +766,8 @@ class MessageBroker:
             "thoi_gian": time.strftime("%H:%M:%S"),
             "trang_thai_phu_song": "KET_NOI",
         }
-        await self.phat_su_kien_ra_web("E2E_ROUTE_COMPLETED", ket_qua_e2e)
+        if is_fire_route or not self.tuyen_e2e_chay_hien_tai:
+            await self.phat_su_kien_ra_web("E2E_ROUTE_COMPLETED", ket_qua_e2e)
         return True
 
     # =========================================================================
@@ -758,7 +788,10 @@ class MessageBroker:
         if loai_su_kien in ("SWARM_RESPONSE_UPDATE", "CNP_AUCTION_RESULT"):
             self.phien_dau_gia_gan_nhat = du_lieu
         elif loai_su_kien == "E2E_ROUTE_COMPLETED":
-            self.tuyen_e2e_gan_nhat = du_lieu
+            if isinstance(du_lieu, dict) and (
+                du_lieu.get("is_fire_route") or not self.tuyen_e2e_chay_hien_tai
+            ):
+                self.tuyen_e2e_gan_nhat = du_lieu
         elif loai_su_kien == "LOG" and isinstance(du_lieu, dict):
             noi_dung_log = str(du_lieu.get("noi_dung", ""))
             if not any(tag in noi_dung_log for tag in self.ALLOWED_SWARM_LOG_TAGS):
@@ -840,10 +873,86 @@ class MessageBroker:
                 entry["trang_thai"] = "DU_PHU_SONG"
         return vung_stats
 
+    def cap_nhat_tuyen_e2e_dam_chay_lien_tuc(self) -> List[dict[str, Any]]:
+        """
+        Tại mỗi tick mô phỏng, nếu vẫn còn active_fire đang được UAV khoanh vùng (CONTAINING),
+        tính toán lại tuyến Dijkstra đa chặng từ UAV đó về TRẠM_KIỂM_LÂM và ưu tiên giữ tuyến này lên trên cùng.
+        """
+        active_fires = getattr(self.scenario, "active_fires", None) or []
+        if not active_fires:
+            self.tuyen_e2e_chay_hien_tai = None
+            self.danh_sach_tuyen_e2e_chay = []
+            if isinstance(self.tuyen_e2e_gan_nhat, dict) and self.tuyen_e2e_gan_nhat.get("is_fire_route"):
+                self.tuyen_e2e_gan_nhat = None
+            return []
+
+        fire_routes: List[dict[str, Any]] = []
+        for agent in self.danh_sach_tac_nhan.values():
+            if getattr(agent, "loai_tac_nhan", None) != "MÁY_BAY":
+                continue
+            if agent.trang_thai.value in ("NGẮT_KẾT_NỐI", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC", "ĐANG_SẠC"):
+                continue
+            uav_state_val = getattr(getattr(agent, "uav_state", None), "value", getattr(agent, "uav_state", None))
+            tam_chay = getattr(agent, "_tam_khoanh_vung_chay", None)
+            if uav_state_val != "CONTAINING" and tam_chay is None:
+                continue
+
+            tuyen = self.tim_tuyen_dijkstra_ve_tram(agent.ma_dinh_danh, kich_thuoc_kb=250.0)
+            if not tuyen or len(tuyen.get("nodes", [])) < 2:
+                continue
+
+            nodes = list(tuyen["nodes"])
+            channels = tuyen.get("channels", [])
+            last_ch = channels[-1] if channels else {}
+            tong_tre_ms = round(
+                float(tuyen.get("delay_ms", sum(float(c.get("do_tre_ms", 0.0)) for c in channels))),
+                2,
+            )
+            tong_nang_luong = round(
+                float(tuyen.get("energy_j", sum(float(c.get("energy_j", 0.0)) for c in channels))),
+                3,
+            )
+            tam = tam_chay or {}
+            fire_lat = tam.get("vi_do")
+            fire_lon = tam.get("kinh_do")
+            route_dict = {
+                "ma_phien": tam.get("ma_phien") or f"FIRE_{agent.ma_dinh_danh}",
+                "uav_id": agent.ma_dinh_danh,
+                "loai_su_co": "FIRE_CONTAINMENT_TELEMETRY",
+                "is_fire_route": True,
+                "lo_trinh": nodes,
+                "lo_trinh_hop": nodes,
+                "so_chang_hop": len(nodes) - 1,
+                "e2e_delay_ms": tong_tre_ms,
+                "tong_do_tre_ms": tong_tre_ms,
+                "snr_chang_cuoi_db": round(float(last_ch.get("snr_db", 0.0)), 2),
+                "dung_luong_chang_cuoi_mbps": round(float(last_ch.get("dung_luong_mbps", 0.0)), 2),
+                "nang_luong_du_kien_joule": tong_nang_luong,
+                "thoi_gian": time.strftime("%H:%M:%S"),
+                "trang_thai_phu_song": "KET_NOI",
+                "fire_lat": fire_lat,
+                "fire_lon": fire_lon,
+            }
+            fire_routes.append(route_dict)
+
+            if self.ground_station_server and fire_lat is not None and fire_lon is not None:
+                record = self.ground_station_server.tim_su_co_gan_nhat(float(fire_lat), float(fire_lon))
+                if record is not None:
+                    record["tuyen_bao_cao_e2e"] = nodes
+
+        self.danh_sach_tuyen_e2e_chay = fire_routes
+        if fire_routes:
+            self.tuyen_e2e_chay_hien_tai = fire_routes[0]
+            self.tuyen_e2e_gan_nhat = fire_routes[0]
+        else:
+            self.tuyen_e2e_chay_hien_tai = None
+        return fire_routes
+
     async def dong_bo_trang_thai_toan_mang(self, heatmap_nodes: list = None):
         """
         Thu thập tọa độ, pin, tuyến truyền, danh sách điểm nhiệt (heatmap), độ phủ 7 phân khu và thống kê QoS đẩy ra giao diện.
         """
+        fire_routes = self.cap_nhat_tuyen_e2e_dam_chay_lien_tuc()
         danh_sach_nodes = [
             agent.xuat_ho_so_trang_thai()
             for agent in self.danh_sach_tac_nhan.values()
@@ -863,10 +972,12 @@ class MessageBroker:
             "nodes": danh_sach_nodes,
             "heatmap": heatmap_nodes,
             "heatmap_nodes": heatmap_nodes,
+            "active_fires": list(getattr(self.scenario, "active_fires", []) or []),
+            "fire_e2e_routes": fire_routes,
             "zone_coverage": self.tinh_thong_ke_phu_song_vung(),
             "network_metrics": self.thong_ke_toan_mang,
             "connectivity_metrics": getattr(self, "thong_ke_lien_tuc", {}),
             "swarm_response": swarm_state,
             "last_auction": swarm_state,
-            "last_e2e_route": self.tuyen_e2e_gan_nhat
+            "last_e2e_route": self.tuyen_e2e_chay_hien_tai or self.tuyen_e2e_gan_nhat
         })

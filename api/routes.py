@@ -43,6 +43,11 @@ def tao_bo_dinh_tuyen_api(sim_loop) -> APIRouter:
             raise HTTPException(status_code=400, detail=ket_qua["thong_bao"])
         return ket_qua
 
+    @router.post("/api/xoa-chay")
+    async def xoa_dam_chay():
+        """Xóa toàn bộ đám cháy active_fires và giải phóng UAV khoanh vùng."""
+        return await sim_loop.xoa_tat_ca_dam_chay()
+
     @router.post("/api/dieu-khien-thoi-gian")
     async def dieu_khien_thoi_gian(req: DieuKhienThoiGianRequest):
         """Thay đổi tốc độ thời gian mô phỏng hoặc tạm dừng/tiếp tục."""

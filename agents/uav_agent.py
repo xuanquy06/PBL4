@@ -17,6 +17,7 @@ class UAVState(str, Enum):
     STANDBY = "STANDBY"
     PATROLLING = "PATROLLING"
     RESPONDING = "RESPONDING"
+    CONTAINING = "CONTAINING"
     RELAYING = "RELAYING"
     RETURNING = "RETURNING"
 
@@ -56,6 +57,7 @@ class UAVAgent(BaseAgent):
         self._da_phat_hien_dam_chay: set[tuple[float, float]] = set()
         self.uav_state = UAVState.STANDBY
         self.current_link = "LEO_SATELLITE"
+        self.in_comm_range = False
         self.direct_los = False
         self.relay_required = True
         self._relay_uav_id: Optional[str] = None
@@ -93,6 +95,12 @@ class UAVAgent(BaseAgent):
         super().chuyen_trang_thai(trang_thai_moi)
         if not hasattr(self, "uav_state"):
             return
+        if (
+            getattr(self, "_tam_khoanh_vung_chay", None) is not None
+            and trang_thai_moi in (AgentState.PATROLLING, AgentState.BIDDING, AgentState.RELAYING)
+        ):
+            self.uav_state = UAVState.CONTAINING
+            return
         trang_thai_uav = {
             AgentState.IDLE: UAVState.STANDBY,
             AgentState.CHARGING: UAVState.STANDBY,
@@ -110,7 +118,8 @@ class UAVAgent(BaseAgent):
         ho_so["state"] = self.uav_state.value
         ho_so["zone_id"] = self.zone_id
         ho_so["current_link"] = self.current_link
-        ho_so["direct_los"] = self.direct_los
+        ho_so["in_comm_range"] = self.in_comm_range
+        ho_so["direct_los"] = self.in_comm_range
         ho_so["relay_required"] = self.relay_required
         ho_so["relay_target_id"] = self.relay_target_id
         ho_so["tuyen_ve_tram"] = list(getattr(self, "tuyen_ve_tram_cuc_bo", []))
@@ -127,6 +136,8 @@ class UAVAgent(BaseAgent):
         """Giải phóng trạng thái khoanh vùng sự cố để UAV tiếp tục tuần tra theo trường lực Heatmap."""
         self._tam_khoanh_vung_chay = None
         self._thoi_gian_khoanh_vung_con_lai = 0.0
+        if getattr(self, "uav_state", None) == UAVState.CONTAINING and self.trang_thai == AgentState.PATROLLING:
+            self.uav_state = UAVState.PATROLLING
 
     async def dat_pin_gia_lap(self, phan_tram_pin: float):
         """Áp dụng sự cố pin qua hành vi của UAV thay vì để API sửa trực tiếp FSM."""
@@ -326,18 +337,42 @@ class UAVAgent(BaseAgent):
                 self._get_den_muc_tieu_event().set()
 
     def _di_chuyen_khoanh_vung_dam_chay(self, dt_giay: float):
-        """Khoanh vùng 130m quanh tâm đám cháy bằng chuyển động góc liên tục, không dùng mốc tọa độ định sẵn."""
+        """Khoanh vùng 130m quanh tâm đám cháy cho tới khi người dùng bấm Xóa cháy hoặc UAV tụt pin < 25%."""
         if not self._tam_khoanh_vung_chay:
             return
-        self._thoi_gian_khoanh_vung_con_lai -= dt_giay
-        if self._thoi_gian_khoanh_vung_con_lai <= 0.0:
+        fire_lat = float(self._tam_khoanh_vung_chay["vi_do"])
+        fire_lon = float(self._tam_khoanh_vung_chay["kinh_do"])
+
+        scenario = getattr(self.bo_dinh_tuyen, "scenario", None)
+        active_fires = getattr(scenario, "active_fires", None)
+        has_active_fire = bool(
+            active_fires
+            and any(
+                self._khoang_cach_m(fire_lat, fire_lon, f["lat"], f["lon"]) <= 850.0
+                for f in active_fires
+            )
+        )
+        if not has_active_fire:
             if hasattr(self.bo_dinh_tuyen, "mo_khoa_muc_tieu_chay"):
-                self.bo_dinh_tuyen.mo_khoa_muc_tieu_chay(self.ma_dinh_danh, ha_nhiet=True)
+                self.bo_dinh_tuyen.mo_khoa_muc_tieu_chay(self.ma_dinh_danh, ha_nhiet=False)
             self._ket_thuc_khoanh_vung_chay()
             return
 
-        fire_lat = float(self._tam_khoanh_vung_chay["vi_do"])
-        fire_lon = float(self._tam_khoanh_vung_chay["kinh_do"])
+        if self.phan_tram_pin < LOW_BATTERY_THRESHOLD:
+            if hasattr(self.bo_dinh_tuyen, "mo_khoa_muc_tieu_chay"):
+                self.bo_dinh_tuyen.mo_khoa_muc_tieu_chay(self.ma_dinh_danh, ha_nhiet=False)
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    self._phat_tin_nhan_p2p_nho_dong_doi(fire_lat, fire_lon, self.phan_tram_pin)
+                )
+            except RuntimeError:
+                pass
+            self._ket_thuc_khoanh_vung_chay()
+            self.chuyen_trang_thai(AgentState.LOW_BATTERY_RTB)
+            return
+
+        self.uav_state = UAVState.CONTAINING
         van_toc_m_s = 40.0
         omega = van_toc_m_s / FIRE_CONTAINMENT_RADIUS_M
         self._goc_khoanh_vung_rad = (self._goc_khoanh_vung_rad + omega * dt_giay) % (2.0 * math.pi)
@@ -393,8 +428,16 @@ class UAVAgent(BaseAgent):
         met_tren_do_kinh = 111320.0 * max(0.2, math.cos(math.radians(cur_lat)))
 
         # Làm mát nhẹ các HeatNode thông thường (< 0.85) mà UAV vừa bay qua sát (<= 160m)
-        # để UAV tự động chuyển hướng tuần tra sang điểm có risk_score cao tiếp theo trong vùng
+        # Tuyệt đối không làm mát các nút thuộc đám cháy active_fires từ nút Báo cháy
+        scenario = getattr(self.bo_dinh_tuyen, "scenario", None)
         for node in heat_nodes:
+            if (
+                getattr(node, "is_fire_hotspot", False)
+                or getattr(node, "fire_center", False)
+                or getattr(node, "fire_status", "") in ("BURNING", "CONTAINING")
+                or (scenario and hasattr(scenario, "is_in_active_fire") and scenario.is_in_active_fire(node.lat, node.lon))
+            ):
+                continue
             d_node = self._khoang_cach_m(cur_lat, cur_lon, node.lat, node.lon)
             if d_node <= 160.0 and node.risk_score < FIRE_RISK_THRESHOLD:
                 node.risk_score = 0.05
@@ -784,6 +827,7 @@ class UAVAgent(BaseAgent):
                 ),
                 None
             )
+            self.in_comm_range = True
             self.direct_los = True
             self.relay_required = False
             self.current_link = "GROUND_LINK"
@@ -802,9 +846,10 @@ class UAVAgent(BaseAgent):
             if agent.loai_tac_nhan == "TRẠM_MẶT_ĐẤT"
         ]
         if not cac_tram:
+            self.in_comm_range = False
             self.direct_los = False
             self.relay_required = True
-            self.current_link = "OUT_OF_LOS"
+            self.current_link = "OUT_OF_RANGE"
             self.relay_target_id = None
             return
         tram = min(
@@ -836,11 +881,11 @@ class UAVAgent(BaseAgent):
 
     def evaluate_communication_link(self, tram_lat: Optional[float] = None, tram_lon: Optional[float] = None) -> str:
         """
-        Đánh giá và lựa chọn đường truyền tối ưu về Trạm mặt đất:
-        - GROUND_LINK: Nếu chặng kế tiếp là Trạm mặt đất trực tiếp (A2G LoS <= 4.2 km).
-        - FANET_RELAY: Nếu chặng kế tiếp là một UAV khác làm trung chuyển.
+        Đánh giá và lựa chọn đường truyền tối ưu về Trạm mặt đất theo Bán kính phủ sóng + PER:
+        - GROUND_LINK: Nếu chặng kế tiếp là Trạm mặt đất trực tiếp (trong vùng phủ A2G <= 4.2 km).
+        - FANET_RELAY: Nếu chặng kế tiếp là một UAV khác làm trung chuyển (trong vùng phủ FANET <= 7.0 km).
         - LEO_SATELLITE: Nếu chặng kế tiếp là vệ tinh LEO.
-        - OUT_OF_LOS: Chưa có tuyến khả dụng trong bảng láng giềng cục bộ.
+        - OUT_OF_RANGE: Ngoài vùng phủ sóng khả dụng.
         """
         tuyen_dijkstra = self.bo_dinh_tuyen.tim_tuyen_den_tram_mat_dat(
             self.ma_dinh_danh
@@ -852,6 +897,7 @@ class UAVAgent(BaseAgent):
 
             if loai_ke_tiep == "TRẠM_MẶT_ĐẤT":
                 self._giai_phong_uav_chuyen_tiep()
+                self.in_comm_range = True
                 self.direct_los = True
                 self.relay_required = False
                 self.current_link = "GROUND_LINK"
@@ -859,6 +905,7 @@ class UAVAgent(BaseAgent):
                 return self.current_link
 
             elif loai_ke_tiep == "MÁY_BAY":
+                self.in_comm_range = False
                 self.direct_los = False
                 self.relay_required = True
                 self.current_link = "FANET_RELAY"
@@ -874,6 +921,7 @@ class UAVAgent(BaseAgent):
 
             elif "VỆ_TINH" in loai_ke_tiep:
                 self._giai_phong_uav_chuyen_tiep()
+                self.in_comm_range = False
                 self.direct_los = False
                 self.relay_required = True
                 self.current_link = "LEO_SATELLITE"
@@ -882,9 +930,10 @@ class UAVAgent(BaseAgent):
 
         # Không gán nhãn LEO nếu bảng định tuyến chưa có tuyến qua vệ tinh.
         self._giai_phong_uav_chuyen_tiep()
+        self.in_comm_range = False
         self.direct_los = False
         self.relay_required = True
-        self.current_link = "OUT_OF_LOS"
+        self.current_link = "OUT_OF_RANGE"
         self.relay_target_id = None
         return self.current_link
 
@@ -906,7 +955,7 @@ class UAVAgent(BaseAgent):
         eligible = [
             neighbor for neighbor in neighbors
             if neighbor.trang_thai != AgentState.OFFLINE
-            and getattr(neighbor, "direct_los", False)
+            and getattr(neighbor, "in_comm_range", getattr(neighbor, "direct_los", False))
             and getattr(neighbor, "uav_state", None) in (
                 UAVState.PATROLLING,
                 UAVState.RELAYING
@@ -1093,13 +1142,15 @@ class UAVAgent(BaseAgent):
             self._tac_vu_su_co = None
 
     def _bat_dau_khoanh_vung_su_co(self, su_co: dict):
-        """Thiết lập khoanh vùng bán kính 130m sát quanh đám cháy, sau đó tự động quay về tuần tra trường lực."""
+        """Thiết lập khoanh vùng bán kính 130m sát quanh đám cháy và giữ trạng thái CONTAINING cho đến khi Xóa cháy hoặc pin < 25%."""
         self._tam_khoanh_vung_chay = {
             "vi_do": float(su_co["vi_do"]),
             "kinh_do": float(su_co["kinh_do"]),
+            "ma_phien": su_co.get("ma_phien", ""),
         }
         self._goc_khoanh_vung_rad = 0.0
-        self._thoi_gian_khoanh_vung_con_lai = 20.0
+        self._thoi_gian_khoanh_vung_con_lai = 0.0
+        self.uav_state = UAVState.CONTAINING
 
     def _goi_uav_du_bi_thay_ca(self) -> bool:
         """
@@ -1155,6 +1206,8 @@ class UAVAgent(BaseAgent):
 
     async def _chon_tram_sac(self):
         if self._dang_o_tai_tram():
+            return
+        if self._tam_khoanh_vung_chay is not None and self.phan_tram_pin >= LOW_BATTERY_THRESHOLD:
             return
         ung_vien = []
         for agent in self.bo_dinh_tuyen.danh_sach_tac_nhan.values():

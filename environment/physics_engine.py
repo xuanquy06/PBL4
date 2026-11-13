@@ -1,4 +1,4 @@
-"""Orbital and line-of-sight calculations using Skyfield."""
+"""Orbital and wireless communication range + PER calculations using Skyfield."""
 import math
 from datetime import datetime, timezone, timedelta
 from typing import cast
@@ -11,9 +11,14 @@ EARTH_RADIUS_M = 6371000.0            # Bán kính trung bình Trái Đất (m)
 BOLTZMANN_CONST = 1.380649e-23        # Hằng số Boltzmann (J/K)
 SYSTEM_TEMP_K = 290.0                 # Nhiệt độ nhiễu hệ thống tiêu chuẩn (K)
 
-# Ngưỡng cự ly liên kết giả định cho mô phỏng; chưa tính che khuất bằng dữ liệu địa hình.
-MAX_A2G_DIRECT_LOS_M = 4200.0         # Cự ly tối đa cho liên kết Không-Đất (A2G)
-MAX_A2A_FANET_LOS_M = 7000.0          # Cự ly trực xạ Không-Không (A2A FANET) giữa các UAV ở độ cao tuần tra
+# Bán kính phủ sóng vô tuyến (Communication Range - Phương án 3, thay thế cơ chế LoS)
+MAX_A2G_COMM_RANGE_M = 3500.0         # Bán kính phủ sóng Không-Đất (A2G: UAV <-> Trạm mặt đất: 3.5 km)
+MAX_A2A_COMM_RANGE_M = 2800.0         # Bán kính phủ sóng Không-Không (A2A FANET: UAV <-> UAV: 2.8 km)
+MAX_SPACE_COMM_RANGE_M = 2500000.0    # Bán kính phủ sóng Vệ tinh LEO (A2S / S2G / ISL: 2500 km)
+
+# Giữ bí danh hằng số tương thích ngược
+MAX_A2G_DIRECT_LOS_M = MAX_A2G_COMM_RANGE_M
+MAX_A2A_FANET_LOS_M = MAX_A2A_COMM_RANGE_M
 
 # Tọa độ tâm khu vực giám sát (Bán đảo Sơn Trà, Đà Nẵng)
 SON_TRA_REF_LAT = 16.105
@@ -22,8 +27,8 @@ SON_TRA_REF_LON = 108.250
 
 class PhysicsEngine:
     """
-    Động cơ Vật lý mô phỏng Quỹ đạo SGP4, Hình học Không gian 3D (ECEF),
-    và Mô hình Kênh truyền Vô tuyến (FSPL, SNR, Shannon Capacity, PER).
+    Động cơ Vật lý mô phỏng Quỹ đạo SGP4, Khoảng cách Không gian 3D (ECEF),
+    và Mô hình Kênh truyền Vô tuyến theo Bán kính phủ sóng (Communication Range) + PER theo khoảng cách.
     """
     def __init__(self):
         self.ts = load.timescale()
@@ -141,65 +146,34 @@ class PhysicsEngine:
         dz = z2 - z1
         return math.sqrt(dx * dx + dy * dy + dz * dz)
 
-    def kiem_tra_tam_nhin_thang(self, pos1: dict, pos2: dict, goc_ngang_toi_thieu_deg: float = 5.0) -> tuple[bool, float]:
+    def kiem_tra_ban_kinh_phu_song(self, pos1: dict, pos2: dict) -> tuple[bool, float, float]:
         """
-        Kiểm tra điều kiện Tầm nhìn thẳng (Line-of-Sight - LoS) và tính Góc ngẩng (Elevation Angle).
-        Phân biệt rõ:
-        - ISL (Vệ tinh - Vệ tinh): Không bị Trái Đất/tầng khí quyển thấp (< 50km) che khuất.
-        - A2S / S2G (Vệ tinh - UAV/Mặt đất): Góc ngẩng >= goc_ngang_toi_thieu_deg (mặc định 5 độ).
-        - A2G (UAV - Trạm mặt đất): Giới hạn cự ly giả định 4.2 km; chưa truy vấn địa hình.
-        - A2A (UAV - UAV FANET): Giới hạn 7.0 km ở độ cao tuần tra.
+        Kiểm tra điều kiện nằm trong Bán kính phủ sóng vô tuyến (Communication Range - Phương án 3):
+        - Liên kết Vũ trụ (ISL / A2S / S2G): khoảng cách 3D <= MAX_SPACE_COMM_RANGE_M (2500 km).
+        - Liên kết Không-Đất (A2G): khoảng cách 3D <= MAX_A2G_COMM_RANGE_M (4.2 km).
+        - Liên kết Không-Không (A2A FANET): khoảng cách 3D <= MAX_A2A_COMM_RANGE_M (7.0 km).
+        Trả về: (trong_vung_phu, khoang_cach_m, ban_kinh_toi_da_m).
         """
         alt1 = float(pos1["do_cao"])
         alt2 = float(pos2["do_cao"])
-        x1, y1, z1 = self._geodetic_to_ecef_tuple(pos1["vi_do"], pos1["kinh_do"], alt1)
-        x2, y2, z2 = self._geodetic_to_ecef_tuple(pos2["vi_do"], pos2["kinh_do"], alt2)
+        khoang_cach_m = self.tinh_khoang_cach_3d(pos1, pos2)
+        high_alt = max(alt1, alt2)
+        low_alt = min(alt1, alt2)
 
-        dx = x2 - x1
-        dy = y2 - y1
-        dz = z2 - z1
-        dist_sq = dx * dx + dy * dy + dz * dz
-        if dist_sq == 0.0:
-            return True, 90.0
-
-        # 1. Liên kết giữa 2 Vệ tinh (ISL - Inter-Satellite Link)
-        if alt1 > 80000.0 and alt2 > 80000.0:
-            t = -(x1 * dx + y1 * dy + z1 * dz) / dist_sq
-            t_clamped = max(0.0, min(1.0, t))
-            cx = x1 + t_clamped * dx
-            cy = y1 + t_clamped * dy
-            cz = z1 + t_clamped * dz
-            khoang_cach_toi_tam = math.sqrt(cx * cx + cy * cy + cz * cz)
-            co_los = khoang_cach_toi_tam >= (EARTH_RADIUS_M + 50000.0)
-            return co_los, 0.0
-
-        # 2. Liên kết giữa Tầng thấp (UAV / Mặt đất) và Tầng cao (Vệ tinh hoặc UAV khác)
-        if alt1 <= alt2:
-            lx, ly, lz, low_alt = x1, y1, z1, alt1
-            hx, hy, hz, high_alt = x2, y2, z2, alt2
-        else:
-            lx, ly, lz, low_alt = x2, y2, z2, alt2
-            hx, hy, hz, high_alt = x1, y1, z1, alt1
-
-        vx, vy, vz = hx - lx, hy - ly, hz - lz
-        dist = math.sqrt(dist_sq)
-        low_norm = math.sqrt(lx * lx + ly * ly + lz * lz)
-        if low_norm <= 0.0:
-            return False, -90.0
-
-        sin_el = max(-1.0, min(1.0, (vx * lx + vy * ly + vz * lz) / (dist * low_norm)))
-        elevation_deg = math.degrees(math.asin(sin_el))
-
-        # Liên kết Không - Vũ trụ (A2S / S2G)
         if high_alt > 80000.0:
-            return (elevation_deg >= goc_ngang_toi_thieu_deg), elevation_deg
+            ban_kinh_max_m = MAX_SPACE_COMM_RANGE_M
+        elif low_alt < 100.0:
+            ban_kinh_max_m = MAX_A2G_COMM_RANGE_M
+        else:
+            ban_kinh_max_m = MAX_A2A_COMM_RANGE_M
 
-        # Liên kết Không - Đất (A2G): Một đầu là Trạm mặt đất (do_cao < 100m)
-        if low_alt < 100.0:
-            return (dist <= MAX_A2G_DIRECT_LOS_M), elevation_deg
+        return (khoang_cach_m <= ban_kinh_max_m), khoang_cach_m, ban_kinh_max_m
 
-        # Liên kết Nội tầng Không - Không (A2A FANET giữa các UAV)
-        return (dist <= MAX_A2A_FANET_LOS_M), elevation_deg
+    def kiem_tra_tam_nhin_thang(self, pos1: dict, pos2: dict, goc_ngang_toi_thieu_deg: float = 5.0) -> tuple[bool, float]:
+        """Hàm tương thích ngược: chuyển sang kiểm tra theo Bán kính phủ sóng (Communication Range)."""
+        trong_vung_phu, khoang_cach_m, ban_kinh_max_m = self.kiem_tra_ban_kinh_phu_song(pos1, pos2)
+        ty_le_con_lai_deg = max(0.0, 90.0 * (1.0 - min(1.0, khoang_cach_m / max(1.0, ban_kinh_max_m))))
+        return trong_vung_phu, round(ty_le_con_lai_deg, 2)
 
     def danh_gia_chat_luong_kenh_truyen(
         self,
@@ -210,17 +184,20 @@ class PhysicsEngine:
         bang_thong_hz: float = 20e6
     ) -> dict:
         """
-        Đánh giá toàn diện thông số Lớp Vật lý (PHY Layer) của liên kết vô tuyến:
-        - Khoảng cách 3D, Độ trễ lan truyền (Propagation Delay), Suy hao FSPL, SNR, Dung lượng và PER.
+        Đánh giá toàn diện thông số Lớp Vật lý (PHY Layer) theo Phương án 3:
+        - Kiểm tra Bán kính phủ sóng vô tuyến (d <= R_max).
+        - Tính Độ trễ lan truyền (Propagation Delay), Suy hao FSPL, SNR, Dung lượng.
+        - Tính Xác suất lỗi gói tin (PER) tăng dần mượt mà theo tỷ lệ khoảng cách (d / R_max) và SNR.
         """
-        co_los, goc_ngang = self.kiem_tra_tam_nhin_thang(pos1, pos2)
-        khoang_cach_m = self.tinh_khoang_cach_3d(pos1, pos2)
+        trong_vung_phu, khoang_cach_m, ban_kinh_max_m = self.kiem_tra_ban_kinh_phu_song(pos1, pos2)
+        ty_le_khoang_cach = khoang_cach_m / max(1.0, ban_kinh_max_m)
 
-        if not co_los:
+        if not trong_vung_phu:
             return {
                 "kha_dung": False,
                 "khoang_cach_km": round(khoang_cach_m / 1000.0, 2),
-                "goc_ngang_do": round(goc_ngang, 2),
+                "ban_kinh_phu_song_km": round(ban_kinh_max_m / 1000.0, 2),
+                "goc_ngang_do": 0.0,
                 "do_tre_ms": 9999.0,
                 "fspl_db": 999.0,
                 "snr_db": -100.0,
@@ -247,14 +224,15 @@ class PhysicsEngine:
             + 20.0 * math.log10(4.0 * math.pi / SPEED_OF_LIGHT)
         )
 
-        # Suy hao khí quyển / tán xạ tán lá rừng
+        # Suy hao phụ theo khoảng cách tương đối trong vùng phủ sóng
         suy_hao_phu_db = 0.0
         if is_space_link and min(float(pos1["do_cao"]), float(pos2["do_cao"])) < 20000.0:
-            sin_el = max(0.087, math.sin(math.radians(max(5.0, goc_ngang))))
-            suy_hao_phu_db = 2.0 / sin_el
+            suy_hao_phu_db = 2.0 + 6.0 * (ty_le_khoang_cach ** 2)
         elif not is_space_link and min(float(pos1["do_cao"]), float(pos2["do_cao"])) < 100.0:
-            # Suy hao đa đường & tán xạ qua sườn rừng Sơn Trà cho liên kết A2G
-            suy_hao_phu_db = 5.0 + (khoang_cach_hieu_dung_m / 1000.0) * 1.5
+            # Suy hao tán xạ môi trường rừng theo khoảng cách A2G
+            suy_hao_phu_db = 4.0 + (khoang_cach_hieu_dung_m / 1000.0) * 1.5
+        else:
+            suy_hao_phu_db = 2.0 * (ty_le_khoang_cach ** 2)
 
         tong_suy_hao_db = fspl_db + suy_hao_phu_db
 
@@ -275,18 +253,23 @@ class PhysicsEngine:
         max_hw_mbps = 65.0 if is_space_link else 54.0
         dung_luong_mbps = min(max_hw_mbps, dung_luong_bps / 1e6)
 
-        # 7. Tỷ lệ lỗi gói tin (Packet Error Rate - PER)
+        # 7. Xác suất lỗi gói tin (PER) tăng dần theo khoảng cách (d / R_max) kết hợp SNR
         if snr_db < -2.0:
-            per = 1.0
+            per_snr = 1.0
         elif snr_db > 25.0:
-            per = 0.0001
+            per_snr = 0.0001
         else:
-            per = math.exp(-0.32 * (snr_db + 2.0))
+            per_snr = math.exp(-0.32 * (snr_db + 2.0))
+
+        # Thành phần PER tăng theo hàm bậc 3 của tỷ lệ khoảng cách (gần trạm ~0.02%, sát rìa vùng phủ ~18%)
+        per_khoang_cach = 0.0002 + 0.18 * (min(1.0, ty_le_khoang_cach) ** 3)
+        per = 1.0 - (1.0 - per_snr) * (1.0 - per_khoang_cach)
 
         return {
             "kha_dung": True,
             "khoang_cach_km": round(khoang_cach_m / 1000.0, 2),
-            "goc_ngang_do": round(goc_ngang, 2),
+            "ban_kinh_phu_song_km": round(ban_kinh_max_m / 1000.0, 2),
+            "goc_ngang_do": round(max(0.0, 90.0 * (1.0 - ty_le_khoang_cach)), 2),
             "do_tre_ms": round(do_tre_ms, 3),
             "fspl_db": round(tong_suy_hao_db, 2),
             "snr_db": round(snr_db, 2),

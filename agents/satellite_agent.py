@@ -69,7 +69,7 @@ class SatelliteAgent(BaseAgent):
         if dich_ke_tiep and thong_so:
             self.current_link = "S2G_LINK" if loai_ket_noi == "S2G" else "ISL_LINK"
         else:
-            self.current_link = "OUT_OF_LOS"
+            self.current_link = "OUT_OF_RANGE"
             self.tuyen_ve_tram_cuc_bo = []
             self.chi_phi_ve_tram_cuc_bo = float("inf")
             self.nang_luong_ve_tram_cuc_bo = 0.0

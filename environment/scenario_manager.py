@@ -29,6 +29,7 @@ class HeatNode:
     fire_center: Optional[tuple[float, float]] = None
     fire_status: Optional[str] = None
     fire_id: Optional[str] = None
+    is_fire_hotspot: bool = False
 
     def __post_init__(self):
         self.lat = round(float(self.lat), 6)
@@ -87,6 +88,7 @@ class ScenarioManager:
         self.metrics_log_path = os.path.join(self.data_dir, "simulation_metrics_log.csv")
         self.ke_hoach_bo_tri_ban_dau: dict = {}
         self.patrol_zones = self._doc_vung_tuan_tra()
+        self.active_fires: list[dict] = []
         self.heat_nodes: list[HeatNode] = self._khoi_tao_heat_nodes(
             so_diem_moi_vung=nodes_per_zone
         )
@@ -284,19 +286,66 @@ class ScenarioManager:
 
         return danh_sach_heat_nodes
 
+    def is_in_active_fire(
+        self,
+        lat: float,
+        lon: float,
+        node: Optional[HeatNode] = None
+    ) -> bool:
+        """Kiểm tra tọa độ hoặc HeatNode có thuộc một đám cháy đang hoạt động trong `active_fires` hay không."""
+        if node is not None and (
+            getattr(node, "is_fire_hotspot", False)
+            or getattr(node, "fire_center", None) is not None
+            or getattr(node, "fire_status", None) is not None
+            or getattr(node, "fire_id", None) is not None
+        ):
+            return True
+        for fire in self.active_fires:
+            radius_m = float(fire.get("radius_m", 800.0))
+            if self._khoang_cach_mot_phang_m(lat, lon, float(fire["lat"]), float(fire["lon"])) <= radius_m:
+                return True
+        return False
+
+    def clear_active_fires(self) -> int:
+        """Xóa toàn bộ đám cháy đang hoạt động (chỉ gọi khi người dùng bấm nút Xoá cháy)."""
+        cleared_count = len(self.active_fires)
+        self.active_fires.clear()
+        kept_nodes: list[HeatNode] = []
+        for node in self.heat_nodes:
+            if getattr(node, "is_fire_hotspot", False):
+                continue
+            if (
+                getattr(node, "fire_status", None) is not None
+                or getattr(node, "fire_center", None) is not None
+                or getattr(node, "fire_id", None) is not None
+                or getattr(node, "locked_by", None) is not None
+                or float(node.risk_score) > 0.55
+            ):
+                node.risk_score = 0.15
+                node.locked_by = None
+                node.fire_center = None
+                node.fire_status = None
+                node.fire_id = None
+            kept_nodes.append(node)
+        self.heat_nodes = kept_nodes
+        return cleared_count
+
     def update_heatmap(self, dt: float) -> list[HeatNode]:
         """
-        Các điểm nhiệt tự động tăng nhẹ risk_score theo thời gian dt (giây)
-        để mô phỏng nguy cơ cháy rừng tích tụ tự nhiên, giới hạn trong [0.05, 1.0].
+        Các điểm nhiệt nền tự động tăng nhẹ risk_score theo thời gian dt (giây),
+        giới hạn mức nền tối đa 0.55 để tránh báo cháy giả và giữ vùng cháy thật nổi bật.
+        Nếu điểm thuộc `active_fires`, tuyệt đối giữ nguyên giá trị nhiệt, không làm mát hay tự tắt.
         """
         dt_sec = max(0.0, float(dt))
         if dt_sec <= 0.0:
             return self.heat_nodes
 
         for node in self.heat_nodes:
-            # Mức tăng nhẹ theo thời gian thực (từ 0.0015 đến 0.004 mỗi giây)
-            delta_risk = random.uniform(0.0015, 0.0040) * dt_sec
-            node.risk_score = round(min(1.0, max(0.05, node.risk_score + delta_risk)), 4)
+            if self.is_in_active_fire(node.lat, node.lon, node=node):
+                continue
+            if node.risk_score < 0.55:
+                delta_risk = random.uniform(0.0012, 0.0030) * dt_sec
+                node.risk_score = round(min(0.55, max(0.05, node.risk_score + delta_risk)), 4)
 
         return self.heat_nodes
 
@@ -309,38 +358,84 @@ class ScenarioManager:
     ) -> list[HeatNode]:
         """
         Khi có sự kiện cháy tại (lat, lon):
-        - Đánh dấu đám cháy ở trạng thái "UNVERIFIED" (Trạm chưa biết).
-        - Tìm các HeatNode xung quanh tâm cháy trong bán kính `radius_m` (mét)
-          và đẩy `risk_score` lên 1.0 (tạo điểm nóng cực đại).
-        - KHÔNG kích hoạt cơ chế đấu thầu của Trạm Kiểm Lâm.
+        - Lưu đám cháy vào `self.active_fires` với trạng thái "UNVERIFIED" (Trạm chưa biết).
+        - Sinh cụm điểm nóng tâm cháy (risk_score = 1.0) ngay tại (lat, lon) để màu đỏ
+          tập trung đúng vào chấm cháy.
+        - Các HeatNode xung quanh giảm dần cường độ theo hàm Gaussian theo khoảng cách
+          thay vì gán phẳng 1.0 trên toàn bán kính.
         """
         fire_lat = float(lat)
         fire_lon = float(lon)
-        ban_kinh_m = max(50.0, float(radius_m))
+        ban_kinh_m = max(100.0, float(radius_m))
+        fid = fire_id or f"FIRE_{int(datetime.now().timestamp() * 1000)}"
         affected_nodes: list[HeatNode] = []
 
-        for node in self.heat_nodes:
-            dist_m = self._khoang_cach_mot_phang_m(fire_lat, fire_lon, node.lat, node.lon)
-            if dist_m <= ban_kinh_m:
-                node.risk_score = 1.0
-                node.locked_by = None
-                node.fire_center = (fire_lat, fire_lon)
-                node.fire_status = "UNVERIFIED"
-                node.fire_id = fire_id
-                affected_nodes.append(node)
-
-        if not affected_nodes and self.heat_nodes:
-            nearest_node = min(
+        # Xác định phân khu chứa tâm cháy
+        fire_zone_id = None
+        for feat in self.patrol_zones.get("features", []):
+            if self._diem_nam_trong_vung(fire_lat, fire_lon, feat):
+                fire_zone_id = feat.get("properties", {}).get("zone_id")
+                break
+        if not fire_zone_id and self.heat_nodes:
+            nearest_any = min(
                 self.heat_nodes,
                 key=lambda n: self._khoang_cach_mot_phang_m(fire_lat, fire_lon, n.lat, n.lon)
             )
-            if self._khoang_cach_mot_phang_m(fire_lat, fire_lon, nearest_node.lat, nearest_node.lon) <= max(ban_kinh_m * 2.5, 1500.0):
-                nearest_node.risk_score = 1.0
-                nearest_node.locked_by = None
-                nearest_node.fire_center = (fire_lat, fire_lon)
-                nearest_node.fire_status = "UNVERIFIED"
-                nearest_node.fire_id = fire_id
-                affected_nodes.append(nearest_node)
+            fire_zone_id = nearest_any.zone_id
+        fire_zone_id = fire_zone_id or "ZONE_01"
+
+        if not any(
+            self._khoang_cach_mot_phang_m(fire_lat, fire_lon, float(f["lat"]), float(f["lon"])) <= 100.0
+            for f in self.active_fires
+        ):
+            self.active_fires.append({
+                "fire_id": fid,
+                "lat": round(fire_lat, 6),
+                "lon": round(fire_lon, 6),
+                "radius_m": ban_kinh_m,
+                "zone_id": fire_zone_id,
+                "status": "UNVERIFIED",
+            })
+
+        # 1. Tạo điểm nóng trung tâm ngay tại (fire_lat, fire_lon) và vòng lõi 75m xung quanh
+        met_tren_do_vi = 111320.0
+        met_tren_do_kinh = 111320.0 * max(0.2, math.cos(math.radians(fire_lat)))
+        core_offsets = [
+            (0.0, 0.0, 1.0),
+            (75.0 / met_tren_do_vi, 0.0, 0.94),
+            (-75.0 / met_tren_do_vi, 0.0, 0.94),
+            (0.0, 75.0 / met_tren_do_kinh, 0.94),
+            (0.0, -75.0 / met_tren_do_kinh, 0.94),
+        ]
+        for d_lat, d_lon, score in core_offsets:
+            hotspot = HeatNode(
+                lat=fire_lat + d_lat,
+                lon=fire_lon + d_lon,
+                risk_score=score,
+                zone_id=fire_zone_id,
+                locked_by=None,
+                fire_center=(fire_lat, fire_lon),
+                fire_status="UNVERIFIED",
+                fire_id=fid,
+                is_fire_hotspot=True,
+            )
+            self.heat_nodes.append(hotspot)
+            affected_nodes.append(hotspot)
+
+        # 2. Lan tỏa nhiệt giảm dần theo khoảng cách (Gaussian decay) ra các HeatNode lân cận
+        for node in self.heat_nodes:
+            if getattr(node, "is_fire_hotspot", False):
+                continue
+            dist_m = self._khoang_cach_mot_phang_m(fire_lat, fire_lon, node.lat, node.lon)
+            if dist_m <= ban_kinh_m:
+                ratio = dist_m / ban_kinh_m
+                decayed_score = max(0.35, math.exp(-3.2 * (ratio * ratio)))
+                node.risk_score = round(max(float(node.risk_score), decayed_score), 4)
+                node.locked_by = None
+                node.fire_center = (fire_lat, fire_lon)
+                node.fire_status = "UNVERIFIED"
+                node.fire_id = fid
+                affected_nodes.append(node)
 
         return affected_nodes
 
