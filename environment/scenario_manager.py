@@ -76,8 +76,8 @@ class ScenarioManager:
     """
     COOLING_RADIUS_M = 600.0
     COOLING_RATE_PER_SEC = 0.35
-    STALENESS_RATE_PER_SEC = 0.01
-    MAX_STALENESS_RISK = 0.65
+    STALENESS_RATE_PER_SEC = 0.025
+    MAX_STALENESS_RISK = 0.68
     MIN_SAFE_RISK = 0.05
 
     def __init__(self, data_dir: str = "data", nodes_per_zone: int = 30):
@@ -288,7 +288,7 @@ class ScenarioManager:
                     HeatNode(
                         lat=cand_lat,
                         lon=cand_lon,
-                        risk_score=round(rng.uniform(0.05, 0.22), 4),
+                        risk_score=round(rng.uniform(0.18, 0.48), 4),
                         zone_id=zone_id,
                     )
                 )
@@ -386,9 +386,9 @@ class ScenarioManager:
         Cập nhật Bản đồ độ cũ dữ liệu / Độ bất định giám sát (Uncertainty / Staleness Map):
         - Cooling Radius = 600m, Cooling Rate = 0.35/s: HeatNode trong bán kính <= 600m của UAV
           đang hoạt động giảm dần risk_score theo hiệu ứng làm mượt tỏa từ tâm UAV (nhanh hơn ở tâm,
-          chậm dần ra biên 600m, mất ~1.5-2s để dọn sạch từ 0.65 về 0.05), giúp UAV lướt mượt qua tâm.
-        - Staleness Rate = 0.01/s: HeatNode ngoài tầm quét (> 600m) tăng dần 0.01/giây,
-          khóa trần tối đa ở 0.65 (chỉ active_fires mới giữ mức 1.0).
+          chậm dần ra biên 600m, mất ~1.5-2s để dọn sạch từ 0.68 về 0.05), giúp UAV lướt mượt qua tâm.
+        - Staleness Rate = 0.025/s: HeatNode ngoài tầm quét (> 600m) tăng dần 0.025/giây,
+          khóa trần tối đa ở 0.68 (chỉ active_fires mới giữ mức 1.0).
         """
         dt_sec = max(0.0, float(dt))
         if active_uavs is None:

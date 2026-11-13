@@ -779,7 +779,7 @@
                 <button class="btn btn-ok" onclick="injectBattery(100)" title="Nạp đầy pin 100%">Sạc</button>
             </div>
 
-            <!-- Top-right: Layer toggles (A2G, FANET, LEO disabled by default) -->
+            <!-- Top-right: Layer toggles (A2G, LEO disabled by default; FANET enabled) -->
             <div class="map-float layer-panel">
                 <div class="layer-panel-header">
                     <span class="panel-title-sm">
@@ -794,7 +794,7 @@
                     <label class="chk-label"><input type="checkbox" id="chkRfPackets" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#10b981"></i>Tia Gói tin (RF)</label>
                     <label class="chk-label"><input type="checkbox" id="chkE2E" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#38bdf8"></i>Tuyến E2E</label>
                     <label class="chk-label"><input type="checkbox" id="chkLabels" checked onchange="toggleLabels()"><i class="legend-dot" style="background:#e2e8f0"></i>Nhãn tên</label>
-                    <label class="chk-label"><input type="checkbox" id="chkFanet" onchange="toggleLayers()"><i class="legend-dot" style="background:#f59e0b"></i>Tia FANET</label>
+                    <label class="chk-label"><input type="checkbox" id="chkFanet" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#f59e0b"></i>Tia FANET</label>
                     <label class="chk-label"><input type="checkbox" id="chkA2G" onchange="toggleLayers()"><i class="legend-dot" style="background:#22c55e"></i>Tia A2G</label>
                     <label class="chk-label"><input type="checkbox" id="chkLeo" onchange="toggleLayers()"><i class="legend-dot" style="background:#a855f7"></i>Tia Vệ tinh</label>
                 </div>
@@ -891,20 +891,20 @@
         window.addEventListener('resize', () => map.invalidateSize());
         setTimeout(() => map.invalidateSize(), 150);
 
-        // Mặc định bật: 7 Vùng, Heatmap, Vòng quét 600m, Tuyến E2E, Tia Gói tin RF.
-        // Các lớp A2G, FANET, Vệ tinh LEO được tắt mặc định để giao diện gọn mượt.
+        // Mặc định bật: 7 Vùng, Heatmap, Vòng quét 600m, Tuyến E2E, Tia Gói tin RF, Tia FANET.
+        // Các lớp A2G, Vệ tinh LEO được tắt mặc định để giao diện gọn mượt.
         const zoneLayer = L.layerGroup().addTo(map);
         const heatmapLayer = L.heatLayer([], {
             radius: 22,
             blur: Math.round(22 * 0.8),
             maxZoom: 15,
             minOpacity: 0.0,
-            max: 1.8,
-            gradient: { 0.25: '#22c55e', 0.55: '#eab308', 0.80: '#f97316', 1.0: '#ef4444' }
+            max: 1.35,
+            gradient: { 0.20: '#22c55e', 0.42: '#eab308', 0.75: '#f97316', 0.95: '#ef4444' }
         }).addTo(map);
         const scanRadiusLayer = L.layerGroup().addTo(map);
         const a2gLinkLayer = L.layerGroup();
-        const fanetLinkLayer = L.layerGroup();
+        const fanetLinkLayer = L.layerGroup().addTo(map);
         const leoLinkLayer = L.layerGroup();
         const e2eLayer = L.layerGroup().addTo(map);
         const rfPacketLayer = L.layerGroup().addTo(map);
@@ -1026,7 +1026,7 @@
                 }
                 // Làm mượt hiển thị tỏa từ tâm UAV (0m -> 0.15) ra mép bán kính quét (600m -> 1.0)
                 const radialFactor = dMin <= 600 ? (0.15 + 0.85 * (dMin / 600)) : 1.0;
-                const displayIntensity = (risk - 0.05) * radialFactor;
+                const displayIntensity = Math.min(0.80, (risk - 0.05) * 1.22) * radialFactor;
                 if (displayIntensity > 0.015) {
                     pendingHeatLatLngs.push([nLat, nLon, displayIntensity]);
                 }
@@ -1053,10 +1053,11 @@
                     if (el) el.checked = true;
                 });
             } else {
-                // Chế độ mặc định gọn: bật RF + E2E, tắt A2G/FANET/LEO
+                // Chế độ mặc định gọn: bật RF + E2E + FANET, tắt A2G/LEO
                 document.getElementById('chkRfPackets').checked = true;
                 document.getElementById('chkE2E').checked = true;
-                ['chkA2G', 'chkFanet', 'chkLeo'].forEach(id => {
+                document.getElementById('chkFanet').checked = true;
+                ['chkA2G', 'chkLeo'].forEach(id => {
                     const el = document.getElementById(id);
                     if (el) el.checked = false;
                 });
@@ -1299,6 +1300,28 @@
                 }
             }
 
+            const stRef = stations[0];
+            const airborneFanetUavs = nodesCache.filter(n => {
+                if (n.loai !== 'MÁY_BAY') return false;
+                if (n.is_reserve || n.state === 'STANDBY' || n.state === 'CHARGING' || n.state === 'OFFLINE') return false;
+                const nearSt = Boolean(stRef && distMeters(Number(n.vi_do), Number(n.kinh_do), Number(stRef.vi_do), Number(stRef.kinh_do)) <= 100);
+                return !nearSt;
+            });
+
+            for (let i = 0; i < airborneFanetUavs.length; i++) {
+                const u1 = airborneFanetUavs[i];
+                for (let j = i + 1; j < airborneFanetUavs.length; j++) {
+                    const u2 = airborneFanetUavs[j];
+                    if (selectedNodeId && u1.id !== selectedNodeId && u2.id !== selectedNodeId) continue;
+                    const d = distMeters(Number(u1.vi_do), Number(u1.kinh_do), Number(u2.vi_do), Number(u2.kinh_do));
+                    if (d <= 2200) {
+                        L.polyline([[u1.vi_do, u1.kinh_do], [u2.vi_do, u2.kinh_do]], {
+                            color: '#f59e0b', weight: 1.25, dashArray: '4,5', opacity: 0.45
+                        }).addTo(fanetLinkLayer);
+                    }
+                }
+            }
+
             nodesCache.forEach(n => {
                 if (n.state === 'OFFLINE') return;
                 if (selectedNodeId && n.id !== selectedNodeId && n.relay_target_id !== selectedNodeId) return;
@@ -1322,7 +1345,7 @@
                         const rlNearStation = Boolean(rl && st && distMeters(Number(rl.vi_do), Number(rl.kinh_do), Number(st.vi_do), Number(st.kinh_do)) <= 100);
                         if (rl && !rl.is_reserve && rl.state !== 'STANDBY' && rl.state !== 'CHARGING' && !rlNearStation) {
                             L.polyline([[n.vi_do, n.kinh_do], [rl.vi_do, rl.kinh_do]], {
-                                color: '#f59e0b', weight: 2.2, dashArray: '5,4', opacity: 0.88
+                                color: '#f59e0b', weight: 2.4, dashArray: '6,4', opacity: 0.92
                             }).addTo(fanetLinkLayer);
                         }
                     } else if (n.current_link === 'LEO_SATELLITE') {

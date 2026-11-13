@@ -150,9 +150,8 @@ class UAVAgent(BaseAgent):
         self.pin_hien_tai = self.pin_toi_da * min(100.0, max(0.0, float(phan_tram_pin))) / 100.0
         if self.pin_hien_tai <= 0.0:
             self._giai_phong_uav_chuyen_tiep()
-            self._ket_thuc_khoanh_vung_chay()
-            self.toa_do_muc_tieu = None
             self.chuyen_trang_thai(AgentState.OFFLINE)
+            await self._ban_giao_su_co_dang_giu(0.0)
             await self._phat_yeu_cau_ban_giao_vung()
             await self._goi_uav_du_bi_thay_ca()
         elif float(phan_tram_pin) < LOW_BATTERY_THRESHOLD:
@@ -793,6 +792,25 @@ class UAVAgent(BaseAgent):
         except RuntimeError:
             self._tac_vu_su_co = None
 
+    async def _ban_giao_su_co_dang_giu(self, pin_du_kien_pct: float):
+        """Mở khóa đám cháy, hủy tác vụ hiện tại và bàn giao P2P cho đồng đội cùng phân khu khi UAV sập hoặc pin yếu."""
+        if self._tac_vu_su_co and not self._tac_vu_su_co.done():
+            self._tac_vu_su_co.cancel()
+        self._tac_vu_su_co = None
+
+        muc_tieu_chay = self._tam_khoanh_vung_chay or self.toa_do_muc_tieu
+        if hasattr(self.bo_dinh_tuyen, "mo_khoa_muc_tieu_chay"):
+            self.bo_dinh_tuyen.mo_khoa_muc_tieu_chay(self.ma_dinh_danh, ha_nhiet=False)
+
+        if muc_tieu_chay and muc_tieu_chay.get("vi_do") is not None and muc_tieu_chay.get("kinh_do") is not None:
+            fire_lat = float(muc_tieu_chay["vi_do"])
+            fire_lon = float(muc_tieu_chay["kinh_do"])
+            self._su_co_da_nho_dong_doi.discard((round(fire_lat, 4), round(fire_lon, 4)))
+            await self._phat_tin_nhan_p2p_nho_dong_doi(fire_lat, fire_lon, pin_du_kien_pct)
+
+        self._ket_thuc_khoanh_vung_chay()
+        self.toa_do_muc_tieu = None
+
     async def _phat_tin_nhan_p2p_nho_dong_doi(
         self,
         fire_lat: float,
@@ -812,7 +830,20 @@ class UAVAgent(BaseAgent):
             if u.loai_tac_nhan == "MÁY_BAY"
             and u.ma_dinh_danh != self.ma_dinh_danh
             and getattr(u, "zone_id", None) == self.zone_id
-            and u.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY_RTB, AgentState.RETURNING, AgentState.CHARGING)
+            and not u._dang_o_tai_tram()
+            and u.trang_thai not in (
+                AgentState.OFFLINE,
+                AgentState.IDLE,
+                AgentState.LOW_BATTERY_RTB,
+                AgentState.RETURNING,
+                AgentState.CHARGING,
+            )
+            and getattr(u, "uav_state", None) not in (
+                UAVState.STANDBY,
+                UAVState.CHARGING,
+                UAVState.RETURNING,
+                UAVState.OFFLINE,
+            )
             and (not getattr(u, "_tac_vu_su_co", None) or getattr(u, "_tac_vu_su_co").done())
         ]
         if not dong_doi_cung_vung:
@@ -1186,9 +1217,16 @@ class UAVAgent(BaseAgent):
             timeout = min(1800.0, max(60.0, khoang_cach / van_toc * 2.0 + 30.0))
             deadline = time.monotonic() + timeout
             den_muc_tieu_ev = self._get_den_muc_tieu_event()
+            abort_states = (
+                AgentState.OFFLINE,
+                AgentState.LOW_BATTERY,
+                AgentState.LOW_BATTERY_RTB,
+                AgentState.RETURNING,
+                AgentState.CHARGING,
+            )
             while not den_muc_tieu_ev.is_set():
-                if self.trang_thai in (AgentState.OFFLINE, AgentState.LOW_BATTERY) or self.phan_tram_pin <= 5.0:
-                    await self._bao_huy_nhiem_vu(su_co, "Pin sập hoặc UAV chuyển OFFLINE")
+                if self.trang_thai in abort_states or self.phan_tram_pin <= 5.0:
+                    await self._bao_huy_nhiem_vu(su_co, "Pin sập hoặc UAV đang quay về sạc")
                     return
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -1198,8 +1236,8 @@ class UAVAgent(BaseAgent):
                     await asyncio.wait_for(den_muc_tieu_ev.wait(), timeout=min(1.0, remaining))
                 except asyncio.TimeoutError:
                     continue
-            if self.trang_thai in (AgentState.OFFLINE, AgentState.LOW_BATTERY) or self.phan_tram_pin <= 5.0:
-                await self._bao_huy_nhiem_vu(su_co, "Pin sập hoặc UAV chuyển OFFLINE")
+            if self.trang_thai in abort_states or self.phan_tram_pin <= 5.0:
+                await self._bao_huy_nhiem_vu(su_co, "Pin sập hoặc UAV đang quay về sạc")
                 return
             await self._dau_gia_va_truyen(su_co)
             self._bat_dau_khoanh_vung_su_co(su_co)
@@ -1213,7 +1251,14 @@ class UAVAgent(BaseAgent):
             )
         finally:
             self.toa_do_muc_tieu = None
-            if self.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY):
+            if self.trang_thai not in (
+                AgentState.OFFLINE,
+                AgentState.LOW_BATTERY,
+                AgentState.LOW_BATTERY_RTB,
+                AgentState.RETURNING,
+                AgentState.CHARGING,
+                AgentState.IDLE,
+            ):
                 self.chuyen_trang_thai(AgentState.PATROLLING)
             self._tac_vu_su_co = None
 
@@ -1307,15 +1352,7 @@ class UAVAgent(BaseAgent):
 
         if not getattr(self, "_da_goi_du_bi_thay_ca", False):
             self._da_goi_du_bi_thay_ca = True
-            if self._tam_khoanh_vung_chay is not None:
-                fire_lat = float(self._tam_khoanh_vung_chay["vi_do"])
-                fire_lon = float(self._tam_khoanh_vung_chay["kinh_do"])
-                if hasattr(self.bo_dinh_tuyen, "mo_khoa_muc_tieu_chay"):
-                    self.bo_dinh_tuyen.mo_khoa_muc_tieu_chay(self.ma_dinh_danh, ha_nhiet=False)
-                await self._phat_tin_nhan_p2p_nho_dong_doi(fire_lat, fire_lon, self.phan_tram_pin)
-                self._ket_thuc_khoanh_vung_chay()
-
-            self.toa_do_muc_tieu = None
+            await self._ban_giao_su_co_dang_giu(self.phan_tram_pin)
             self._giai_phong_uav_chuyen_tiep()
             if not self._yeu_cau_ban_giao_vung_da_phat():
                 await self._phat_yeu_cau_ban_giao_vung()
