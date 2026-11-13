@@ -24,6 +24,8 @@ class MessageBroker:
     def __init__(self, physics_engine: Any, scenario_manager: Any):
         self.physics: Any = physics_engine
         self.scenario: Any = scenario_manager
+        if self.scenario is not None:
+            setattr(self.scenario, "_broker_ref", self)
         self.danh_sach_tac_nhan: Dict[str, Any] = {}
         self.danh_sach_client_ws: List[WebSocket] = []
         self.phien_dau_gia_gan_nhat: Optional[dict[str, Any]] = None

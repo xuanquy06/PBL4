@@ -427,20 +427,20 @@ class UAVAgent(BaseAgent):
         met_tren_do_vi = 111320.0
         met_tren_do_kinh = 111320.0 * max(0.2, math.cos(math.radians(cur_lat)))
 
-        # Làm mát nhẹ các HeatNode thông thường (< 0.85) mà UAV vừa bay qua sát (<= 160m)
-        # Tuyệt đối không làm mát các nút thuộc đám cháy active_fires từ nút Báo cháy
+        # Làm mát các HeatNode không phải active_fire trong toàn tầm quét cảm biến (Cooling Radius = 600m)
         scenario = getattr(self.bo_dinh_tuyen, "scenario", None)
-        for node in heat_nodes:
-            if (
-                getattr(node, "is_fire_hotspot", False)
-                or getattr(node, "fire_center", False)
-                or getattr(node, "fire_status", "") in ("BURNING", "CONTAINING")
-                or (scenario and hasattr(scenario, "is_in_active_fire") and scenario.is_in_active_fire(node.lat, node.lon))
-            ):
-                continue
-            d_node = self._khoang_cach_m(cur_lat, cur_lon, node.lat, node.lon)
-            if d_node <= 160.0 and node.risk_score < FIRE_RISK_THRESHOLD:
-                node.risk_score = 0.05
+        if getattr(self, "uav_state", None) in (UAVState.PATROLLING, UAVState.CONTAINING):
+            for node in all_heat_nodes:
+                if (
+                    getattr(node, "is_fire_hotspot", False)
+                    or getattr(node, "fire_center", False)
+                    or getattr(node, "fire_status", "") in ("BURNING", "CONTAINING")
+                    or (scenario and hasattr(scenario, "is_in_active_fire") and scenario.is_in_active_fire(node.lat, node.lon, node=node))
+                ):
+                    continue
+                d_node = self._khoang_cach_m(cur_lat, cur_lon, node.lat, node.lon)
+                if d_node <= SCAN_RADIUS_M and node.risk_score < FIRE_RISK_THRESHOLD:
+                    node.risk_score = 0.05
 
         dong_doi_hoat_dong = [
             other for other in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()

@@ -74,6 +74,11 @@ class ScenarioManager:
     3. Quản lý bản đồ điểm nhiệt (HeatNode) trong 7 vùng Z1-Z7 bằng thuật toán Ray-Casting.
     4. Quản lý đọc/ghi cấu hình mạng và xuất dữ liệu thực nghiệm QoS ra file CSV.
     """
+    COOLING_RADIUS_M = 600.0
+    STALENESS_RATE_PER_SEC = 0.01
+    MAX_STALENESS_RISK = 0.65
+    MIN_SAFE_RISK = 0.05
+
     def __init__(self, data_dir: str = "data", nodes_per_zone: int = 30):
         self.data_dir = data_dir
         os.makedirs(self.data_dir, exist_ok=True)
@@ -319,7 +324,7 @@ class ScenarioManager:
                 or getattr(node, "fire_center", None) is not None
                 or getattr(node, "fire_id", None) is not None
                 or getattr(node, "locked_by", None) is not None
-                or float(node.risk_score) > 0.55
+                or float(node.risk_score) > self.MAX_STALENESS_RISK
             ):
                 node.risk_score = 0.15
                 node.locked_by = None
@@ -330,22 +335,72 @@ class ScenarioManager:
         self.heat_nodes = kept_nodes
         return cleared_count
 
-    def update_heatmap(self, dt: float) -> list[HeatNode]:
+    @staticmethod
+    def _lay_toa_do_uav_dang_hoat_dong(active_uavs: Optional[list]) -> list[tuple[float, float]]:
+        """Lấy tọa độ (lat, lon) của các UAV đang bay giám sát (PATROLLING hoặc CONTAINING)."""
+        coords: list[tuple[float, float]] = []
+        if not active_uavs:
+            return coords
+        for uav in active_uavs:
+            if isinstance(uav, dict):
+                if uav.get("loai") not in (None, "MÁY_BAY", "UAV"):
+                    continue
+                state = str(uav.get("state", "")).upper()
+                if state not in ("PATROLLING", "CONTAINING"):
+                    continue
+                lat = uav.get("vi_do", uav.get("lat"))
+                lon = uav.get("kinh_do", uav.get("lon"))
+                if lat is not None and lon is not None:
+                    coords.append((float(lat), float(lon)))
+                continue
+
+            if getattr(uav, "loai_tac_nhan", None) != "MÁY_BAY":
+                continue
+            fsm_val = getattr(getattr(uav, "trang_thai", None), "value", str(getattr(uav, "trang_thai", "")))
+            uav_state_obj = getattr(uav, "uav_state", None)
+            uav_state_val = str(getattr(uav_state_obj, "value", uav_state_obj or "")).upper()
+            if fsm_val in ("NGẮT_KẾT_NỐI", "CHỜ_DỰ_BỊ", "ĐANG_SẠC", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC"):
+                continue
+            if uav_state_val not in ("PATROLLING", "CONTAINING"):
+                continue
+            toa_do = getattr(uav, "toa_do", None) or {}
+            lat = getattr(uav, "lat", toa_do.get("vi_do"))
+            lon = getattr(uav, "lon", toa_do.get("kinh_do"))
+            if lat is not None and lon is not None:
+                coords.append((float(lat), float(lon)))
+        return coords
+
+    def update_heatmap(self, dt: float, active_uavs: Optional[list] = None) -> list[HeatNode]:
         """
-        Các điểm nhiệt nền tự động tăng nhẹ risk_score theo thời gian dt (giây),
-        giới hạn mức nền tối đa 0.55 để tránh báo cháy giả và giữ vùng cháy thật nổi bật.
-        Nếu điểm thuộc `active_fires`, tuyệt đối giữ nguyên giá trị nhiệt, không làm mát hay tự tắt.
+        Cập nhật Bản đồ độ cũ dữ liệu / Độ bất định giám sát (Uncertainty / Staleness Map):
+        - Cooling Radius = 600m: HeatNode nằm trong bán kính <= 600m của ít nhất 1 UAV đang
+          PATROLLING hoặc CONTAINING (không phải active_fire) lập tức reset risk_score = 0.05.
+        - Staleness Rate = 0.01/s: HeatNode ngoài tầm quét (> 600m) tăng dần 0.01/giây,
+          khóa trần tối đa ở 0.65 (chỉ active_fires mới giữ mức 1.0).
         """
         dt_sec = max(0.0, float(dt))
-        if dt_sec <= 0.0:
-            return self.heat_nodes
+        if active_uavs is None:
+            broker_ref = getattr(self, "_broker_ref", None)
+            if broker_ref is not None and hasattr(broker_ref, "danh_sach_tac_nhan"):
+                active_uavs = list(broker_ref.danh_sach_tac_nhan.values())
+        uav_coords = self._lay_toa_do_uav_dang_hoat_dong(active_uavs)
 
         for node in self.heat_nodes:
             if self.is_in_active_fire(node.lat, node.lon, node=node):
                 continue
-            if node.risk_score < 0.55:
-                delta_risk = random.uniform(0.0012, 0.0030) * dt_sec
-                node.risk_score = round(min(0.55, max(0.05, node.risk_score + delta_risk)), 4)
+
+            trong_tam_quet = any(
+                self._khoang_cach_mot_phang_m(u_lat, u_lon, node.lat, node.lon) <= self.COOLING_RADIUS_M
+                for u_lat, u_lon in uav_coords
+            )
+            if trong_tam_quet:
+                node.risk_score = self.MIN_SAFE_RISK
+            elif dt_sec > 0.0 and float(node.risk_score) < self.MAX_STALENESS_RISK:
+                delta_risk = self.STALENESS_RATE_PER_SEC * dt_sec
+                node.risk_score = round(
+                    min(self.MAX_STALENESS_RISK, max(self.MIN_SAFE_RISK, float(node.risk_score) + delta_risk)),
+                    4,
+                )
 
         return self.heat_nodes
 

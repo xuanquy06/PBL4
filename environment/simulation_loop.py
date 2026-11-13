@@ -195,14 +195,14 @@ class SimulationLoop:
             self.so_buoc_thoi_gian += 1
             dt_mo_phong = dt_thuc * self.time_scale
 
-            # Cập nhật bản đồ điểm nhiệt (HeatNode) tự động tăng nhẹ risk_score theo thời gian
-            self.update_heatmap(dt_mo_phong)
-
             cac_tac_vu_vat_ly = [
                 agent.cap_nhat_vat_ly(dt_mo_phong)
                 for agent in self.broker.danh_sach_tac_nhan.values()
             ]
             await asyncio.gather(*cac_tac_vu_vat_ly)
+
+            # Cập nhật Heatmap sau khi UAV cập nhật tọa độ: làm mát <= 600m và tăng staleness 0.01/s ngoài tầm quét
+            self.update_heatmap(dt_mo_phong)
 
             # Watchdog kiểm tra các nhiệm vụ cháy: nếu UAV trúng thầu gặp nạn/OFFLINE thì kích hoạt tái đấu thầu ngay
             for ma_phien, mission in list(self._active_fire_missions.items()):
@@ -501,11 +501,12 @@ class SimulationLoop:
 
     def update_heatmap(self, dt: float) -> list:
         """
-        Cập nhật các điểm nhiệt (HeatNode) tự động tăng nhẹ risk_score theo thời gian dt.
+        Cập nhật các điểm nhiệt (HeatNode): làm mát tức thì <= 600m quanh UAV và tăng staleness 0.01/s ngoài tầm quét.
         """
         scenario = getattr(self, "scenario", None)
         if scenario is not None and hasattr(scenario, "update_heatmap"):
-            return scenario.update_heatmap(dt)
+            active_uavs = list(self.broker.danh_sach_tac_nhan.values())
+            return scenario.update_heatmap(dt, active_uavs=active_uavs)
         return []
 
     def trigger_fire(self, lat: float, lon: float, radius_m: float = 800.0) -> list:
