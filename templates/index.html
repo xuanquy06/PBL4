@@ -1308,6 +1308,10 @@
                 return !nearSt;
             });
 
+            const drawnFanetPairs = new Set();
+            const fanetLinkStyle = { color: '#f59e0b', weight: 1.25, dashArray: '4,5', opacity: 0.45 };
+            const getFanetPairKey = (idA, idB) => (idA < idB ? `${idA}|${idB}` : `${idB}|${idA}`);
+
             for (let i = 0; i < airborneFanetUavs.length; i++) {
                 const u1 = airborneFanetUavs[i];
                 for (let j = i + 1; j < airborneFanetUavs.length; j++) {
@@ -1315,9 +1319,8 @@
                     if (selectedNodeId && u1.id !== selectedNodeId && u2.id !== selectedNodeId) continue;
                     const d = distMeters(Number(u1.vi_do), Number(u1.kinh_do), Number(u2.vi_do), Number(u2.kinh_do));
                     if (d <= 2200) {
-                        L.polyline([[u1.vi_do, u1.kinh_do], [u2.vi_do, u2.kinh_do]], {
-                            color: '#f59e0b', weight: 1.25, dashArray: '4,5', opacity: 0.45
-                        }).addTo(fanetLinkLayer);
+                        drawnFanetPairs.add(getFanetPairKey(u1.id, u2.id));
+                        L.polyline([[u1.vi_do, u1.kinh_do], [u2.vi_do, u2.kinh_do]], fanetLinkStyle).addTo(fanetLinkLayer);
                     }
                 }
             }
@@ -1344,9 +1347,11 @@
                         const rl = byId.get(n.relay_target_id);
                         const rlNearStation = Boolean(rl && st && distMeters(Number(rl.vi_do), Number(rl.kinh_do), Number(st.vi_do), Number(st.kinh_do)) <= 100);
                         if (rl && !rl.is_reserve && rl.state !== 'STANDBY' && rl.state !== 'CHARGING' && !rlNearStation) {
-                            L.polyline([[n.vi_do, n.kinh_do], [rl.vi_do, rl.kinh_do]], {
-                                color: '#f59e0b', weight: 2.4, dashArray: '6,4', opacity: 0.92
-                            }).addTo(fanetLinkLayer);
+                            const pairKey = getFanetPairKey(n.id, rl.id);
+                            if (!drawnFanetPairs.has(pairKey)) {
+                                drawnFanetPairs.add(pairKey);
+                                L.polyline([[n.vi_do, n.kinh_do], [rl.vi_do, rl.kinh_do]], fanetLinkStyle).addTo(fanetLinkLayer);
+                            }
                         }
                     } else if (n.current_link === 'LEO_SATELLITE') {
                         const sat = byId.get(n.relay_target_id) || sats[0];
