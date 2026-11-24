@@ -87,7 +87,8 @@ PBL4/
 ├── static/                     # Thư viện Leaflet cục bộ
 ├── tests/                      # Unit & Integration Tests
 ├── AGENT.md                    # Quy chuẩn kiến trúc & thông số
-├── main.py                     # Điểm khởi chạy FastAPI
+├── main.py                     # Điểm khởi chạy Server chính (FastAPI + TCP :9000 + UDP :9001)
+├── uav_client.py               # Tiến trình UAV Client độc lập kết nối TCP/UDP từ Terminal/Máy khác
 └── requirements.txt            # Thư viện Python phụ thuộc
 ```
 
@@ -95,6 +96,7 @@ PBL4/
 
 ## 6. Hướng dẫn Cài đặt & Chạy Chương trình
 
+### Chế độ 1: Chạy Server Trạm Kiểm Lâm & Bản đồ (`Terminal 1` / `Máy 1`)
 ```bash
 pip install -r requirements.txt
 python main.py
@@ -102,6 +104,13 @@ python main.py
 Mở trình duyệt tại:
 - **Bản đồ Chiến thuật:** `http://127.0.0.1:8000/`
 - **Dashboard HĐH & Mạng:** `http://127.0.0.1:8000/dashboard`
+
+### Chế độ 2: Kết nối UAV Client Độc lập theo mô hình Client–Server (`Terminal 2` hoặc `Máy 2` chung Wi-Fi)
+Khi `main.py` khởi chạy, Terminal sẽ in sẵn địa chỉ IP LAN và câu lệnh mẫu. Mở cửa sổ Terminal khác (hoặc laptop thứ 2 chung mạng LAN) và chạy:
+```bash
+python uav_client.py --host 127.0.0.1 --id UAV_EXT_01 --zone ZONE_03
+```
+*(Nếu chạy từ máy tính thứ 2, thay `127.0.0.1` bằng IP LAN của máy chạy Server, ví dụ `--host 192.168.1.15`).*
 
 ---
 
@@ -113,3 +122,6 @@ Mở trình duyệt tại:
 2. **Demo Hệ điều hành (Counting Semaphore, Mutex & Priority Scheduling):**
    - Bấm **Pin yếu (18%)** cho 4–5 UAV liên tiếp ➔ Quan sát ở tab **OS Kernel & Sync** (và topbar `Sạc Sem`) đúng **3 UAV** chiếm `DOCK #1..#3` (`CHARGING`), các UAV về sau bị chặn ở hàng đợi **`WAITING_DOCK`**; ngay khi 1 chiếc sạc đầy `100%` gọi `release()`, chiếc chờ tiếp theo tự động vào sạc.
    - Bảng **Priority Queue** hiển thị gói cháy `P0` được xử lý ưu tiên trước `P1`/`P2`, cùng danh sách các **Thread OS thật** (`SAGSINS-TCP-Server`, `SAGSINS-UDP-Server`, `SAGSINS-Worker-*`).
+3. **Demo Client–Server Đa tiến trình & Bắt gói Wireshark:**
+   - Chạy `python uav_client.py --host <IP_SERVER> --id UAV_EXT_01 --zone ZONE_03` ở Terminal/máy khác ➔ quan sát trên bản đồ xuất hiện ngay chiếc `[CLIENT] UAV_EXT_01` màu xanh ngọc kèm **PID riêng** và Thread `SAGSINS-TCP-Client-*` trên Server.
+   - Dùng phím `[f]` báo cháy qua TCP, `[b]` xin cổng sạc Semaphore, hoặc bấm `Ctrl+C` tắt đột ngột Client để thấy Server tự phát hiện ngắt kết nối TCP và giải phóng tài nguyên. Có thể mở **Wireshark** với filter `tcp.port == 9000 || udp.port == 9001` để bắt trực tiếp gói tin thật.

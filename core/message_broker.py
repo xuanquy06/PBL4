@@ -164,11 +164,13 @@ class MessageBroker:
 
     def dang_ky_tac_nhan(self, tac_nhan: Any):
         """Đăng ký một Node mạng (UAV, Vệ tinh, Trạm mặt đất) vào không gian mô phỏng"""
-        self.danh_sach_tac_nhan[tac_nhan.ma_dinh_danh] = tac_nhan
+        with self.os_kernel.net_state_lock:
+            self.danh_sach_tac_nhan[tac_nhan.ma_dinh_danh] = tac_nhan
         print(f"[WIRELESS MEDIUM] Đã đăng ký Node: {tac_nhan.ma_dinh_danh} ({tac_nhan.loai_tac_nhan})")
 
     def lay_tac_nhan(self, ma_dinh_danh: str) -> Optional[Any]:
-        return self.danh_sach_tac_nhan.get(ma_dinh_danh)
+        with self.os_kernel.net_state_lock:
+            return self.danh_sach_tac_nhan.get(ma_dinh_danh)
 
     def cap_nhat_nang_luong_tong(self):
         self.thong_ke_toan_mang["nang_luong_tieu_hao_joule"] = round(
@@ -944,6 +946,7 @@ class MessageBroker:
         "[TCP_ARQ]",
         "[CRC32_ERR]",
         "[TTL_DROP]",
+        "[CLIENT_NET]",
     )
 
     async def phat_su_kien_ra_web(self, loai_su_kien: str, du_lieu):
@@ -1012,7 +1015,9 @@ class MessageBroker:
             }
 
         active_air_states = ("PATROLLING", "RELAYING", "CONTAINING", "RESPONDING")
-        for agent in self.danh_sach_tac_nhan.values():
+        with self.os_kernel.net_state_lock:
+            agents_snapshot = list(self.danh_sach_tac_nhan.values())
+        for agent in agents_snapshot:
             if agent.loai_tac_nhan != "MÁY_BAY":
                 continue
             z_id = getattr(agent, "zone_id", None)
@@ -1127,9 +1132,11 @@ class MessageBroker:
         Thu thập tọa độ, pin, tuyến truyền, danh sách điểm nhiệt (heatmap), độ phủ 7 phân khu và thống kê QoS đẩy ra giao diện.
         """
         fire_routes = self.cap_nhat_tuyen_e2e_dam_chay_lien_tuc()
+        with self.os_kernel.net_state_lock:
+            agents_snapshot = list(self.danh_sach_tac_nhan.values())
         danh_sach_nodes = [
             agent.xuat_ho_so_trang_thai()
-            for agent in self.danh_sach_tac_nhan.values()
+            for agent in agents_snapshot
         ]
         if heatmap_nodes is None:
             heatmap_nodes = (

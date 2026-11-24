@@ -1275,9 +1275,12 @@
             else if (node.state === 'RELAYING') color = '#f59e0b';
             else if (node.state === 'WAITING_DOCK') color = '#fb923c';
             else if (node.state === 'RETURNING' || node.state === 'CHARGING') color = '#eab308';
+            else if (node.is_external_client) color = '#10b981';
             const isSelected = selectedNodeId === node.id;
             const ring = isSelected ? `0 0 0 3px rgba(56,189,248,0.5), 0 0 12px ${color}` : (node.is_reserve ? `0 0 5px #0284c7` : `0 0 7px ${color}`);
-            const reserveBadge = node.is_reserve ? `<span class="uav-reserve-badge">DỰ BỊ</span>` : '';
+            const reserveBadge = node.is_reserve
+                ? `<span class="uav-reserve-badge">DỰ BỊ</span>`
+                : (node.is_external_client ? `<span class="uav-reserve-badge" style="background:#10b981;color:#052e16;">CLIENT</span>` : '');
             return L.divIcon({
                 className: 'smooth-uav-marker',
                 html: `<div style="position:relative;width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:rgba(13,17,23,0.92);border:1.8px solid ${color};border-radius:50%;box-shadow:${ring};">
@@ -1558,10 +1561,12 @@
                     ? 'DỰ BỊ TRẠM'
                     : (isWaiting ? 'CHỜ SEMAPHORE' : (isCharging ? 'ĐANG SẠC (+15%/s)' : (n.current_link ? n.current_link.replace('_LINK', '').replace('_SATELLITE', '') : n.loai)));
                 const selectedCls = selectedNodeId === n.id ? 'selected' : '';
+                const clientTag = n.is_external_client ? '<span style="color:#10b981;font-weight:700;">[CLIENT] </span>' : '';
                 const reserveTag = (n.is_reserve || n.state === 'STANDBY')
                     ? '<span style="color:#38bdf8;font-weight:700;">[DỰ BỊ] </span>'
-                    : (isWaiting ? '<span style="color:#fb923c;font-weight:700;">[CHỜ SẠC] </span>' : (isCharging ? '<span style="color:#eab308;font-weight:700;">[ĐANG SẠC] </span>' : ''));
+                    : (isWaiting ? '<span style="color:#fb923c;font-weight:700;">[CHỜ SẠC] </span>' : (isCharging ? '<span style="color:#eab308;font-weight:700;">[ĐANG SẠC] </span>' : clientTag));
                 const badgeTxt = (n.is_reserve || n.state === 'STANDBY') ? 'STANDBY' : (isWaiting ? 'WAIT_SEM' : (isCharging ? 'CHARGING' : n.trang_thai));
+                const pidTxt = n.is_external_client && n.client_pid ? ` (PID:${n.client_pid})` : '';
                 return `
                     <div class="node-item ${n.state === 'OFFLINE' ? 'offline' : ''} ${selectedCls}" onclick="selectNode('${n.id}', true)">
                         <div class="n-top">
@@ -1569,7 +1574,7 @@
                             <span class="n-badge">${badgeTxt}</span>
                         </div>
                         <div class="n-sub">
-                            <span>${n.ip ? `${n.ip} · ` : ''}${n.zone_id || linkTxt}</span>
+                            <span>${n.ip ? `${n.ip} · ` : ''}${n.zone_id || linkTxt}${pidTxt}</span>
                             <span>Pin: <b style="color:${batColor}">${n.pin_pct}%</b></span>
                         </div>
                         <div class="bat-track"><div class="bat-fill" style="width:${n.pin_pct}%;background:${batColor}"></div></div>
@@ -1735,8 +1740,9 @@
             if (transportMetrics) {
                 const sockEl = document.getElementById('sysSocketPorts');
                 if (sockEl) {
+                    const extCnt = transportMetrics.external_clients_count || 0;
                     const modeTxt = transportMetrics.tcp_port > 0
-                        ? `TCP:${transportMetrics.tcp_port} · UDP:${transportMetrics.udp_port}`
+                        ? `TCP:${transportMetrics.tcp_port} · UDP:${transportMetrics.udp_port} · Ext:${extCnt}`
                         : (transportMetrics.socket_mode || 'IN_PROCESS_WIRE');
                     sockEl.textContent = modeTxt;
                 }

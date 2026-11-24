@@ -879,9 +879,11 @@
             const tcpTxt = tm.tcp_port > 0 ? `TCP 127.0.0.1:${tm.tcp_port}` : 'TCP Wire';
             const udpTxt = tm.udp_port > 0 ? `UDP 127.0.0.1:${tm.udp_port}` : 'UDP Wire';
             const totalKb = (((tm.tcp_bytes || 0) + (tm.udp_bytes || 0)) / 1024).toFixed(1);
+            const extCount = tm.external_clients_count || 0;
             bar.innerHTML = `
                 <span class="sock-pill" style="border-color:rgba(59,130,246,0.45);color:#93c5fd;">${tcpTxt} (RX:${tm.tcp_rx_packets || 0})</span>
                 <span class="sock-pill" style="border-color:rgba(168,85,247,0.45);color:#c4b5fd;">${udpTxt} (RX:${tm.udp_rx_packets || 0})</span>
+                <span class="sock-pill" style="border-color:rgba(16,185,129,0.45);color:#6ee7b7;">Clients ngoài: ${extCount}</span>
                 <span class="sock-pill" style="color:var(--accent-green);">${tm.socket_mode || 'REAL_OS_SOCKET'} · ${totalKb} KB</span>
             `;
 
@@ -1156,15 +1158,16 @@
             '[MUTEX]',
             '[TCP_ARQ]',
             '[CRC32_ERR]',
-            '[TTL_DROP]'
+            '[TTL_DROP]',
+            '[CLIENT_NET]'
         ];
 
         function classifyLogEntry(matchedTag, capDo) {
             if (matchedTag === '[OS_SYNC]' || matchedTag === '[OS_SCHED]' || matchedTag === '[MUTEX]') {
                 return { cat: 'OS', cls: 'OS' };
             }
-            if (matchedTag === '[TCP_ARQ]' || matchedTag === '[CRC32_ERR]' || matchedTag === '[TTL_DROP]') {
-                return { cat: 'NET', cls: matchedTag === '[TCP_ARQ]' ? 'NET' : 'WARN' };
+            if (matchedTag === '[TCP_ARQ]' || matchedTag === '[CRC32_ERR]' || matchedTag === '[TTL_DROP]' || matchedTag === '[CLIENT_NET]') {
+                return { cat: 'NET', cls: (matchedTag === '[TCP_ARQ]' || matchedTag === '[CLIENT_NET]') ? 'NET' : 'WARN' };
             }
             let cls = capDo || 'INFO';
             if (matchedTag === '[HEATMAP_ANOMALY]') cls = 'ALERT';

@@ -70,6 +70,10 @@ class UAVAgent(BaseAgent):
         self.relay_target_id: Optional[str] = None
         self._relay_requesters: set[str] = set()
         self._thoi_gian_beacon_tich_luy = 0.0
+        self.is_external_client = bool(kwargs.get("is_external_client", False))
+        self.client_pid = kwargs.get("client_pid")
+        self.client_addr = kwargs.get("client_addr")
+        self.last_external_heartbeat = time.time()
         if self._dang_o_tai_tram():
             self.chuyen_trang_thai(AgentState.IDLE)
             self.uav_state = UAVState.STANDBY
@@ -176,6 +180,9 @@ class UAVAgent(BaseAgent):
         ho_so["tuyen_ve_tram"] = list(getattr(self, "tuyen_ve_tram_cuc_bo", []))
         ho_so["is_reserve"] = bool(getattr(self, "uav_state", None) == UAVState.STANDBY and self._dang_o_tai_tram())
         ho_so["is_waiting_dock"] = bool(getattr(self, "uav_state", None) == UAVState.WAITING_DOCK)
+        ho_so["is_external_client"] = self.is_external_client
+        ho_so["client_pid"] = self.client_pid
+        ho_so["client_addr"] = self.client_addr
         ho_so["scan_radius_m"] = FIRE_DETECTION_RADIUS_M
         ho_so["so_nhiem_vu"] = self.so_nhiem_vu_da_nhan
         ho_so["vung_ban_giao_nhan"] = list(self._vung_tuan_tra_phu.keys())
@@ -239,6 +246,10 @@ class UAVAgent(BaseAgent):
         if dt_giay <= 0 or self.trang_thai == AgentState.OFFLINE or self.uav_state == UAVState.OFFLINE:
             return
         self.don_dep_lang_gieng_het_han()
+
+        if self.is_external_client:
+            await self._cap_nhat_duong_truyen()
+            return
 
         # 1a. Xử lý UAV đang bị chặn ở hàng đợi Semaphore trạm sạc (WAITING_DOCK)
         if self.uav_state == UAVState.WAITING_DOCK or self.trang_thai == AgentState.WAITING_DOCK:

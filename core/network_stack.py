@@ -70,6 +70,9 @@ def assign_node_ip(
         return f"10.0.99.{sat_num}"
 
     uav_num = _extract_trailing_int(node_id, 1)
+    if "EXT" in str(node_id).upper():
+        host = max(1, min(254, uav_num))
+        return f"10.0.10.{host}"
     if uav_num >= 29:
         host = max(1, min(254, uav_num - 28))
         return f"10.0.8.{host}"
@@ -195,24 +198,55 @@ def _recv_exact(conn: socket.socket, n_bytes: int) -> Optional[bytes]:
     return b"".join(chunks)
 
 
+def detect_local_lan_ip() -> str:
+    """Tìm địa chỉ IP LAN/Wi-Fi nội bộ của máy chủ (dự phòng 127.0.0.1 nếu offline)."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        return str(ip) if ip else "127.0.0.1"
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        try:
+            sock.close()
+        except OSError:
+            pass
+
+
 class RealSocketTransport:
     """
-    Lớp giao vận Socket TCP / UDP thật chạy trên giao diện loopback 127.0.0.1:
-    - TCP Server Socket + Client Socket bền vững gửi khung nhị phân kèm ACK thật.
-    - UDP Server Socket + Client Socket gửi datagram không kết nối (fire-and-forget).
-    - Hỗ trợ Packet Sniffer ring buffer để quan sát gói tin trên Web UI.
+    Lớp giao vận Multi-threaded TCP/UDP Socket Server + Client Wire cho SAGSINS:
+    - TCP Server (mặc định 0.0.0.0:9000): sinh 1 OS Thread riêng phục vụ từng Client kết nối.
+    - UDP Server (mặc định 0.0.0.0:9001): nhận datagram Telemetry không kết nối.
+    - Hỗ trợ đồng thời cả gói nội bộ 35 UAV mô phỏng lẫn tiến trình `uav_client.py` độc lập ngoài mạng LAN.
     """
 
-    def __init__(self, os_kernel: Optional["OSKernelManager"] = None):
+    def __init__(
+        self,
+        os_kernel: Optional["OSKernelManager"] = None,
+        bind_host: str = "0.0.0.0",
+        preferred_tcp_port: int = 9000,
+        preferred_udp_port: int = 9001,
+    ):
         self._os_kernel = os_kernel
         self._lock = os_kernel.net_state_lock if os_kernel is not None else threading.RLock()
         self._tcp_client_lock = threading.Lock()
         self._udp_client_lock = threading.Lock()
 
+        self.bind_host = bind_host
+        self.preferred_tcp_port = int(preferred_tcp_port)
+        self.preferred_udp_port = int(preferred_udp_port)
+
         self.running = False
         self.socket_mode = "IN_PROCESS_WIRE"
         self.tcp_port = 0
         self.udp_port = 0
+
+        self.on_external_tcp_cmd = None
+        self.on_external_udp_telemetry = None
+        self.on_external_disconnect = None
+        self.external_clients: dict[str, dict[str, Any]] = {}
 
         self._tcp_server_sock: Optional[socket.socket] = None
         self._udp_server_sock: Optional[socket.socket] = None
@@ -222,6 +256,7 @@ class RealSocketTransport:
         self._udp_thread: Optional[threading.Thread] = None
 
         self._seq_counter = 100
+        self._ext_udp_sniff_counter = 0
         self.packet_sniffer: deque[dict[str, Any]] = deque(maxlen=40)
 
         self.tcp_sent = 0
@@ -252,12 +287,18 @@ class RealSocketTransport:
         try:
             tcp_srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             tcp_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            tcp_srv.bind(("127.0.0.1", 0))
-            tcp_srv.listen(8)
+            try:
+                tcp_srv.bind((self.bind_host, self.preferred_tcp_port))
+            except OSError:
+                tcp_srv.bind((self.bind_host, 0))
+            tcp_srv.listen(32)
             tcp_srv.settimeout(0.5)
 
             udp_srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            udp_srv.bind(("127.0.0.1", 0))
+            try:
+                udp_srv.bind((self.bind_host, self.preferred_udp_port))
+            except OSError:
+                udp_srv.bind((self.bind_host, 0))
             udp_srv.settimeout(0.5)
 
             self._tcp_server_sock = tcp_srv
@@ -288,6 +329,8 @@ class RealSocketTransport:
 
     def stop(self):
         self.running = False
+        with self._lock:
+            self.external_clients.clear()
         for sock_attr in ("_tcp_client_sock", "_udp_client_sock", "_tcp_server_sock", "_udp_server_sock"):
             sock_obj = getattr(self, sock_attr, None)
             if sock_obj is not None:
@@ -310,53 +353,113 @@ class RealSocketTransport:
             return
         while self.running:
             try:
-                conn, _ = srv.accept()
+                conn, addr = srv.accept()
             except socket.timeout:
                 continue
             except OSError:
                 break
-            conn.settimeout(0.5)
-            try:
-                while self.running:
-                    try:
-                        len_hdr = _recv_exact(conn, 4)
-                        if not len_hdr:
-                            break
-                        frame_len = struct.unpack("!I", len_hdr)[0]
-                        if frame_len <= 0 or frame_len > 65536 + HEADER_SIZE:
-                            break
-                        frame = _recv_exact(conn, frame_len)
-                        if not frame:
-                            break
-                    except socket.timeout:
-                        continue
-                    except OSError:
-                        break
+            worker = threading.Thread(
+                target=self._handle_tcp_client,
+                args=(conn, addr),
+                name=f"SAGSINS-TCP-Client-{addr[1]}",
+                daemon=True,
+            )
+            worker.start()
 
-                    pkt, crc_ok, _ = NetworkPacket.decode_and_verify(frame)
-                    with self._lock:
-                        self.tcp_rx_packets += 1
-                    ack_num = pkt.seq_num if (pkt is not None and crc_ok) else 0
-                    ack_pkt = NetworkPacket(
-                        src_ip=pkt.dst_ip if pkt else "10.0.0.1",
-                        dst_ip=pkt.src_ip if pkt else "10.0.0.1",
-                        protocol="TCP",
-                        priority=0,
-                        seq_num=0,
-                        ack_num=ack_num,
-                        ttl=16,
-                        flags=FLAG_ACK if crc_ok else 0,
-                        payload=b"",
-                    )
-                    ack_wire = ack_pkt.encode()
-                    conn.sendall(struct.pack("!I", len(ack_wire)) + ack_wire)
+    def _handle_tcp_client(self, conn: socket.socket, addr: tuple[str, int]):
+        conn.settimeout(0.5)
+        bound_uav_id: Optional[str] = None
+        try:
+            while self.running:
+                try:
+                    len_hdr = _recv_exact(conn, 4)
+                    if not len_hdr:
+                        break
+                    frame_len = struct.unpack("!I", len_hdr)[0]
+                    if frame_len <= 0 or frame_len > 65536 + HEADER_SIZE:
+                        break
+                    frame = _recv_exact(conn, frame_len)
+                    if not frame:
+                        break
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+
+                pkt, crc_ok, _ = NetworkPacket.decode_and_verify(frame)
+                with self._lock:
+                    self.tcp_rx_packets += 1
+
+                ack_payload = b""
+                should_close = False
+                if pkt is not None and crc_ok and pkt.payload:
+                    try:
+                        payload_obj = json.loads(pkt.payload.decode("utf-8"))
+                    except (UnicodeDecodeError, json.JSONDecodeError):
+                        payload_obj = None
+
+                    if isinstance(payload_obj, dict) and "cmd" in payload_obj:
+                        cmd = str(payload_obj["cmd"]).upper()
+                        uav_id = str(payload_obj.get("uav_id") or bound_uav_id or f"MÁY_BAY_UAV_EXT_{addr[1]}")
+                        if cmd == "JOIN":
+                            bound_uav_id = uav_id
+                            with self._lock:
+                                self.external_clients[uav_id] = {
+                                    "uav_id": uav_id,
+                                    "addr": f"{addr[0]}:{addr[1]}",
+                                    "pid": payload_obj.get("pid"),
+                                    "ip": pkt.src_ip,
+                                    "connected_at": time.strftime("%H:%M:%S"),
+                                    "thread_name": threading.current_thread().name,
+                                }
+                        reply_dict: dict[str, Any] = {"ok": True, "cmd": f"{cmd}_ACK"}
+                        if self.on_external_tcp_cmd is not None:
+                            try:
+                                res = self.on_external_tcp_cmd(pkt, payload_obj, addr)
+                                if isinstance(res, dict):
+                                    reply_dict = res
+                            except Exception as exc:
+                                reply_dict = {"ok": False, "error": str(exc)}
+                        if cmd == "JOIN" and isinstance(reply_dict, dict) and reply_dict.get("assigned_ip"):
+                            with self._lock:
+                                if uav_id in self.external_clients:
+                                    self.external_clients[uav_id]["ip"] = str(reply_dict["assigned_ip"])
+                        self.record_sniffer(pkt, f"EXT_{cmd}", uav_id, "TRẠM_KIỂM_LÂM_SƠN_TRÀ", f"EXT_TCP_{cmd}")
+                        ack_payload = json.dumps(reply_dict, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                        if cmd == "LEAVE":
+                            should_close = True
+
+                ack_num = pkt.seq_num if (pkt is not None and crc_ok) else 0
+                ack_pkt = NetworkPacket(
+                    src_ip=pkt.dst_ip if pkt else "10.0.0.1",
+                    dst_ip=pkt.src_ip if pkt else "10.0.0.1",
+                    protocol="TCP",
+                    priority=0,
+                    seq_num=0,
+                    ack_num=ack_num,
+                    ttl=16,
+                    flags=FLAG_ACK if crc_ok else 0,
+                    payload=ack_payload,
+                )
+                ack_wire = ack_pkt.encode()
+                conn.sendall(struct.pack("!I", len(ack_wire)) + ack_wire)
+                if should_close:
+                    break
+        except OSError:
+            pass
+        finally:
+            try:
+                conn.close()
             except OSError:
                 pass
-            finally:
-                try:
-                    conn.close()
-                except OSError:
-                    pass
+            if bound_uav_id:
+                with self._lock:
+                    self.external_clients.pop(bound_uav_id, None)
+                if self.on_external_disconnect is not None:
+                    try:
+                        self.on_external_disconnect(bound_uav_id, addr)
+                    except Exception:
+                        pass
 
     def _udp_server_loop(self):
         srv = self._udp_server_sock
@@ -364,16 +467,34 @@ class RealSocketTransport:
             return
         while self.running:
             try:
-                data, _ = srv.recvfrom(65535)
+                data, addr = srv.recvfrom(65535)
             except socket.timeout:
                 continue
             except OSError:
                 break
             if not data:
                 continue
-            _, _crc_ok, _ = NetworkPacket.decode_and_verify(data)
+            pkt, crc_ok, _ = NetworkPacket.decode_and_verify(data)
             with self._lock:
                 self.udp_rx_packets += 1
+            if pkt is not None and crc_ok and pkt.payload:
+                try:
+                    payload_obj = json.loads(pkt.payload.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError):
+                    payload_obj = None
+                if isinstance(payload_obj, dict) and str(payload_obj.get("cmd", "")).upper() == "TELEMETRY":
+                    uav_id = str(payload_obj.get("uav_id") or f"MÁY_BAY_UAV_EXT_{addr[1]}")
+                    if self.on_external_udp_telemetry is not None:
+                        try:
+                            self.on_external_udp_telemetry(pkt, payload_obj, addr)
+                        except Exception:
+                            pass
+                    with self._lock:
+                        self.udp_bytes += len(data)
+                        self._ext_udp_sniff_counter += 1
+                        sample_sniff = (self._ext_udp_sniff_counter % 4 == 1)
+                    if sample_sniff:
+                        self.record_sniffer(pkt, "EXT_TELEM", uav_id, "TRẠM_KIỂM_LÂM_SƠN_TRÀ", "EXT_UDP_OK")
 
     def _ensure_tcp_client(self) -> socket.socket:
         if self._tcp_client_sock is None:
@@ -526,6 +647,8 @@ class RealSocketTransport:
                 "ttl_drops": self.ttl_drops,
                 "tcp_bytes": self.tcp_bytes,
                 "udp_bytes": self.udp_bytes,
+                "external_clients_count": len(self.external_clients),
+                "external_clients": list(self.external_clients.values()),
                 "sniffer": list(self.packet_sniffer),
             }
 
