@@ -1,4 +1,4 @@
-# SAGSINS MAS — Hệ thống Đa tác nhân Giám sát & Điều phối cháy rừng Bán đảo Sơn Trà
+# SAGSINS MAS — Hệ thống Đa tác nhân Giám sát & phát hiện cháy rừng Bán đảo Sơn Trà
 
 Dự án mô phỏng **Hệ thống Đa tác nhân (Multi-Agent System - MAS)** vận hành trên kiến trúc mạng tích hợp 3 tầng **Không gian – Trên không – Mặt đất (SAGSINS: Space-Air-Ground Satellite-Integrated Network System)** phục vụ bài toán tuần tra tự chủ, phát hiện sớm đám cháy, tự chữa lành mạng và thay ca khép kín cho đội bay UAV tại **Bán đảo Sơn Trà (Đà Nẵng)**.
 
@@ -65,7 +65,7 @@ STANDBY (Tái gia nhập kho dự bị 7/7 tại Trạm cho lượt thay ca ti�
 
 Hệ thống giao tiếp với trình duyệt qua WebSocket `/ws/mophong` với 2 màn hình chính:
 
-1. **Bản đồ Chiến thuật (`/` — [`templates/index.html`](templates/index.html)):**
+1. **Bản đồ (`/` — [`templates/index.html`](templates/index.html)):**
    - Bản đồ vệ tinh 7 phân khu (`Z1`–`Z7`) với thanh trạng thái `4/4` từng vùng và huy hiệu **`DỰ BỊ 7/7`**.
    - **Lớp Heatmap tối ưu hiệu năng:** Tự động tính lại `radius`/`blur` theo mức zoom (`zoomend`), tạm dừng render khi kéo/zoom bản đồ (`movestart`/`zoomstart`) và throttle cập nhật `400ms/lần`.
    - **Bộ lọc & Tia trực quan:** Bật/tắt **7 Vùng**, **Heatmap**, **Quét 600m**, **Tia Gói tin (RF)**, **Tuyến E2E**, **Nhãn tên**, **Tia FANET** (mạng lưới P2P đồng đều nét mảnh), **Tia A2G**, **Tia Vệ tinh** (tự động ẩn vòng quét và tia tại khu vực Trạm đối với UAV `STANDBY`/`CHARGING`).
