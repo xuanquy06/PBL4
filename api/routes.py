@@ -67,6 +67,20 @@ def tao_bo_dinh_tuyen_api(sim_loop) -> APIRouter:
         except ValueError as error:
             raise HTTPException(status_code=404, detail=str(error)) from error
 
+    @router.get("/api/routing-table/{node_id}")
+    async def lay_bang_dinh_tuyen_node(node_id: str):
+        """Trả bảng định tuyến tầng Mạng (L3 Routing Table) và IP của node."""
+        agent = sim_loop.broker.lay_tac_nhan(node_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail=f"Không tìm thấy node {node_id}")
+        routes = agent.xuat_bang_dinh_tuyen() if hasattr(agent, "xuat_bang_dinh_tuyen") else []
+        return {
+            "id": agent.ma_dinh_danh,
+            "ip": getattr(agent, "ip_address", "10.0.0.0"),
+            "state": getattr(getattr(agent, "uav_state", agent.trang_thai), "value", str(agent.trang_thai)),
+            "routes": routes,
+        }
+
     @router.get("/api/xuat-csv")
     async def tai_file_ket_qua_csv():
         """Cho phép tải trực tiếp file CSV chứa nhật ký thực nghiệm QoS về máy"""

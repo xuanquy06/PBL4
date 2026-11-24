@@ -370,7 +370,7 @@ class ScenarioManager:
             fsm_val = getattr(getattr(uav, "trang_thai", None), "value", str(getattr(uav, "trang_thai", "")))
             uav_state_obj = getattr(uav, "uav_state", None)
             uav_state_val = str(getattr(uav_state_obj, "value", uav_state_obj or "")).upper()
-            if fsm_val in ("NGẮT_KẾT_NỐI", "CHỜ_DỰ_BỊ", "ĐANG_SẠC", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC"):
+            if fsm_val in ("NGẮT_KẾT_NỐI", "CHỜ_DỰ_BỊ", "CHỜ_CỔNG_SẠC", "ĐANG_SẠC", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC"):
                 continue
             if uav_state_val not in active_states:
                 continue

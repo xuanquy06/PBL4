@@ -22,6 +22,7 @@ class UAVState(str, Enum):
     CONTAINING = "CONTAINING"
     RELAYING = "RELAYING"
     RETURNING = "RETURNING"
+    WAITING_DOCK = "WAITING_DOCK"
     CHARGING = "CHARGING"
     OFFLINE = "OFFLINE"
 
@@ -108,6 +109,7 @@ class UAVAgent(BaseAgent):
             return
         trang_thai_uav = {
             AgentState.IDLE: UAVState.STANDBY,
+            AgentState.WAITING_DOCK: UAVState.WAITING_DOCK,
             AgentState.CHARGING: UAVState.CHARGING,
             AgentState.PATROLLING: UAVState.PATROLLING,
             AgentState.BIDDING: UAVState.RESPONDING,
@@ -118,6 +120,49 @@ class UAVAgent(BaseAgent):
         }.get(trang_thai_moi)
         if trang_thai_uav:
             self.uav_state = trang_thai_uav
+
+    def _thu_chi_em_cong_sac(self) -> tuple[bool, int]:
+        os_kernel = getattr(self.bo_dinh_tuyen, "os_kernel", None)
+        if os_kernel is None or not hasattr(os_kernel, "charging_semaphore"):
+            return True, 0
+        return os_kernel.charging_semaphore.try_acquire_dock(self.ma_dinh_danh)
+
+    def _giai_phong_cong_sac(self) -> bool:
+        os_kernel = getattr(self.bo_dinh_tuyen, "os_kernel", None)
+        if os_kernel is None or not hasattr(os_kernel, "charging_semaphore"):
+            return False
+        return os_kernel.charging_semaphore.release_dock(self.ma_dinh_danh)
+
+    def _len_lich_log_web(self, cap_do: str, noi_dung: str):
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.bo_dinh_tuyen.gui_log_ra_web(cap_do, noi_dung))
+        except RuntimeError:
+            pass
+
+    def _chuyen_sang_sac_hoac_cho_cong(self, muc_tieu: dict):
+        self.lat = float(muc_tieu["vi_do"])
+        self.lon = float(muc_tieu["kinh_do"])
+        self.toa_do["do_cao"] = float(muc_tieu.get("do_cao", 25.0))
+        self.toa_do["van_toc_m_s"] = 0.0
+        self.toa_do_tram_sac = None
+        acquired, queue_pos = self._thu_chi_em_cong_sac()
+        if acquired:
+            self.chuyen_trang_thai(AgentState.CHARGING)
+            self.uav_state = UAVState.CHARGING
+            self._len_lich_log_web(
+                "INFO",
+                f"[OS_SYNC] 🔌 [{self.ma_dinh_danh}] acquire() cổng sạc Semaphore thành công ➔ Bắt đầu CHARGING (+15%/s)."
+            )
+        else:
+            was_waiting = (self.uav_state == UAVState.WAITING_DOCK)
+            self.chuyen_trang_thai(AgentState.WAITING_DOCK)
+            self.uav_state = UAVState.WAITING_DOCK
+            if not was_waiting:
+                self._len_lich_log_web(
+                    "WARN",
+                    f"[OS_SYNC] ⏳ [{self.ma_dinh_danh}] chờ Semaphore trạm sạc (3/3 cổng bận) ➔ Hàng đợi #{queue_pos} (WAITING_DOCK)."
+                )
 
     def xuat_ho_so_trang_thai(self) -> dict:
         ho_so = super().xuat_ho_so_trang_thai()
@@ -130,6 +175,7 @@ class UAVAgent(BaseAgent):
         ho_so["relay_target_id"] = self.relay_target_id
         ho_so["tuyen_ve_tram"] = list(getattr(self, "tuyen_ve_tram_cuc_bo", []))
         ho_so["is_reserve"] = bool(getattr(self, "uav_state", None) == UAVState.STANDBY and self._dang_o_tai_tram())
+        ho_so["is_waiting_dock"] = bool(getattr(self, "uav_state", None) == UAVState.WAITING_DOCK)
         ho_so["scan_radius_m"] = FIRE_DETECTION_RADIUS_M
         ho_so["so_nhiem_vu"] = self.so_nhiem_vu_da_nhan
         ho_so["vung_ban_giao_nhan"] = list(self._vung_tuan_tra_phu.keys())
@@ -149,12 +195,14 @@ class UAVAgent(BaseAgent):
         """Áp dụng sự cố pin qua hành vi của UAV thay vì để API sửa trực tiếp FSM."""
         self.pin_hien_tai = self.pin_toi_da * min(100.0, max(0.0, float(phan_tram_pin))) / 100.0
         if self.pin_hien_tai <= 0.0:
+            self._giai_phong_cong_sac()
             self._giai_phong_uav_chuyen_tiep()
             self.chuyen_trang_thai(AgentState.OFFLINE)
             await self._ban_giao_su_co_dang_giu(0.0)
             await self._phat_yeu_cau_ban_giao_vung()
             await self._goi_uav_du_bi_thay_ca()
         elif float(phan_tram_pin) < LOW_BATTERY_THRESHOLD:
+            self._giai_phong_cong_sac()
             self._da_goi_du_bi_thay_ca = False
             self._yeu_cau_ban_giao_da_phat = False
             await self._kich_hoat_ban_giao_va_quay_ve_tram()
@@ -168,12 +216,19 @@ class UAVAgent(BaseAgent):
             await self._phat_thong_bao_khoi_phuc_vung()
             if self._dang_o_tai_tram():
                 if float(phan_tram_pin) >= 100.0:
+                    self._giai_phong_cong_sac()
                     self.chuyen_trang_thai(AgentState.IDLE)
                     self.uav_state = UAVState.STANDBY
                 else:
-                    self.chuyen_trang_thai(AgentState.CHARGING)
-                    self.uav_state = UAVState.CHARGING
+                    acquired, _ = self._thu_chi_em_cong_sac()
+                    if acquired:
+                        self.chuyen_trang_thai(AgentState.CHARGING)
+                        self.uav_state = UAVState.CHARGING
+                    else:
+                        self.chuyen_trang_thai(AgentState.WAITING_DOCK)
+                        self.uav_state = UAVState.WAITING_DOCK
             else:
+                self._giai_phong_cong_sac()
                 self.chuyen_trang_thai(AgentState.PATROLLING)
                 self.uav_state = UAVState.PATROLLING
 
@@ -185,7 +240,21 @@ class UAVAgent(BaseAgent):
             return
         self.don_dep_lang_gieng_het_han()
 
-        # 1. Xử lý UAV đang sạc tại Trạm (CHARGING): hồi nhanh +15% pin/giây ➔ 100% chuyển về STANDBY
+        # 1a. Xử lý UAV đang bị chặn ở hàng đợi Semaphore trạm sạc (WAITING_DOCK)
+        if self.uav_state == UAVState.WAITING_DOCK or self.trang_thai == AgentState.WAITING_DOCK:
+            self.toa_do["van_toc_m_s"] = 0.0
+            self.current_link = "GROUND_LINK"
+            acquired, _ = self._thu_chi_em_cong_sac()
+            if acquired:
+                self.chuyen_trang_thai(AgentState.CHARGING)
+                self.uav_state = UAVState.CHARGING
+                await self.bo_dinh_tuyen.gui_log_ra_web(
+                    "INFO",
+                    f"[OS_SYNC] 🔌 [{self.ma_dinh_danh}] rời hàng đợi Semaphore, acquire() cổng sạc thành công ➔ Bắt đầu CHARGING (+15%/s)."
+                )
+            return
+
+        # 1. Xử lý UAV đang sạc tại Trạm (CHARGING): hồi nhanh +15% pin/giây ➔ 100% nhả Semaphore và chuyển về STANDBY
         if self.uav_state == UAVState.CHARGING or self.trang_thai == AgentState.CHARGING:
             self.pin_hien_tai = min(
                 self.pin_toi_da,
@@ -195,6 +264,7 @@ class UAVAgent(BaseAgent):
             self.current_link = "GROUND_LINK"
             if self.pin_hien_tai >= self.pin_toi_da:
                 self.pin_hien_tai = self.pin_toi_da
+                self._giai_phong_cong_sac()
                 self._yeu_cau_ban_giao_da_phat = False
                 self._da_goi_du_bi_thay_ca = False
                 self._waiting_for_relief_id = None
@@ -205,7 +275,7 @@ class UAVAgent(BaseAgent):
                 self.uav_state = UAVState.STANDBY
                 await self.bo_dinh_tuyen.gui_log_ra_web(
                     "INFO",
-                    f"[P2P_HANDOVER] 🔋 [{self.ma_dinh_danh}] đã sạc đầy 100% (+15%/s) tại Trạm Kiểm Lâm ➔ Chuyển sang trạng thái STANDBY sẵn sàng thay ca."
+                    f"[OS_SYNC] 🔋 [{self.ma_dinh_danh}] sạc đầy 100% ➔ Gọi Semaphore.release() nhường cổng sạc & chuyển sang STANDBY."
                 )
             return
 
@@ -240,7 +310,7 @@ class UAVAgent(BaseAgent):
         # 3. Kích hoạt bàn giao (Pin < 25%): phát P2P thay ca, đánh thức 1 UAV STANDBY và chuyển ngay sang RETURNING
         if (
             self.phan_tram_pin < LOW_BATTERY_THRESHOLD
-            and self.uav_state not in (UAVState.STANDBY, UAVState.CHARGING, UAVState.OFFLINE)
+            and self.uav_state not in (UAVState.STANDBY, UAVState.CHARGING, UAVState.WAITING_DOCK, UAVState.OFFLINE)
         ):
             await self._kich_hoat_ban_giao_va_quay_ve_tram()
 
@@ -292,25 +362,13 @@ class UAVAgent(BaseAgent):
                 self.lat, self.lon, float(muc_tieu["vi_do"]), float(muc_tieu["kinh_do"])
             )
             if kc_mat_dat_m <= 100.0:
-                self.lat = float(muc_tieu["vi_do"])
-                self.lon = float(muc_tieu["kinh_do"])
-                self.toa_do["do_cao"] = float(muc_tieu.get("do_cao", 25.0))
-                self.toa_do["van_toc_m_s"] = 0.0
-                self.toa_do_tram_sac = None
-                self.chuyen_trang_thai(AgentState.CHARGING)
-                self.uav_state = UAVState.CHARGING
+                self._chuyen_sang_sac_hoac_cho_cong(muc_tieu)
                 return
 
         khoang_cach_m = self.bo_dinh_tuyen.physics.tinh_khoang_cach_3d(self.toa_do, muc_tieu)
         if khoang_cach_m <= 1.0:
             if la_tram_sac:
-                self.lat = float(muc_tieu["vi_do"])
-                self.lon = float(muc_tieu["kinh_do"])
-                self.toa_do["do_cao"] = float(muc_tieu.get("do_cao", 25.0))
-                self.toa_do["van_toc_m_s"] = 0.0
-                self.toa_do_tram_sac = None
-                self.chuyen_trang_thai(AgentState.CHARGING)
-                self.uav_state = UAVState.CHARGING
+                self._chuyen_sang_sac_hoac_cho_cong(muc_tieu)
             else:
                 self._get_den_muc_tieu_event().set()
             return
@@ -335,13 +393,7 @@ class UAVAgent(BaseAgent):
                 self.lat, self.lon, float(muc_tieu["vi_do"]), float(muc_tieu["kinh_do"])
             )
             if kc_sau_m <= 100.0 or ti_le_di_chuyen >= 1.0:
-                self.lat = float(muc_tieu["vi_do"])
-                self.lon = float(muc_tieu["kinh_do"])
-                self.toa_do["do_cao"] = float(muc_tieu.get("do_cao", 25.0))
-                self.toa_do["van_toc_m_s"] = 0.0
-                self.toa_do_tram_sac = None
-                self.chuyen_trang_thai(AgentState.CHARGING)
-                self.uav_state = UAVState.CHARGING
+                self._chuyen_sang_sac_hoac_cho_cong(muc_tieu)
         else:
             self.tieu_hao_nang_luong(self.cong_suat_bay_w * dt_giay)
             if ti_le_di_chuyen >= 1.0:
@@ -448,6 +500,7 @@ class UAVAgent(BaseAgent):
                 and other.trang_thai != AgentState.OFFLINE
                 and getattr(other, "uav_state", None) not in (
                     UAVState.STANDBY,
+                    UAVState.WAITING_DOCK,
                     UAVState.CHARGING,
                     UAVState.RETURNING,
                     UAVState.OFFLINE,
@@ -836,10 +889,12 @@ class UAVAgent(BaseAgent):
                 AgentState.IDLE,
                 AgentState.LOW_BATTERY_RTB,
                 AgentState.RETURNING,
+                AgentState.WAITING_DOCK,
                 AgentState.CHARGING,
             )
             and getattr(u, "uav_state", None) not in (
                 UAVState.STANDBY,
+                UAVState.WAITING_DOCK,
                 UAVState.CHARGING,
                 UAVState.RETURNING,
                 UAVState.OFFLINE,
@@ -977,12 +1032,12 @@ class UAVAgent(BaseAgent):
         if not station_near:
             return False
         uav_st = getattr(self, "uav_state", None)
-        if uav_st in (UAVState.STANDBY, UAVState.CHARGING):
+        if uav_st in (UAVState.STANDBY, UAVState.CHARGING, UAVState.WAITING_DOCK):
             return True
-        if uav_st is None and self.trang_thai in (AgentState.IDLE, AgentState.CHARGING):
+        if uav_st is None and self.trang_thai in (AgentState.IDLE, AgentState.CHARGING, AgentState.WAITING_DOCK):
             return True
         return (
-            self.trang_thai in (AgentState.IDLE, AgentState.CHARGING)
+            self.trang_thai in (AgentState.IDLE, AgentState.CHARGING, AgentState.WAITING_DOCK)
             and float(self.toa_do.get("do_cao", 25.0)) <= 100.0
         )
 
@@ -1222,6 +1277,7 @@ class UAVAgent(BaseAgent):
                 AgentState.LOW_BATTERY,
                 AgentState.LOW_BATTERY_RTB,
                 AgentState.RETURNING,
+                AgentState.WAITING_DOCK,
                 AgentState.CHARGING,
             )
             while not den_muc_tieu_ev.is_set():
@@ -1256,6 +1312,7 @@ class UAVAgent(BaseAgent):
                 AgentState.LOW_BATTERY,
                 AgentState.LOW_BATTERY_RTB,
                 AgentState.RETURNING,
+                AgentState.WAITING_DOCK,
                 AgentState.CHARGING,
                 AgentState.IDLE,
             ):
@@ -1347,7 +1404,7 @@ class UAVAgent(BaseAgent):
         2. Phát tin nhắn P2P yêu cầu thay ca về Trạm và đánh thức 1 UAV STANDBY.
         3. Chuyển ngay sang RETURNING bay thẳng về TRẠM_KIỂM_LÂM_SƠN_TRÀ.
         """
-        if self._dang_o_tai_tram() or self.uav_state in (UAVState.STANDBY, UAVState.CHARGING, UAVState.OFFLINE):
+        if self._dang_o_tai_tram() or self.uav_state in (UAVState.STANDBY, UAVState.WAITING_DOCK, UAVState.CHARGING, UAVState.OFFLINE):
             return
 
         if not getattr(self, "_da_goi_du_bi_thay_ca", False):

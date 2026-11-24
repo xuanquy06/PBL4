@@ -111,10 +111,12 @@ class SimulationLoop:
         print("================================================================\n")
 
     async def bat_dau(self):
-        """Khởi chạy vòng lặp lắng nghe của từng Agent và vòng lặp Vật lý trung tâm"""
+        """Khởi chạy lõi HĐH/Socket thật, vòng lặp lắng nghe của từng Agent và vòng lặp Vật lý trung tâm"""
         if self.dang_chay:
             return
 
+        self.broker.os_kernel.start()
+        self.broker.network_stack.start()
         self.khoi_tao_kich_ban()
         await self._kiem_tra_lien_lac_lien_tuc(0.0)
         self.dang_chay = True
@@ -135,6 +137,8 @@ class SimulationLoop:
         if self._cac_tac_vu_nen:
             await asyncio.gather(*self._cac_tac_vu_nen, return_exceptions=True)
         self._cac_tac_vu_nen.clear()
+        self.broker.network_stack.stop()
+        self.broker.os_kernel.stop()
 
     async def dieu_khien_thoi_gian(
         self,
@@ -205,8 +209,12 @@ class SimulationLoop:
                     if isinstance(res, Exception):
                         print(f"[SIMULATION WARN] Lỗi cập nhật tác nhân: {res}")
 
-                # Cập nhật Heatmap sau khi UAV cập nhật tọa độ: làm mát <= 600m và tăng staleness 0.01/s ngoài tầm quét
-                self.update_heatmap(dt_mo_phong)
+                # Cập nhật Heatmap trên Worker Thread (ThreadPoolExecutor thật): làm mát <= 600m và tăng staleness 0.025/s ngoài tầm quét
+                executor = getattr(self.broker.os_kernel, "executor", None)
+                if executor is not None:
+                    await asyncio.get_running_loop().run_in_executor(executor, self.update_heatmap, dt_mo_phong)
+                else:
+                    self.update_heatmap(dt_mo_phong)
 
                 # Watchdog kiểm tra các nhiệm vụ cháy: nếu UAV trúng thầu gặp nạn/OFFLINE thì kích hoạt tái đấu thầu ngay
                 for ma_phien, mission in list(self._active_fire_missions.items()):
@@ -309,13 +317,13 @@ class SimulationLoop:
         self.broker.thong_ke_toan_mang["nang_luong_tieu_hao_joule"] = tong_nang_luong
         self.scenario.ghi_log_lien_lac_lien_tuc(self._chi_so_lien_lac)
 
-        # Luân phiên gửi telemetry qua broker cho các UAV đang bay trên không (bỏ qua UAV STANDBY/CHARGING tại trạm).
+        # Luân phiên gửi telemetry qua broker cho các UAV đang bay trên không (bỏ qua UAV STANDBY/WAITING_DOCK/CHARGING tại trạm).
         uav_ung_vien = [
             u for u in cac_uav
-            if u.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY, AgentState.CHARGING, AgentState.IDLE)
+            if u.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY, AgentState.WAITING_DOCK, AgentState.CHARGING, AgentState.IDLE)
             and not u._dang_o_tai_tram()
             and getattr(getattr(u, "uav_state", None), "value", getattr(u, "uav_state", None)) not in (
-                "STANDBY", "CHARGING", "OFFLINE"
+                "STANDBY", "WAITING_DOCK", "CHARGING", "OFFLINE"
             )
         ]
         if uav_ung_vien:
@@ -582,7 +590,7 @@ class SimulationLoop:
             if hasattr(agent, "_su_co_da_nho_dong_doi"):
                 agent._su_co_da_nho_dong_doi.clear()
             if had_containment or uav_state_val in ("CONTAINING", "RESPONDING"):
-                if agent.trang_thai.value not in ("NGẮT_KẾT_NỐI", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC", "ĐANG_SẠC"):
+                if agent.trang_thai.value not in ("NGẮT_KẾT_NỐI", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC", "CHỜ_CỔNG_SẠC", "ĐANG_SẠC"):
                     agent.chuyen_trang_thai(type(agent.trang_thai).PATROLLING)
                     if hasattr(agent, "uav_state"):
                         agent.uav_state = type(agent.uav_state).PATROLLING
@@ -626,6 +634,8 @@ class SimulationLoop:
             "deployment_plan": self.scenario.ke_hoach_bo_tri_ban_dau,
             "network_metrics": self.broker.thong_ke_toan_mang,
             "connectivity_metrics": self._chi_so_lien_lac,
+            "os_metrics": self.broker.os_kernel.snapshot(),
+            "transport_metrics": self.broker.network_stack.snapshot(),
             "swarm_response": swarm_state,
             "last_auction": swarm_state,
             "last_e2e_route": getattr(self.broker, "tuyen_e2e_chay_hien_tai", None) or self.broker.tuyen_e2e_gan_nhat,

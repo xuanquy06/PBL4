@@ -5,7 +5,7 @@ import sys
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 
 if sys.platform == "win32":
     for stream in (sys.stdout, sys.stderr):
@@ -48,6 +48,12 @@ NO_CACHE_HEADERS = {
     "Pragma": "no-cache",
     "Expires": "0",
 }
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Trả 204 No Content cho trình duyệt để tránh log 404 /favicon.ico."""
+    return Response(status_code=204)
 
 
 @app.get("/", response_class=HTMLResponse)

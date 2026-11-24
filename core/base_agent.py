@@ -3,6 +3,8 @@ import time
 from enum import Enum
 from abc import ABC, abstractmethod
 from typing import Dict, Optional
+from core.network_stack import assign_node_ip
+from core.os_kernel import BoundedPriorityQueue
 
 
 class AgentState(str, Enum):
@@ -12,6 +14,7 @@ class AgentState(str, Enum):
     BIDDING = "ĐANG_ĐẤU_GIÁ"          # Đang thương lượng giao thức Contract Net Protocol
     RELAYING = "ĐANG_TRUYỀN_TẢI"      # Đang đóng vai trò trạm trung chuyển dữ liệu
     RETURNING = "ĐANG_QUAY_VỀ_SẠC"    # UAV quay về trạm để tránh cạn pin
+    WAITING_DOCK = "CHỜ_CỔNG_SẠC"     # UAV bị chặn ở hàng đợi Semaphore chờ cổng sạc rảnh
     CHARGING = "ĐANG_SẠC"             # UAV nạp pin tại trạm mặt đất
     LOW_BATTERY_RTB = "PIN_YẾU_RTB"   # Pin dưới ngưỡng an toàn, quay về trạm
     LOW_BATTERY = "PIN_YẾU_RTB"       # Bí danh tương thích với trạng thái cũ
@@ -44,6 +47,7 @@ class BaseAgent(ABC):
         self.ma_dinh_danh = ma_dinh_danh
         self.loai_tac_nhan = loai_tac_nhan
         self.bo_dinh_tuyen = bo_dinh_tuyen
+        self.ip_address = assign_node_ip(ma_dinh_danh, loai_tac_nhan, kwargs.get("zone_id"))
 
         self.toa_do = {
             "node": self.ma_dinh_danh,
@@ -90,14 +94,15 @@ class BaseAgent(ABC):
         self.bo_dinh_tuyen.dang_ky_tac_nhan(self)
 
     @property
-    def hang_doi_thong_diep(self) -> asyncio.Queue:
-        """Khởi tạo hàng đợi asyncio lười (lazy) để tránh tạo socketpair trước khi có event loop."""
+    def hang_doi_thong_diep(self) -> BoundedPriorityQueue:
+        """Khởi tạo hàng đợi lập lịch ưu tiên (BoundedPriorityQueue) lười (lazy)."""
         if self._hang_doi_thong_diep is None:
-            self._hang_doi_thong_diep = asyncio.Queue(maxsize=100)
+            os_kernel = getattr(self.bo_dinh_tuyen, "os_kernel", None)
+            self._hang_doi_thong_diep = BoundedPriorityQueue(maxsize=100, os_kernel=os_kernel)
         return self._hang_doi_thong_diep
 
     @hang_doi_thong_diep.setter
-    def hang_doi_thong_diep(self, value: asyncio.Queue):
+    def hang_doi_thong_diep(self, value):
         self._hang_doi_thong_diep = value
 
     @property
@@ -216,6 +221,54 @@ class BaseAgent(ABC):
         if self.trang_thai != trang_thai_moi:
             self.trang_thai = trang_thai_moi
 
+    def xuat_bang_dinh_tuyen(self) -> list[dict]:
+        """Xuất bảng định tuyến tầng Mạng (L3 Routing Table) của node hiện tại."""
+        routes: list[dict] = []
+        now = time.time()
+        tac_nhan_map = getattr(self.bo_dinh_tuyen, "danh_sach_tac_nhan", {}) or {}
+
+        if len(self.tuyen_ve_tram_cuc_bo) >= 2:
+            dest_id = self.tuyen_ve_tram_cuc_bo[-1]
+            next_id = self.tuyen_ve_tram_cuc_bo[1]
+            dest_ag = tac_nhan_map.get(dest_id)
+            next_ag = tac_nhan_map.get(next_id)
+            next_kind = getattr(next_ag, "loai_tac_nhan", "")
+            iface = (
+                "A2G_RADIO" if next_kind == "TRẠM_MẶT_ĐẤT"
+                else ("LEO_KU_BAND" if "VỆ_TINH" in next_kind else "FANET_WIFI")
+            )
+            routes.append({
+                "dest": dest_id,
+                "dest_ip": getattr(dest_ag, "ip_address", "10.0.0.1"),
+                "next_hop": next_id,
+                "next_hop_ip": getattr(next_ag, "ip_address", "10.0.0.1"),
+                "metric": round(float(self.chi_phi_ve_tram_cuc_bo), 2)
+                if self.chi_phi_ve_tram_cuc_bo != float("inf") else 9999.0,
+                "interface": iface,
+                "hops": len(self.tuyen_ve_tram_cuc_bo) - 1,
+                "ttl_remaining": 16,
+            })
+
+        for nid, info in list(self.bang_lang_gieng.items()):
+            ag = tac_nhan_map.get(nid)
+            n_kind = str(info.get("loai_tac_nhan", getattr(ag, "loai_tac_nhan", "")))
+            iface = (
+                "A2G_RADIO" if n_kind == "TRẠM_MẶT_ĐẤT"
+                else ("LEO_KU_BAND" if "VỆ_TINH" in n_kind else "FANET_WIFI")
+            )
+            ttl_rem = max(0.0, round(self.NEIGHBOR_TIMEOUT_SEC - (now - float(info.get("thoi_diem_cap_nhat", now))), 1))
+            routes.append({
+                "dest": nid,
+                "dest_ip": getattr(ag, "ip_address", "10.0.0.0"),
+                "next_hop": nid,
+                "next_hop_ip": getattr(ag, "ip_address", "10.0.0.0"),
+                "metric": round(float(info.get("do_tre_ms", 0.0)), 2),
+                "interface": iface,
+                "hops": 1,
+                "ttl_remaining": ttl_rem,
+            })
+        return routes
+
     def xuat_ho_so_trang_thai(self) -> dict:
         """
         Đóng gói thông số telemetry của node thành dữ liệu JSON cho bản đồ và bảng giám sát.
@@ -225,6 +278,7 @@ class BaseAgent(ABC):
         van_toc = round(self.toa_do["van_toc_m_s"], 1)
         return {
             "id": self.ma_dinh_danh,
+            "ip": self.ip_address,
             "loai": self.loai_tac_nhan,
             "state": self.trang_thai.name,
             "battery": self.phan_tram_pin,
@@ -238,6 +292,7 @@ class BaseAgent(ABC):
             "van_toc_m_s": van_toc,
             "pin_pct": self.phan_tram_pin,
             "pin_joule": round(self.pin_hien_tai, 1),
+            "queue_size": self.hang_doi_thong_diep.qsize(),
             "tai_hang_doi_pct": self.tai_hang_doi_pct,
             "cong_suat_dbm": self.radio_config["cong_suat_phat_dbm"],
             "so_lang_gieng": len(self.bang_lang_gieng),

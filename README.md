@@ -1,141 +1,115 @@
-# SAGSINS MAS — Hệ thống Đa tác nhân Giám sát & phát hiện cháy rừng Bán đảo Sơn Trà
+# SAGSINS MAS — Hệ thống Đa tác nhân, Hệ điều hành & Mạng máy tính (PBL4)
 
-Dự án mô phỏng **Hệ thống Đa tác nhân (Multi-Agent System - MAS)** vận hành trên kiến trúc mạng tích hợp 3 tầng **Không gian – Trên không – Mặt đất (SAGSINS: Space-Air-Ground Satellite-Integrated Network System)** phục vụ bài toán tuần tra tự chủ, phát hiện sớm đám cháy, tự chữa lành mạng và thay ca khép kín cho đội bay UAV tại **Bán đảo Sơn Trà (Đà Nẵng)**.
+Dự án mô phỏng **Hệ thống Đa tác nhân (Multi-Agent System - MAS)** kết hợp **Lõi Hệ điều hành** và **Chồng giao thức Mạng máy tính TCP/IP chạy thật** trên kiến trúc mạng tích hợp 3 tầng **Không gian – Trên không – Mặt đất (SAGSINS)** phục vụ bài toán tuần tra tự chủ, phát hiện sớm đám cháy, tự chữa lành mạng và thay ca khép kín cho đội bay UAV tại **Bán đảo Sơn Trà (Đà Nẵng)**.
 
 ---
 
 ## 1. Kiến trúc Hệ thống 3 Tầng (39 Tác nhân Tự trị)
 
-Hệ thống khởi tạo **39 tác nhân tự trị (Autonomous Agents)** giao tiếp và phối hợp thời gian thực:
+Hệ thống khởi tạo **39 tác nhân tự trị (Autonomous Agents)**, mỗi node được cấp phát địa chỉ **IPv4 theo Subnet riêng**:
 
-| Tầng mạng | Số lượng | Định danh | Vai trò chính |
+| Tầng mạng | Số lượng | Định danh & Subnet IPv4 | Vai trò chính |
 | :--- | :---: | :--- | :--- |
-| **Tầng Mặt đất (Ground)** | `01` | `TRẠM_KIỂM_LÂM_SƠN_TRÀ` `(16.105, 108.250)` | Trung tâm chỉ huy, thu thập gói tin telemetry/cảnh báo cháy, trạm gốc định tuyến và trạm sạc nhanh cho đội bay UAV. Kết hợp lưới điểm nhiệt Heatmap (`HeatNode`) trên 7 phân khu `ZONE_01`–`ZONE_07`. |
-| **Tầng Trên không (Air - FANET)** | `35` | `MÁY_BAY_UAV_01` ➔ `35` | Gồm **28 UAV tuần tra chủ động** (`UAV_01`–`UAV_28`, chia đều **4 UAV/phân khu** `Z1`–`Z7`, pin khởi tạo lệch pha `45%–100%` theo 4 dải `90–100%`, `75–86%`, `60–72%`, `45–56%`) và **07 UAV dự bị trực chiến** (`UAV_29`–`UAV_35`, pin `100%`, trạng thái `STANDBY` tại Trạm Kiểm Lâm). |
-| **Tầng Không gian (Space - LEO)** | `03` | `VỆ_TINH_LEO_01` ➔ `03` | Vệ tinh quỹ đạo thấp (mô phỏng quỹ đạo SGP4 thực tế đồng bộ từ CelesTrak/NORAD kèm bộ đệm CSV Offline) làm kênh truyền dự phòng không gian (Space Backhaul) khi đứt liên kết mặt đất. |
+| **Tầng Mặt đất (Ground)** | `01` | `TRẠM_KIỂM_LÂM_SƠN_TRÀ`<br>`10.0.0.1` `(16.105, 108.250)` | Trung tâm chỉ huy, Socket Server TCP/UDP thật, trạm gốc định tuyến và **Trạm sạc giới hạn 3 cổng (`Semaphore(3)`)**. Kết hợp lưới điểm nhiệt Heatmap (`HeatNode`) trên 7 phân khu. |
+| **Tầng Trên không (Air - FANET)** | `35` | `MÁY_BAY_UAV_01` ➔ `35`<br>Tuần tra: `10.0.<1..7>.<1..4>`<br>Dự bị: `10.0.8.<1..7>` | **28 UAV tuần tra chủ động** (`UAV_01`–`28`, chia đều **4 UAV/vùng** `Z1`–`Z7`, pin khởi tạo lệch pha `45%–100%`) và **07 UAV dự bị trực chiến** (`UAV_29`–`35`, pin `100%`, `STANDBY` tại Trạm). |
+| **Tầng Không gian (Space - LEO)** | `03` | `VỆ_TINH_LEO_01` ➔ `03`<br>`10.0.99.<1..3>` | Vệ tinh quỹ đạo thấp (quỹ đạo SGP4 thực tế từ CelesTrak/NORAD kèm bộ đệm CSV Offline) làm kênh truyền dự phòng (Space Backhaul) khi đứt kết nối mặt đất. |
 
 ---
 
-## 2. Các Thuật toán & Cơ chế Tự trị Cốt lõi
+## 2. Thành phần Môn học PBL4: Hệ điều hành & Mạng máy tính
 
-### 2.1. Bản đồ Độ bất định Giám sát (Staleness / Uncertainty Heatmap)
-Bản đồ Heatmap biểu diễn **độ cũ dữ liệu giám sát** tại từng `HeatNode` trong 7 phân khu rừng Sơn Trà:
-- **Làm mát tỏa mượt trong tầm quét (`Cooling Radius = 600m`):** Mọi `HeatNode` (không phải đám cháy thật) nằm trong bán kính $\le 600\text{m}$ quanh ít nhất một UAV đang bay (`PATROLLING`, `RELAYING`, `RESPONDING`, `CONTAINING`) được giảm dần `risk_score` theo tốc độ **`0.35/s`**, có trọng số tỏa từ tâm UAV (`1.25x` tại tâm $\rightarrow$ `0.75x` tại biên `600m`) về mức an toàn **`0.05`** (màu xanh lá), giúp UAV bay lướt xuyên qua tâm điểm nóng mượt mà thay vì quay đầu giật cục ở mép.
-- **Tích lũy độ cũ dữ liệu (`Staleness Rate = 0.025/s`):** Các điểm nằm ngoài tầm quét ($> 600\text{m}$) tăng dần `risk_score` thêm `0.025/giây` và khóa trần tại **`0.68`** (chuyển vàng/cam để thu hút UAV tới tuần tra).
-- **Bảo toàn đám cháy thật (`active_fires`):** Điểm cháy do người dùng kích hoạt giữ nguyên mức **`1.0`** (màu đỏ) và **không tự tắt** khi UAV bay tới; chỉ bị xóa khi bấm nút **Xoá cháy**.
+### 2.1. Lõi Hệ điều hành (`core/os_kernel.py`)
+1. **Counting Semaphore Trạm sạc (`ChargingDockSemaphore(3)`):**
+   - Trạm Kiểm Lâm giới hạn tối đa **3 đế sạc hoạt động đồng thời** thông qua `threading.Semaphore(3)` và `RLock` đảm bảo công bằng FIFO.
+   - Nếu có từ 4 UAV pin yếu cùng bay về trạm, 3 chiếc đầu gọi `acquire()` thành công vào trạng thái `CHARGING` (`+15%/giây`), các chiếc còn lại bị chặn ở trạng thái **`WAITING_DOCK`** (hàng đợi chờ I/O). Khi 1 chiếc đầy `100%` gọi `release()`, UAV chờ đầu hàng lập tức được cấp cổng.
+2. **Loại trừ Tương hỗ bằng Mutex (`threading.RLock`):**
+   - Miền găng khóa mục tiêu đám cháy (`khoa_muc_tieu_chay`), thống kê mạng và bộ đệm Packet Sniffer (`net_state_lock`) được bảo vệ bằng `threading.RLock()`, ngăn chặn **Race Condition** khi nhiều UAV cùng phát hiện 1 đám cháy trong cùng tick mô phỏng.
+3. **Lập lịch Hàng đợi Ưu tiên (`BoundedPriorityQueue` — Producer/Consumer):**
+   - Mỗi tác nhân sử dụng hàng đợi ưu tiên 3 cấp giới hạn `100` phần tử:
+     - **`P0` (Cao nhất):** `FIRE_ALERT`, `FIRE_DETECTION_REPORT`, `YEU_CAU_HO_TRO_CHAY_P2P`, `FIRE_CONTAINMENT_TELEMETRY`, `XAC_NHAN_ACK`.
+     - **`P1` (Trung bình):** `TELEMETRY_REPORT`, `YEU_CAU_BAN_GIAO_VUNG`, `THONG_BAO_KHOI_PHUC_VUNG`.
+     - **`P2` (Thấp nhất):** `HELLO_BEACON`.
+   - Khi tràn bộ đệm, hệ thống ghi nhận `Buffer Overflow Drop` để bảo vệ bộ nhớ.
+4. **Đa luồng (`Threading` & `ThreadPoolExecutor`) & OS Monitor:**
+   - Tách luồng **TCP Server**, luồng **UDP Server**, **Worker ThreadPool (4 luồng)** xử lý cập nhật Heatmap song song và luồng chính điều phối.
+   - Đọc trực tiếp tài nguyên tiến trình thật từ OS API (`PID`, danh sách `Thread TID`, `CPU %`, `RAM Working Set MB`).
 
-### 2.2. Điều hướng Tự chủ bằng Trường Thế năng & Chống tụ cụm
-Các UAV tuần tra **không bay theo đường ray/waypoint cứng**, mà tự điều hướng theo vector trường lực tổng hợp (`_di_chuyen_tu_chu_theo_truong_luc` trong [`agents/uav_agent.py`](agents/uav_agent.py)):
-- **Lực hút nhiệt (Heatmap Gradient):** Hút UAV về các `HeatNode` có `risk_score` cao nhất trong phân khu `zone_id` phụ trách.
-- **Chống tụ cụm đồng đội (`Virtual Pheromone / Target Claiming`):** Nếu một `HeatNode` đã có UAV đồng đội khác đứng gần hơn UAV hiện tại, lực hút của điểm đó đối với UAV hiện tại tự động **giảm `80%`**, giúp các UAV tự phân chia khu vực quét.
-- **Lực đẩy giữa các UAV (`Inter-UAV Repulsion`):** Khi hai UAV cách nhau $< 1200\text{m}$ (gấp đôi bán kính quét `600m`), sinh ra vector lực đẩy mạnh gấp **`2.5x`** lực hút Heatmap để chống chồng lấn vùng quét.
-- **Tuân thủ Geofence:** Giữ UAV bay trong đa giác phân khu `ZONE_01`–`ZONE_07` bằng thuật toán Ray-Casting kết hợp trượt biên mượt.
-- **Ngắt lực hút khi trực chiến / quay về:** Các UAV ở trạng thái `STANDBY`, `CHARGING` và `RETURNING` tắt hoàn toàn cơ chế hút theo điểm nóng để đứng yên tại trạm hoặc bay thẳng về sạc.
-
-### 2.3. Tự chủ Phát hiện, Khoanh vùng Đám cháy & Tự chữa lành sự cố
-1. **Phát hiện & Khoanh vùng liên tục (`CONTAINING`):** Khi bay vào bán kính $\le 600\text{m}$ quanh điểm cháy chưa bị khóa, UAV tự kiểm tra pin khứ hồi $> 25\%$, khóa mục tiêu (`TARGET_LOCKED`), chuyển sang bay lượn vòng tròn bán kính `130m` quanh tâm cháy (`CONTAINING`) và duy trì trạng thái này cho đến khi người dùng bấm **Xoá cháy** hoặc UAV tụt pin $< 25\%$.
-2. **Bàn giao P2P khi UAV đang giữ đám cháy bị Pin yếu hoặc Sập nguồn:**
-   - Khi UAV đang `RESPONDING` hoặc `CONTAINING` bị **Pin yếu (`< 25%`)** hoặc bị bấm **Sập (`0%` - `OFFLINE`)**, nó lập tức hủy tác vụ cũ, **mở khóa mục tiêu cháy** (`mo_khoa_muc_tieu_chay`) và phát bản tin P2P `YEU_CAU_HO_TRO_CHAY_P2P` ủy quyền cho đồng đội đang bay trên không có mức pin cao nhất trong cùng phân khu tiếp quản ngay lập tức.
-   - Đồng thời, 1 UAV dự bị `STANDBY` tại Trạm được điều động bay ra phân khu để giữ nguyên quân số `4/4`.
-
-### 2.4. Định tuyến Đa chặng Dijkstra E2E & Chuyển mạch Vệ tinh LEO
-- **Mạng kết hợp 3 tầng ([`core/message_broker.py`](core/message_broker.py)):**
-  - **Tầng 1 (A2G):** Truyền thẳng về `TRẠM_KIỂM_LÂM_SƠN_TRÀ` khi nằm trong tầm phủ sóng và không bị địa hình che khuất.
-  - **Tầng 2 (FANET Mesh):** Bắc cầu đa chặng qua các UAV lân cận trong tầm liên lạc `<= 2200m` bằng thuật toán **Dijkstra** (tối ưu theo chất lượng kênh FSPL, SNR, dung lượng Shannon và PER).
-  - **Tầng 3 (LEO Satellite Fallback):** Khi đường truyền mặt đất và bắc cầu FANET bị đứt, gói tin tự động chuyển mạch theo tuyến `[UAV ➔ VỆ_TINH_LEO ➔ TRẠM_KIỂM_LÂM]`.
-- **Duy trì tuyến E2E ưu tiên:** Chừng nào vẫn còn đám cháy đang được UAV khoanh vùng (`CONTAINING`), hệ thống liên tục tính toán lại và ưu tiên vẽ **tuyến E2E màu xanh dương** từ UAV báo cháy về Trạm ở mỗi tick mô phỏng.
-
-### 2.5. Vòng đời Thay ca & Sạc nhanh Khép kín (Hot-Swap & Recharge Cycle)
-```text
-PATROLLING (28 UAV, pin lệch pha 45%–100%)
-   │
-   ▼  Pin < 25% ──► Phát P2P bàn giao + Đánh thức 1 UAV STANDBY (100%) bay ra thế chỗ (giữ đủ 4/4)
-RETURNING (Tắt hút Heatmap, bay thẳng về Trạm Kiểm Lâm)
-   │
-   ▼  Cách Trạm <= 100m
-CHARGING (Hạ độ cao 25m, sạc nhanh +15% pin/giây)
-   │
-   ▼  Pin đạt 100%
-STANDBY (Tái gia nhập kho dự bị 7/7 tại Trạm cho lượt thay ca tiếp theo)
-```
+### 2.2. Lõi Mạng máy tính (`core/network_stack.py` & `core/message_broker.py`)
+1. **Đóng gói Khung nhị phân 26-byte Header + Checksum CRC32 + TTL:**
+   - Gói tin chuẩn gồm `Version/Proto`, `Priority`, `Seq`, `Ack`, `TTL` (mặc định `16`, giảm `1` sau mỗi chặng — hủy gói `TTL_DROP` khi `TTL == 0`), `Flags`, `Src IP`, `Dst IP`, `Payload Length` và **`CRC32`** tính bằng `zlib.crc32()`.
+2. **Giao vận Socket TCP & UDP Thật trên `127.0.0.1`:**
+   - **TCP (ARQ Tin cậy có ACK & Truyền lại):** Áp dụng cho cảnh báo cháy, khoanh vùng và bàn giao khẩn P2P. Khi nhiễu kênh truyền `PER` làm đảo bit khung dây, bên nhận phát hiện lỗi qua `CRC32_MISMATCH` và tự động **truyền lại (`RETRANS` tối đa 3 lần)** cho tới khi nhận được gói nhị phân `ACK`.
+   - **UDP (Không kết nối):** Áp dụng cho `TELEMETRY_REPORT` và `HELLO_BEACON` định kỳ; gửi datagram 1 lần và hủy ngay nếu hỏng `CRC32`.
+3. **Định tuyến Đa chặng Dijkstra E2E & Bảng định tuyến L3:**
+   - Mỗi node duy trì bảng định tuyến `L3 Routing Table` (`Dest`, `Next Hop`, `Interface`, `Metric`, `TTL`) phục vụ chọn tuyến A2G ➔ FANET Mesh (`<= 2200m`) ➔ Vệ tinh LEO Fallback, đồng thời ưu tiên hiển thị liên tục tuyến E2E xanh dương của UAV đang khoanh vùng cháy.
 
 ---
 
-## 3. Giao diện Điều hành & Giám sát Thời gian thực
+## 3. Tự chủ Bầy đàn UAV, Heatmap & Vòng đời Khép kín
 
-Hệ thống giao tiếp với trình duyệt qua WebSocket `/ws/mophong` với 2 màn hình chính:
-
-1. **Bản đồ (`/` — [`templates/index.html`](templates/index.html)):**
-   - Bản đồ vệ tinh 7 phân khu (`Z1`–`Z7`) với thanh trạng thái `4/4` từng vùng và huy hiệu **`DỰ BỊ 7/7`**.
-   - **Lớp Heatmap tối ưu hiệu năng:** Tự động tính lại `radius`/`blur` theo mức zoom (`zoomend`), tạm dừng render khi kéo/zoom bản đồ (`movestart`/`zoomstart`) và throttle cập nhật `400ms/lần`.
-   - **Bộ lọc & Tia trực quan:** Bật/tắt **7 Vùng**, **Heatmap**, **Quét 600m**, **Tia Gói tin (RF)**, **Tuyến E2E**, **Nhãn tên**, **Tia FANET** (mạng lưới P2P đồng đều nét mảnh), **Tia A2G**, **Tia Vệ tinh** (tự động ẩn vòng quét và tia tại khu vực Trạm đối với UAV `STANDBY`/`CHARGING`).
-   - **Điều khiển trực tiếp:** **Báo cháy / Xoá cháy**, **Sập (0%) / Pin yếu (18%) / Sạc (100%)**, chỉnh tốc độ mô phỏng (**Tạm dừng, 1x, 2x, 5x**) và lọc danh sách **Tuần tra (28)** / **Dự bị (7/7)**.
-2. **Dashboard Phân tích (`/dashboard` — [`templates/dashboard.html`](templates/dashboard.html)):**
-   - Theo dõi KPI thời gian thực (quân số `35/35`, tỷ lệ PDR %, độ trễ ms, năng lượng tiêu hao Joule, phân bổ A2G/FANET/LEO), ma trận 7 phân khu, luồng log giao thức MAS và xuất dữ liệu thực nghiệm CSV (`/api/xuat-csv`).
+- **Bản đồ Độ bất định Heatmap ([`environment/scenario_manager.py`](environment/scenario_manager.py)):** Làm mát tỏa mượt từ tâm UAV trong `Cooling Radius = 600m` (`Cooling Rate = 0.35/s`) về `0.05` (xanh lá); ngoài tầm quét tăng `Staleness Rate = 0.025/s` đến trần `0.68` (vàng cam). Đám cháy thật (`active_fires`, mức `1.0` đỏ) giữ nguyên tới khi bấm **Xoá cháy**.
+- **Điều hướng Trường Thế năng & Chống tụ cụm ([`agents/uav_agent.py`](agents/uav_agent.py)):** Hút về `HeatNode` cao nhất trong vùng kết hợp **Virtual Pheromone** (giảm `80%` lực hút nếu có đồng đội gần hơn), lực đẩy **Inter-UAV Repulsion** (`< 1200m`, trọng số `2.5x`) và trượt biên Ray-Casting. Tắt lực hút điểm nóng khi `STANDBY`, `WAITING_DOCK`, `CHARGING`, `RETURNING`.
+- **Xử lý Sự cố Khi Đang Khoanh Vùng Cháy (`130m`):** Nếu UAV đang giữ đám cháy tụt pin `< 25%` hoặc bị bấm **Sập (`0%` - `OFFLINE`)**, hệ thống lập tức mở khóa cháy và bàn giao P2P `YEU_CAU_HO_TRO_CHAY_P2P` cho đồng đội có pin cao nhất đang bay trong cùng phân khu, đồng thời đánh thức 1 UAV `STANDBY` ra bù đủ `4/4`.
+- **Chu trình Thay ca & Sạc Semaphore Khép kín:**
+  `PATROLLING` ➔ `Pin < 25%` (gọi dự bị `STANDBY` bay ra thế chỗ) ➔ `RETURNING` ➔ (về cách Trạm `<= 100m`, gọi `Semaphore.try_acquire_dock`) ➔ **`CHARGING` (`+15%/s`, tối đa 3 UAV)** hoặc **`WAITING_DOCK` (xếp hàng FIFO)** ➔ đầy `100%` (`release_dock`) ➔ `STANDBY`.
 
 ---
 
-## 4. Cấu trúc Thư mục Dự án
+## 4. Giao diện Điều hành & Giám sát Thời gian thực
+
+1. **Bản đồ Chiến thuật (`/` — [`templates/index.html`](templates/index.html)):**
+   - Topbar hiển thị 5 chỉ số gọn (`UAV kết nối`, `7 Phân khu`, `PDR`, `Trễ TB`, **`Sạc Sem x/3`**).
+   - Sidebar trên có 2 tab chuyển mượt: **`Tổng quan`** (Phát hiện cháy, Heatmap TB, Tuyến E2E kèm `TCP/UDP & TTL`) và **`Mạng & HĐH`** (Semaphore trạm sạc, Socket Ports, **Bảng định tuyến L3** theo UAV đang chọn).
+   - Danh sách 39 node hiển thị địa chỉ IPv4, phân biệt `[DỰ BỊ]`, `[CHỜ SẠC]`, `[ĐANG SẠC]`, và ẩn vòng quét/tia tại khu vực Trạm.
+2. **Dashboard Hệ điều hành & Mạng (`/dashboard` — [`templates/dashboard.html`](templates/dashboard.html)):**
+   - 6 thẻ KPI bao gồm PDR/TCP ACK/Retrans, CRC32/TTL Drop, Semaphore Trạm sạc, OS Threads/RAM/CPU/PID.
+   - **Cột 1 (Mạng máy tính):** **Packet Sniffer** thời gian thực (bắt từng gói `Seq`, `TCP/UDP`, `P0..P2`, `IP ➔ IP`, `TTL`, `CRC32`, `ACK/RETRANS/ERR`) + tab **Phản ứng Cháy** + chuỗi E2E.
+   - **Cột 2 (Hệ điều hành):** Trực quan 3 **Dock Sạc Semaphore (`DOCK #1..#3`)** & hàng đợi `WAITING_DOCK`, thống kê **Priority Scheduler (`P0/P1/P2`)** & **Mutex `RLock`**, bảng **OS Threads thật** + tab **Ma trận 7 Vùng**.
+   - **Cột 3 (Nhật ký Giao thức):** Lọc tức thì theo 4 nhóm **Tất cả / Mạng / HĐH / Bầy đàn**, hỗ trợ xuất CSV `/api/xuat-csv`.
+
+---
+
+## 5. Cấu trúc Thư mục Dự án
 
 ```text
 PBL4/
-├── agents/                     # Mô hình các tác nhân tự trị
-│   ├── uav_agent.py            # Tác nhân UAV (Trường thế năng, phát hiện cháy, khoanh vùng 130m, P2P handover, sạc +15%/s)
-│   ├── satellite_agent.py      # Tác nhân Vệ tinh LEO (Quỹ đạo SGP4, chuyển tiếp không gian)
-│   └── ground_station.py       # Tác nhân Trạm Kiểm Lâm Mặt Đất
-├── core/                       # Lõi giao tiếp và định tuyến mạng
-│   ├── base_agent.py           # Lớp cơ sở của tác nhân (Pin, hàng đợi thông điệp, FSM)
-│   ├── message_broker.py       # Định tuyến Dijkstra, kênh truyền vô tuyến, thống kê vùng & WebSocket
-│   └── ground_station_server.py# Điều phối trạng thái đám cháy & đồng bộ telemetry tới Web UI
-├── environment/                # Động cơ vật lý & quản lý kịch bản
-│   ├── physics_engine.py       # Tính 3D ECEF, FSPL, SNR, dung lượng Shannon, PER
-│   ├── scenario_manager.py     # Khởi tạo 7 Geofence Sơn Trà, 35 UAV, Heatmap Staleness/Cooling & log CSV
-│   └── simulation_loop.py      # Vòng lặp đồng hồ vật lý (World Clock) & điều phối dự bị vùng
-├── api/                        # Các REST API & WebSocket Endpoints (FastAPI)
-│   ├── routes.py
-│   └── schemas.py
-├── data/                       # Dữ liệu địa lý GeoJSON, TLE vệ tinh, cấu hình CSV & log thực nghiệm
-├── templates/                  # Giao diện Web Console
-│   ├── index.html              # Trang Bản đồ Chiến thuật
-│   └── dashboard.html          # Trang Dashboard Phân tích
-├── static/                     # Tài nguyên tĩnh & thư viện Leaflet cục bộ
-├── tests/                      # Bộ kiểm thử tự động (Unit & Integration Tests)
-├── AGENT.md                    # Quy chuẩn kiến trúc & thông số dự án
-├── main.py                     # Điểm khởi chạy ứng dụng FastAPI
-└── requirements.txt            # Danh sách thư viện Python
+├── agents/                     # Các tác nhân tự trị (UAV, Vệ tinh LEO, Trạm mặt đất)
+├── core/
+│   ├── os_kernel.py            # Semaphore(3), Mutex RLock, BoundedPriorityQueue, ThreadPool & OS Monitor
+│   ├── network_stack.py        # IPv4 Subnet, 26B Packet + CRC32 + TTL, Real TCP/UDP Sockets & Sniffer
+│   ├── base_agent.py           # Lớp cơ sở Node (IP, Priority Queue, L3 Routing Table, FSM)
+│   ├── message_broker.py       # Định tuyến Dijkstra, kênh PHY, ARQ Retry qua Socket & WebSocket
+│   └── ground_station_server.py# Giám sát trạng thái đám cháy & đồng bộ Web UI
+├── environment/                # PhysicsEngine (3D ECEF, FSPL, SNR, PER), ScenarioManager, SimulationLoop
+├── api/                        # FastAPI REST & WebSocket (/ws/mophong, /api/routing-table/{id}, /api/xuat-csv)
+├── data/                       # GeoJSON 7 phân khu Sơn Trà, TLE vệ tinh, CSV cấu hình & log QoS
+├── templates/                  # Giao diện Dark Console (index.html, dashboard.html)
+├── static/                     # Thư viện Leaflet cục bộ
+├── tests/                      # Unit & Integration Tests
+├── AGENT.md                    # Quy chuẩn kiến trúc & thông số
+├── main.py                     # Điểm khởi chạy FastAPI
+└── requirements.txt            # Thư viện Python phụ thuộc
 ```
 
 ---
 
-## 5. Hướng dẫn Cài đặt & Chạy Chương trình
+## 6. Hướng dẫn Cài đặt & Chạy Chương trình
 
-### Yêu cầu hệ thống
-- Python `3.10+`
-
-### Bước 1: Cài đặt thư viện
 ```bash
 pip install -r requirements.txt
-```
-
-### Bước 2: Khởi chạy máy chủ mô phỏng
-```bash
 python main.py
 ```
-*(Hoặc chạy qua Uvicorn: `uvicorn main:app --reload --host 0.0.0.0 --port 8000`)*
-
-### Bước 3: Mở giao diện trên trình duyệt
-- **Bản đồ Chiến thuật:** `http://localhost:8000/`
-- **Dashboard Phân tích:** `http://localhost:8000/dashboard`
+Mở trình duyệt tại:
+- **Bản đồ Chiến thuật:** `http://127.0.0.1:8000/`
+- **Dashboard HĐH & Mạng:** `http://127.0.0.1:8000/dashboard`
 
 ---
 
-## 6. Kịch bản Demo Nhanh (Dành cho Báo cáo / Bảo vệ Đồ án)
+## 7. Kịch bản Demo Nhanh Bảo vệ PBL4
 
-1. **Demo 1 – Tuần tra Tự chủ & Heatmap Độ bất định:**
-   - Quan sát 28 UAV tự tản ra (Anti-Clustering) quét sạch các vùng vàng cam về màu xanh an toàn trong bán kính `600m`, trong khi các vùng chưa có UAV bay qua sẽ dần ngả vàng theo thời gian (`0.025/s`).
-2. **Demo 2 – Báo cháy, Khoanh vùng Liên tục & Tuyến E2E Đa chặng:**
-   - Bấm nút **Báo cháy** ở góc trên trái bản đồ rồi click vào vùng **Z6 hoặc Z7** (sườn Đông bị núi che khuất).
-   - Quan sát UAV gần nhất trong tầm `600m` khóa mục tiêu, bay vòng tròn khoanh vùng `130m` liên tục quanh ngọn lửa và duy trì **Tuyến E2E xanh dương** truyền đa chặng qua FANET/LEO về `SƠN_TRÀ` cho đến khi bấm **Xoá cháy**.
-3. **Demo 3 – Thay ca Khép kín & Bàn giao Cháy khi Sập nguồn / Pin yếu:**
-   - Chọn UAV đang tuần tra hoặc đang khoanh vùng cháy rồi bấm **Pin yếu (18%)** hoặc **Sập (0%)**.
-   - Quan sát UAV dự bị `STANDBY` từ Trạm Kiểm Lâm (`DỰ BỊ 7/7` $\rightarrow$ `6/7`) lập tức cất cánh bay ra vùng thiếu quân để giữ `4/4`, đồng đội cùng vùng tiếp quản đám cháy nếu đang có sự cố, còn UAV yếu pin bay thẳng về Trạm sạc nhanh `+15%/s` rồi quay lại hàng ngũ `STANDBY`.
+1. **Demo Mạng máy tính (TCP ARQ vs UDP, TTL, CRC32 & Routing Table):**
+   - Mở `/dashboard` ➔ Cột 1 (**Packet Sniffer**) quan sát các gói `TELEM` chạy giao thức `UDP` (`10.0.x.y ➔ 10.0.0.1`) kèm `CRC32` và `TTL`.
+   - Bấm **Báo cháy** ở vùng Z6/Z7 trên bản đồ ➔ Quan sát gói cảnh báo chạy `TCP` (`P0`), nếu dính nhiễu `PER` sẽ tự truyền lại (`RETRANS_OK`) trong log `[TCP_ARQ]` và nhận `ACK` thật qua Socket TCP. Bấm vào 1 UAV để xem **Bảng định tuyến L3** trong tab `Mạng & HĐH`.
+2. **Demo Hệ điều hành (Counting Semaphore, Mutex & Priority Scheduling):**
+   - Bấm **Pin yếu (18%)** cho 4–5 UAV liên tiếp ➔ Quan sát ở tab **OS Kernel & Sync** (và topbar `Sạc Sem`) đúng **3 UAV** chiếm `DOCK #1..#3` (`CHARGING`), các UAV về sau bị chặn ở hàng đợi **`WAITING_DOCK`**; ngay khi 1 chiếc sạc đầy `100%` gọi `release()`, chiếc chờ tiếp theo tự động vào sạc.
+   - Bảng **Priority Queue** hiển thị gói cháy `P0` được xử lý ưu tiên trước `P1`/`P2`, cùng danh sách các **Thread OS thật** (`SAGSINS-TCP-Server`, `SAGSINS-UDP-Server`, `SAGSINS-Worker-*`).
