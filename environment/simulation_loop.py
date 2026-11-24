@@ -349,6 +349,8 @@ class SimulationLoop:
         lan_ip = detect_local_lan_ip()
         t_port = self.broker.network_stack.tcp_port
         u_port = self.broker.network_stack.udp_port
+        print("[WEB-UI] Bản đồ: http://127.0.0.1:8000/ | Dashboard: http://127.0.0.1:8000/dashboard")
+        print(f"[WEB-UI] Truy cập qua LAN: http://{lan_ip}:8000/ | http://{lan_ip}:8000/dashboard")
         print(f"[CLIENT-SERVER] TCP Server: 0.0.0.0:{t_port} | UDP Server: 0.0.0.0:{u_port} (Mode: {self.broker.network_stack.socket_mode})")
         if t_port > 0:
             print(f"[CLIENT-SERVER] Lệnh kết nối Client ngoài: python uav_client.py --host {lan_ip} --tcp-port {t_port} --udp-port {u_port} --id UAV_EXT_01 --zone ZONE_03")

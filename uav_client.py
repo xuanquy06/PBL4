@@ -176,7 +176,11 @@ class StandaloneUAVClient:
         """Mở TCP Socket + UDP Socket và gửi bắt tay JOIN tới Server."""
         tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         tcp.settimeout(5.0)
-        tcp.connect((self.host, self.tcp_port))
+        try:
+            tcp.connect((self.host, self.tcp_port))
+        except Exception:
+            tcp.close()
+            raise
         self._tcp_sock = tcp
         self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
@@ -347,7 +351,15 @@ def main():
         battery=args.battery,
     )
     print(f"[UAV_CLIENT] Đang kết nối TCP tới {args.host}:{args.tcp_port} (PID={client.pid})...")
-    ack = client.connect()
+    try:
+        ack = client.connect()
+    except (OSError, RuntimeError) as exc:
+        print(
+            f"[LỖI KẾT NỐI] Không thể kết nối TCP tới {args.host}:{args.tcp_port} ({exc}). "
+            "Hãy chắc chắn Server main.py đang chạy và kiểm tra IP/Firewall."
+        )
+        client.stop(graceful=False)
+        sys.exit(1)
     print(
         f"[UAV_CLIENT] Kết nối thành công! ID={client.uav_id} | IP={client.ip_address} | "
         f"UDP={args.host}:{client.udp_port} | ACK={ack.get('cmd')}"
@@ -369,14 +381,20 @@ def main():
             while True:
                 cmd = input("client> ").strip().lower()
                 if cmd == "f":
-                    res = client.trigger_fire()
-                    print(f"[TCP -> FIRE_ACK] Đã báo cháy tại ({client.lat:.4f}, {client.lon:.4f}) -> {res}")
+                    try:
+                        res = client.trigger_fire()
+                        print(f"[TCP -> FIRE_ACK] Đã báo cháy tại ({client.lat:.4f}, {client.lon:.4f}) -> {res}")
+                    except (OSError, RuntimeError) as exc:
+                        print(f"[LỖI TCP] Không thể gửi lệnh tới Server: {exc}")
                 elif cmd == "b":
                     client.trigger_low_battery()
                     print("[CLIENT] Pin đặt về 18% -> Đang bay thẳng về Trạm xin cổng sạc Semaphore...")
                 elif cmd == "c":
-                    res = client.trigger_full_charge()
-                    print(f"[TCP -> DOCK_RELEASE_ACK] Đã sạc 100% & nhả cổng Semaphore -> {res}")
+                    try:
+                        res = client.trigger_full_charge()
+                        print(f"[TCP -> DOCK_RELEASE_ACK] Đã sạc 100% & nhả cổng Semaphore -> {res}")
+                    except (OSError, RuntimeError) as exc:
+                        print(f"[LỖI TCP] Không thể gửi lệnh tới Server: {exc}")
                 elif cmd == "s":
                     print(f"[STATUS] {client.status_text()}")
                 elif cmd == "q":

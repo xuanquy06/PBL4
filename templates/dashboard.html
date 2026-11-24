@@ -876,8 +876,8 @@
         function renderTransportSniffer(tm) {
             if (!tm) return;
             const bar = document.getElementById('socketStatusBar');
-            const tcpTxt = tm.tcp_port > 0 ? `TCP 127.0.0.1:${tm.tcp_port}` : 'TCP Wire';
-            const udpTxt = tm.udp_port > 0 ? `UDP 127.0.0.1:${tm.udp_port}` : 'UDP Wire';
+            const tcpTxt = tm.tcp_port > 0 ? `TCP 0.0.0.0:${tm.tcp_port}` : 'TCP Wire';
+            const udpTxt = tm.udp_port > 0 ? `UDP 0.0.0.0:${tm.udp_port}` : 'UDP Wire';
             const totalKb = (((tm.tcp_bytes || 0) + (tm.udp_bytes || 0)) / 1024).toFixed(1);
             const extCount = tm.external_clients_count || 0;
             bar.innerHTML = `

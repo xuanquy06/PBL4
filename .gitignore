@@ -10,3 +10,6 @@ htmlcov/
 *.egg-info/
 dist/
 build/
+data/simulation_metrics_log.csv
+sagsins_qos_metrics_log.csv
+.agents/

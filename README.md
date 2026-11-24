@@ -37,7 +37,7 @@ Hệ thống khởi tạo **39 tác nhân tự trị (Autonomous Agents)**, mỗ
 ### 2.2. Lõi Mạng máy tính (`core/network_stack.py` & `core/message_broker.py`)
 1. **Đóng gói Khung nhị phân 26-byte Header + Checksum CRC32 + TTL:**
    - Gói tin chuẩn gồm `Version/Proto`, `Priority`, `Seq`, `Ack`, `TTL` (mặc định `16`, giảm `1` sau mỗi chặng — hủy gói `TTL_DROP` khi `TTL == 0`), `Flags`, `Src IP`, `Dst IP`, `Payload Length` và **`CRC32`** tính bằng `zlib.crc32()`.
-2. **Giao vận Socket TCP & UDP Thật trên `127.0.0.1`:**
+2. **Giao vận Socket TCP & UDP Thật (`0.0.0.0:9000` / `0.0.0.0:9001`):**
    - **TCP (ARQ Tin cậy có ACK & Truyền lại):** Áp dụng cho cảnh báo cháy, khoanh vùng và bàn giao khẩn P2P. Khi nhiễu kênh truyền `PER` làm đảo bit khung dây, bên nhận phát hiện lỗi qua `CRC32_MISMATCH` và tự động **truyền lại (`RETRANS` tối đa 3 lần)** cho tới khi nhận được gói nhị phân `ACK`.
    - **UDP (Không kết nối):** Áp dụng cho `TELEMETRY_REPORT` và `HELLO_BEACON` định kỳ; gửi datagram 1 lần và hủy ngay nếu hỏng `CRC32`.
 3. **Định tuyến Đa chặng Dijkstra E2E & Bảng định tuyến L3:**
@@ -85,7 +85,7 @@ PBL4/
 ├── data/                       # GeoJSON 7 phân khu Sơn Trà, TLE vệ tinh, CSV cấu hình & log QoS
 ├── templates/                  # Giao diện Dark Console (index.html, dashboard.html)
 ├── static/                     # Thư viện Leaflet cục bộ
-├── tests/                      # Unit & Integration Tests
+├── tests/                      # Bộ test PBL4 (test_pbl4_os_network.py, test_client_server.py)
 ├── AGENT.md                    # Quy chuẩn kiến trúc & thông số
 ├── main.py                     # Điểm khởi chạy Server chính (FastAPI + TCP :9000 + UDP :9001)
 ├── uav_client.py               # Tiến trình UAV Client độc lập kết nối TCP/UDP từ Terminal/Máy khác
@@ -101,9 +101,14 @@ PBL4/
 pip install -r requirements.txt
 python main.py
 ```
-Mở trình duyệt tại:
-- **Bản đồ Chiến thuật:** `http://127.0.0.1:8000/`
-- **Dashboard HĐH & Mạng:** `http://127.0.0.1:8000/dashboard`
+Mở trình duyệt tại máy Server hoặc máy khác chung Wi-Fi/LAN:
+- **Bản đồ Chiến thuật:** `http://127.0.0.1:8000/` (hoặc `http://<IP_LAN>:8000/`)
+- **Dashboard HĐH & Mạng:** `http://127.0.0.1:8000/dashboard` (hoặc `http://<IP_LAN>:8000/dashboard`)
+
+Chạy kiểm thử tự động toàn bộ lõi HĐH, Mạng và Client–Server:
+```bash
+python -m unittest discover -s tests -v
+```
 
 ### Chế độ 2: Kết nối UAV Client Độc lập theo mô hình Client–Server (`Terminal 2` hoặc `Máy 2` chung Wi-Fi)
 Khi `main.py` khởi chạy, Terminal sẽ in sẵn địa chỉ IP LAN và câu lệnh mẫu. Mở cửa sổ Terminal khác (hoặc laptop thứ 2 chung mạng LAN) và chạy:
