@@ -48,7 +48,7 @@ class MessageBroker:
         self.ground_station_server: Any = None
         self.thong_ke_lien_tuc: dict[str, Any] = {}
         self.muc_tieu_chay_da_khoa: List[dict[str, Any]] = []
-        self.os_kernel = OSKernelManager(max_docks=3, max_workers=4)
+        self.os_kernel = OSKernelManager()
         self.network_stack = RealSocketTransport(os_kernel=self.os_kernel)
         self._beacon_sniff_counter = 0
 
@@ -77,19 +77,18 @@ class MessageBroker:
         lon: float,
         ban_kinh_khoa_m: float = 850.0
     ) -> Optional[str]:
-        """Kiểm tra xem tâm cháy (lat, lon) đã bị một UAV hoạt động khác khóa mục tiêu chưa (Mutex protected)."""
-        with self.os_kernel.fire_target_lock:
-            con_hieu_luc: List[dict[str, Any]] = []
-            uav_khoa: Optional[str] = None
-            for entry in self.muc_tieu_chay_da_khoa:
-                uav = self.danh_sach_tac_nhan.get(entry["uav_id"])
-                if not uav or getattr(uav.trang_thai, "value", "") == "NGẮT_KẾT_NỐI":
-                    continue
-                con_hieu_luc.append(entry)
-                if self._khoang_cach_mat_dat_m(lat, lon, entry["lat"], entry["lon"]) <= ban_kinh_khoa_m:
-                    uav_khoa = entry["uav_id"]
-            self.muc_tieu_chay_da_khoa = con_hieu_luc
-            return uav_khoa
+        """Kiểm tra xem tâm cháy (lat, lon) đã được một UAV hoạt động khác tiếp nhận khóa mục tiêu chưa."""
+        con_hieu_luc: List[dict[str, Any]] = []
+        uav_khoa: Optional[str] = None
+        for entry in self.muc_tieu_chay_da_khoa:
+            uav = self.danh_sach_tac_nhan.get(entry["uav_id"])
+            if not uav or getattr(uav.trang_thai, "value", "") == "NGẮT_KẾT_NỐI":
+                continue
+            con_hieu_luc.append(entry)
+            if self._khoang_cach_mat_dat_m(lat, lon, entry["lat"], entry["lon"]) <= ban_kinh_khoa_m:
+                uav_khoa = entry["uav_id"]
+        self.muc_tieu_chay_da_khoa = con_hieu_luc
+        return uav_khoa
 
     def khoa_muc_tieu_chay(
         self,
@@ -99,68 +98,56 @@ class MessageBroker:
         ban_kinh_khoa_m: float = 850.0
     ) -> bool:
         """
-        Khóa mục tiêu đám cháy tại (lat, lon) cho `uav_id` bằng Mutex RLock để loại trừ tương hỗ (Mutual Exclusion),
-        ngăn Race Condition khi nhiều UAV cùng phát hiện 1 đám cháy trong cùng 1 tick.
+        Khóa mục tiêu đám cháy tại (lat, lon) cho `uav_id` theo luật điều phối MAS,
+        tránh việc nhiều UAV cùng dồn vào một đám cháy.
         """
-        with self.os_kernel.fire_target_lock:
-            da_khoa_boi = self.kiem_tra_muc_tieu_da_khoa(lat, lon, ban_kinh_khoa_m=ban_kinh_khoa_m)
-            if da_khoa_boi and da_khoa_boi != uav_id:
-                self.os_kernel.record_mutex_acquire(conflict=True)
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(self.gui_log_ra_web(
-                        "INFO",
-                        f"[MUTEX] 🔒 fire_target_lock chặn [{uav_id}] tránh Race Condition — [{da_khoa_boi}] đang giữ miền găng."
-                    ))
-                except RuntimeError:
-                    pass
-                return False
-            self.os_kernel.record_mutex_acquire(conflict=False)
-            if not da_khoa_boi:
-                self.muc_tieu_chay_da_khoa.append({
-                    "lat": float(lat),
-                    "lon": float(lon),
-                    "uav_id": uav_id,
-                    "timestamp": time.time(),
-                })
-            heat_nodes = getattr(self.scenario, "heat_nodes", None) or []
-            for node in heat_nodes:
-                if self._khoang_cach_mat_dat_m(lat, lon, node.lat, node.lon) <= ban_kinh_khoa_m:
-                    node.locked_by = uav_id
-            return True
+        da_khoa_boi = self.kiem_tra_muc_tieu_da_khoa(lat, lon, ban_kinh_khoa_m=ban_kinh_khoa_m)
+        if da_khoa_boi and da_khoa_boi != uav_id:
+            return False
+        if not da_khoa_boi:
+            self.muc_tieu_chay_da_khoa.append({
+                "lat": float(lat),
+                "lon": float(lon),
+                "uav_id": uav_id,
+                "timestamp": time.time(),
+            })
+        heat_nodes = getattr(self.scenario, "heat_nodes", None) or []
+        for node in heat_nodes:
+            if self._khoang_cach_mat_dat_m(lat, lon, node.lat, node.lon) <= ban_kinh_khoa_m:
+                node.locked_by = uav_id
+        return True
 
     def mo_khoa_muc_tieu_chay(self, uav_id: str, ha_nhiet: bool = False):
-        """Giải phóng khóa mục tiêu của `uav_id` trong Mutex RLock; không hạ nhiệt nếu còn active_fires."""
-        with self.os_kernel.fire_target_lock:
-            cac_tam = [e for e in self.muc_tieu_chay_da_khoa if e["uav_id"] == uav_id]
-            self.muc_tieu_chay_da_khoa = [e for e in self.muc_tieu_chay_da_khoa if e["uav_id"] != uav_id]
-            has_active_fires = bool(getattr(self.scenario, "active_fires", None))
-            cho_phep_ha_nhiet = bool(ha_nhiet and not has_active_fires)
-            heat_nodes = getattr(self.scenario, "heat_nodes", None) or []
-            giu_lai = []
-            for node in heat_nodes:
-                gan_tam_chay = (
-                    getattr(node, "locked_by", None) == uav_id
-                    or any(self._khoang_cach_mat_dat_m(tam["lat"], tam["lon"], node.lat, node.lon) <= 850.0 for tam in cac_tam)
-                )
-                if cho_phep_ha_nhiet and gan_tam_chay and getattr(node, "is_fire_hotspot", False):
-                    continue
-                if getattr(node, "locked_by", None) == uav_id:
-                    node.locked_by = None
-                    if cho_phep_ha_nhiet:
-                        node.risk_score = 0.15
-                        node.fire_center = None
-                        node.fire_status = None
-                        node.fire_id = None
-                elif cho_phep_ha_nhiet and gan_tam_chay:
+        """Giải phóng khóa mục tiêu của `uav_id` trên bản đồ sự cố; không hạ nhiệt nếu còn active_fires."""
+        cac_tam = [e for e in self.muc_tieu_chay_da_khoa if e["uav_id"] == uav_id]
+        self.muc_tieu_chay_da_khoa = [e for e in self.muc_tieu_chay_da_khoa if e["uav_id"] != uav_id]
+        has_active_fires = bool(getattr(self.scenario, "active_fires", None))
+        cho_phep_ha_nhiet = bool(ha_nhiet and not has_active_fires)
+        heat_nodes = getattr(self.scenario, "heat_nodes", None) or []
+        giu_lai = []
+        for node in heat_nodes:
+            gan_tam_chay = (
+                getattr(node, "locked_by", None) == uav_id
+                or any(self._khoang_cach_mat_dat_m(tam["lat"], tam["lon"], node.lat, node.lon) <= 850.0 for tam in cac_tam)
+            )
+            if cho_phep_ha_nhiet and gan_tam_chay and getattr(node, "is_fire_hotspot", False):
+                continue
+            if getattr(node, "locked_by", None) == uav_id:
+                node.locked_by = None
+                if cho_phep_ha_nhiet:
                     node.risk_score = 0.15
-                    node.locked_by = None
                     node.fire_center = None
                     node.fire_status = None
                     node.fire_id = None
-                giu_lai.append(node)
-            if cho_phep_ha_nhiet and hasattr(self.scenario, "heat_nodes"):
-                self.scenario.heat_nodes = giu_lai
+            elif cho_phep_ha_nhiet and gan_tam_chay:
+                node.risk_score = 0.15
+                node.locked_by = None
+                node.fire_center = None
+                node.fire_status = None
+                node.fire_id = None
+            giu_lai.append(node)
+        if cho_phep_ha_nhiet and hasattr(self.scenario, "heat_nodes"):
+            self.scenario.heat_nodes = giu_lai
 
     def dang_ky_tac_nhan(self, tac_nhan: Any):
         """Đăng ký một Node mạng (UAV, Vệ tinh, Trạm mặt đất) vào không gian mô phỏng"""
@@ -1029,8 +1016,8 @@ class MessageBroker:
             uav_state_val = str(getattr(uav_state_obj, "value", uav_state_obj or "")).upper()
             at_station = callable(getattr(agent, "_dang_o_tai_tram", None)) and agent._dang_o_tai_tram()
 
-            if fsm_val == "NGẮT_KẾT_NỐI" or uav_state_val in ("RETURNING", "WAITING_DOCK", "CHARGING", "OFFLINE") or fsm_val in (
-                "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC", "CHỜ_CỔNG_SẠC", "ĐANG_SẠC"
+            if fsm_val == "NGẮT_KẾT_NỐI" or uav_state_val in ("RETURNING", "CHARGING", "OFFLINE") or fsm_val in (
+                "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC", "ĐANG_SẠC"
             ):
                 entry["uav_dang_sac_hoac_rtb"] += 1
             elif uav_state_val in active_air_states and not at_station:
@@ -1127,7 +1114,7 @@ class MessageBroker:
             self.tuyen_e2e_chay_hien_tai = None
         return fire_routes
 
-    async def dong_bo_trang_thai_toan_mang(self, heatmap_nodes: list = None):
+    async def dong_bo_trang_thai_toan_mang(self, heatmap_nodes: Optional[list] = None):
         """
         Thu thập tọa độ, pin, tuyến truyền, danh sách điểm nhiệt (heatmap), độ phủ 7 phân khu và thống kê QoS đẩy ra giao diện.
         """

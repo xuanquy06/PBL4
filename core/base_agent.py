@@ -14,7 +14,6 @@ class AgentState(str, Enum):
     BIDDING = "ĐANG_ĐẤU_GIÁ"          # Đang thương lượng giao thức Contract Net Protocol
     RELAYING = "ĐANG_TRUYỀN_TẢI"      # Đang đóng vai trò trạm trung chuyển dữ liệu
     RETURNING = "ĐANG_QUAY_VỀ_SẠC"    # UAV quay về trạm để tránh cạn pin
-    WAITING_DOCK = "CHỜ_CỔNG_SẠC"     # UAV bị chặn ở hàng đợi Semaphore chờ cổng sạc rảnh
     CHARGING = "ĐANG_SẠC"             # UAV nạp pin tại trạm mặt đất
     LOW_BATTERY_RTB = "PIN_YẾU_RTB"   # Pin dưới ngưỡng an toàn, quay về trạm
     LOW_BATTERY = "PIN_YẾU_RTB"       # Bí danh tương thích với trạng thái cũ
@@ -68,7 +67,7 @@ class BaseAgent(ABC):
         self.nguong_pin_yeu_pct = 20.0
 
         self.trang_thai = AgentState.IDLE
-        self._hang_doi_thong_diep: Optional[asyncio.Queue] = None
+        self._hang_doi_thong_diep: Optional[BoundedPriorityQueue] = None
         self.dang_hoat_dong = True
 
         # Tri thức cục bộ (Local Belief): Bảng láng giềng 1-hop và tuyến đường hiện tại về Sink
@@ -102,7 +101,7 @@ class BaseAgent(ABC):
         return self._hang_doi_thong_diep
 
     @hang_doi_thong_diep.setter
-    def hang_doi_thong_diep(self, value):
+    def hang_doi_thong_diep(self, value: Optional[BoundedPriorityQueue]):
         self._hang_doi_thong_diep = value
 
     @property

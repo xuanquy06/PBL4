@@ -696,9 +696,9 @@
                 <div id="kDrops" class="k-sub">CRC Err: 0 · TTL Drop: 0 · PER: 0</div>
             </div>
             <div class="kpi-card" style="--card-accent: var(--accent-amber);">
-                <div class="k-label">Semaphore Trạm sạc</div>
-                <div id="kSem" class="k-val" style="color:var(--accent-green)">0 / 3</div>
-                <div id="kSemSub" class="k-sub">Hàng đợi: 0 · Mutex chặn: 0</div>
+                <div class="k-label">Mutex &amp; Bộ đệm QoS</div>
+                <div id="kMutex" class="k-val" style="color:var(--accent-green)">RLock: 0</div>
+                <div id="kMutexSub" class="k-sub">Clients ngoài: 0 · Buffer Drop: 0</div>
             </div>
             <div class="kpi-card" style="--card-accent: var(--accent-purple);">
                 <div class="k-label">Tiến trình &amp; Luồng HĐH</div>
@@ -767,11 +767,10 @@
                 </div>
                 <div class="panel-body">
                     <div id="col2Os">
-                        <div class="section-subhead">Counting Semaphore — Trạm Sạc (Tối đa 3 UAV)</div>
-                        <div id="dockGrid" class="dock-grid"></div>
-                        <div id="dockWaitStrip" class="wait-strip empty">Hàng đợi WAITING_DOCK: Trống</div>
+                        <div class="section-subhead">Đồng bộ Mutex (net_state_lock) &amp; Clients ngoài</div>
+                        <div id="mutexSyncStrip" class="wait-strip empty">Mutex RLock (net_state_lock): 0 lần · Clients ngoài: 0</div>
 
-                        <div class="section-subhead">Lập lịch Hàng đợi Ưu tiên (Priority Queue) &amp; Mutex</div>
+                        <div class="section-subhead">Lập lịch Hàng đợi Ưu tiên (Priority Queue QoS)</div>
                         <div id="schedTableWrap" style="margin-bottom:14px;overflow-x:auto;"></div>
 
                         <div class="section-subhead">Danh sách Luồng HĐH (OS Threads)</div>
@@ -859,14 +858,13 @@
                 }
             }
             if (osMetrics) {
-                const sem = osMetrics.charging_semaphore || {};
                 const mutex = osMetrics.mutex || {};
-                const waitLen = (sem.wait_queue || []).length;
-                const kSem = document.getElementById('kSem');
-                kSem.textContent = `${sem.in_use || 0} / ${sem.capacity || 3}`;
-                kSem.style.color = waitLen > 0 ? 'var(--accent-amber)' : ((sem.in_use || 0) >= (sem.capacity || 3) ? '#fb923c' : 'var(--accent-green)');
-                document.getElementById('kSemSub').textContent =
-                    `Hàng đợi: ${waitLen} · Mutex chặn Race: ${mutex.race_conditions_blocked || 0}`;
+                const sched = osMetrics.scheduler || {};
+                const extCnt = transportMetrics ? (transportMetrics.external_clients_count || 0) : 0;
+                const kMut = document.getElementById('kMutex');
+                if (kMut) kMut.textContent = `RLock: ${mutex.acquisitions || 0}`;
+                const kMutSub = document.getElementById('kMutexSub');
+                if (kMutSub) kMutSub.textContent = `Clients ngoài: ${extCnt} · Buffer Drop: ${sched.buffer_drops || 0}`;
                 document.getElementById('kOs').textContent = `${osMetrics.active_threads_count || 0} Threads`;
                 document.getElementById('kOsSub').textContent =
                     `RAM: ${osMetrics.memory_rss_mb || 0} MB · CPU: ${osMetrics.cpu_percent || 0}% · PID: ${osMetrics.pid || '—'}`;
@@ -930,50 +928,20 @@
             `;
         }
 
-        function renderOsKernel(osData, nodes) {
+        function renderOsKernel(osData, tm) {
             if (!osData) return;
-            const sem = osData.charging_semaphore || {};
-            const cap = sem.capacity || 3;
-            const active = Array.isArray(sem.active_docks) ? sem.active_docks : [];
-            const waitQ = Array.isArray(sem.wait_queue) ? sem.wait_queue : [];
-            const nodeMap = new Map((nodes || []).map(n => [n.id, n]));
-
-            let dockHtml = '';
-            for (let i = 0; i < cap; i++) {
-                const uid = active[i];
-                if (uid) {
-                    const uObj = nodeMap.get(uid);
-                    const pct = uObj ? `${uObj.pin_pct}%` : 'Sạc...';
-                    dockHtml += `
-                        <div class="dock-card busy">
-                            <div style="font-size:9px;color:var(--accent-amber);font-weight:700;">DOCK #${i + 1} · CHARGING</div>
-                            <div style="font-size:11px;font-weight:700;margin-top:2px;">${uid.replace('MÁY_BAY_', '')}</div>
-                            <div style="font-size:9.5px;color:var(--text-secondary);margin-top:2px;">Pin: ${pct} (+15%/s)</div>
-                        </div>
-                    `;
-                } else {
-                    dockHtml += `
-                        <div class="dock-card free">
-                            <div style="font-size:9px;color:var(--accent-green);font-weight:700;">DOCK #${i + 1} · FREE</div>
-                            <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">Rảnh</div>
-                            <div style="font-size:9.5px;color:var(--text-muted);margin-top:2px;">Sẵn sàng acquire()</div>
-                        </div>
-                    `;
-                }
-            }
-            document.getElementById('dockGrid').innerHTML = dockHtml;
-
-            const waitEl = document.getElementById('dockWaitStrip');
-            if (waitQ.length > 0) {
-                waitEl.className = 'wait-strip';
-                waitEl.textContent = `Hàng đợi WAITING_DOCK (${waitQ.length}): ${waitQ.map(x => x.replace('MÁY_BAY_', '')).join(' ➔ ')}`;
-            } else {
-                waitEl.className = 'wait-strip empty';
-                waitEl.textContent = `Hàng đợi WAITING_DOCK: Trống (Tổng lượt acquire: ${sem.total_acquisitions || 0} · Chờ: ${sem.total_wait_events || 0})`;
-            }
-
             const sched = osData.scheduler || {};
             const mutex = osData.mutex || {};
+            const extClients = tm && Array.isArray(tm.external_clients) ? tm.external_clients : [];
+            const mutEl = document.getElementById('mutexSyncStrip');
+            if (mutEl) {
+                const extTxt = extClients.length > 0
+                    ? extClients.map(c => `${(c.uav_id || '').replace('MÁY_BAY_', '')} (${c.thread_name || ''})`).join(', ')
+                    : 'Không có Client ngoài';
+                mutEl.className = extClients.length > 0 ? 'wait-strip' : 'wait-strip empty';
+                mutEl.textContent = `Mutex net_state_lock: ${mutex.acquisitions || 0} lần · Clients (${extClients.length}): ${extTxt}`;
+            }
+
             document.getElementById('schedTableWrap').innerHTML = `
                 <table class="tbl">
                     <thead>
@@ -986,7 +954,7 @@
                     </tbody>
                 </table>
                 <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-top:6px;">
-                    Buffer Overflow Drop: <b style="color:var(--text-main)">${sched.buffer_drops || 0}</b> · Mutex RLock: <b style="color:var(--accent-cyan)">${mutex.acquisitions || 0}</b> (Chặn Race: <b style="color:var(--accent-amber)">${mutex.race_conditions_blocked || 0}</b>)
+                    Buffer Overflow Drop (Maxsize=100): <b style="color:var(--text-main)">${sched.buffer_drops || 0}</b> · Mutex net_state_lock: <b style="color:var(--accent-cyan)">${mutex.acquisitions || 0}</b>
                 </div>
             `;
 
@@ -1123,8 +1091,7 @@
                         <div class="z-uavs">
                             ${uavs.map(u => {
                                 const c = u.pin_pct < 25 ? '#ef4444' : (u.pin_pct < 50 ? '#f59e0b' : '#22c55e');
-                                const isWait = u.state === 'WAITING_DOCK';
-                                const linkShort = u.is_reserve ? 'DỰ BỊ' : (isWait ? 'CHỜ SEM' : (u.current_link || '').replace('_LINK', '').replace('_SATELLITE', ''));
+                                const linkShort = u.is_reserve ? 'DỰ BỊ' : (u.current_link || '').replace('_LINK', '').replace('_SATELLITE', '');
                                 const resClass = u.is_reserve ? 'reserve' : '';
                                 return `
                                     <div class="u-chip ${resClass}">
@@ -1132,7 +1099,7 @@
                                             <span>${u.id.replace('MÁY_BAY_', '')}</span>
                                             <span style="color:${c}">${u.pin_pct}%</span>
                                         </div>
-                                        <div class="u-meta">${u.is_reserve ? 'TRỰC CHIẾN' : (isWait ? 'CHỜ SẠC' : u.state)} · ${linkShort}</div>
+                                        <div class="u-meta">${u.is_reserve ? 'TRỰC CHIẾN' : u.state} · ${linkShort}</div>
                                         <div class="u-bar"><div class="u-fill" style="width:${u.pin_pct}%;background:${c}"></div></div>
                                     </div>
                                 `;
@@ -1244,7 +1211,7 @@
             nodesCache = d.nodes || [];
             updateKpis(d.network_metrics, d.connectivity_metrics, d.os_metrics, d.transport_metrics);
             renderTransportSniffer(d.transport_metrics);
-            renderOsKernel(d.os_metrics, nodesCache);
+            renderOsKernel(d.os_metrics, d.transport_metrics);
             renderZoneMatrix(d.zone_coverage, nodesCache);
             if (d.swarm_response || d.last_auction) renderSwarmTable(d.swarm_response || d.last_auction);
             if (d.last_e2e_route) renderE2E(d.last_e2e_route);
@@ -1262,7 +1229,7 @@
                     nodesCache = msg.data.nodes || [];
                     updateKpis(msg.data.network_metrics, msg.data.connectivity_metrics, msg.data.os_metrics, msg.data.transport_metrics);
                     renderTransportSniffer(msg.data.transport_metrics);
-                    renderOsKernel(msg.data.os_metrics, nodesCache);
+                    renderOsKernel(msg.data.os_metrics, msg.data.transport_metrics);
                     renderZoneMatrix(msg.data.zone_coverage, nodesCache);
                     if (msg.data.swarm_response || msg.data.last_auction) {
                         renderSwarmTable(msg.data.swarm_response || msg.data.last_auction);

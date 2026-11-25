@@ -14,7 +14,7 @@ import struct
 import threading
 import time
 import zlib
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Any, Callable, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.os_kernel import OSKernelManager
@@ -243,9 +243,9 @@ class RealSocketTransport:
         self.tcp_port = 0
         self.udp_port = 0
 
-        self.on_external_tcp_cmd = None
-        self.on_external_udp_telemetry = None
-        self.on_external_disconnect = None
+        self.on_external_tcp_cmd: Optional[Callable[..., Any]] = None
+        self.on_external_udp_telemetry: Optional[Callable[..., Any]] = None
+        self.on_external_disconnect: Optional[Callable[..., Any]] = None
         self.external_clients: dict[str, dict[str, Any]] = {}
 
         self._tcp_server_sock: Optional[socket.socket] = None
@@ -404,6 +404,8 @@ class RealSocketTransport:
                         if cmd == "JOIN":
                             bound_uav_id = uav_id
                             with self._lock:
+                                if self._os_kernel is not None:
+                                    self._os_kernel.record_mutex_acquire()
                                 self.external_clients[uav_id] = {
                                     "uav_id": uav_id,
                                     "addr": f"{addr[0]}:{addr[1]}",
@@ -454,6 +456,8 @@ class RealSocketTransport:
                 pass
             if bound_uav_id:
                 with self._lock:
+                    if self._os_kernel is not None:
+                        self._os_kernel.record_mutex_acquire()
                     self.external_clients.pop(bound_uav_id, None)
                 if self.on_external_disconnect is not None:
                     try:
@@ -628,6 +632,8 @@ class RealSocketTransport:
             "status": status,
         }
         with self._lock:
+            if self._os_kernel is not None:
+                self._os_kernel.record_mutex_acquire()
             self.packet_sniffer.appendleft(entry)
 
     def snapshot(self) -> dict[str, Any]:

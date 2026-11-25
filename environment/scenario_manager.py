@@ -5,7 +5,7 @@ import math
 import random
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 from skyfield.api import load
 
 
@@ -38,7 +38,7 @@ class HeatNode:
         self.zone_id = str(self.zone_id)
 
     def to_dict(self) -> dict:
-        data = {
+        data: dict[str, Any] = {
             "lat": round(self.lat, 6),
             "lon": round(self.lon, 6),
             "risk_score": round(min(1.0, max(0.05, self.risk_score)), 4),
@@ -80,8 +80,8 @@ class ScenarioManager:
     MAX_STALENESS_RISK = 0.68
     MIN_SAFE_RISK = 0.05
 
-    def __init__(self, data_dir: str = "data", nodes_per_zone: int = 30):
-        self.data_dir = data_dir
+    def __init__(self, data_dir: str | os.PathLike[str] = "data", nodes_per_zone: int = 30):
+        self.data_dir = os.fspath(data_dir)
         os.makedirs(self.data_dir, exist_ok=True)
 
         self.nodes_csv_path = os.path.join(self.data_dir, "nodes_config.csv")
@@ -370,7 +370,7 @@ class ScenarioManager:
             fsm_val = getattr(getattr(uav, "trang_thai", None), "value", str(getattr(uav, "trang_thai", "")))
             uav_state_obj = getattr(uav, "uav_state", None)
             uav_state_val = str(getattr(uav_state_obj, "value", uav_state_obj or "")).upper()
-            if fsm_val in ("NGẮT_KẾT_NỐI", "CHỜ_DỰ_BỊ", "CHỜ_CỔNG_SẠC", "ĐANG_SẠC", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC"):
+            if fsm_val in ("NGẮT_KẾT_NỐI", "CHỜ_DỰ_BỊ", "ĐANG_SẠC", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC"):
                 continue
             if uav_state_val not in active_states:
                 continue
@@ -796,7 +796,7 @@ class ScenarioManager:
 
         if len(cac_tram) == 1:
             tram = cac_tram[0]
-            distances = [
+            station_distances = [
                 ScenarioManager._khoang_cach_mot_phang_m(
                     uav["vi_do"], uav["kinh_do"], tram["vi_do"], tram["kinh_do"]
                 )
@@ -821,10 +821,10 @@ class ScenarioManager:
                     uav["ma_dinh_danh"]: tram["ma_dinh_danh"] for uav in cac_uav
                 },
                 "khoang_cach_xuat_phat_trung_binh_km": round(
-                    sum(distances) / len(distances) / 1000.0, 2
+                    sum(station_distances) / len(station_distances) / 1000.0, 2
                 ),
                 "khoang_cach_dau_vao_trung_binh_km": round(
-                    sum(distances) / len(distances) / 1000.0, 2
+                    sum(station_distances) / len(station_distances) / 1000.0, 2
                 )
             }
 
@@ -959,7 +959,7 @@ class ScenarioManager:
     def _sinh_du_lieu_csv_mac_dinh(self):
         """Sinh một trạm, 28 UAV tuần tra 4 chiếc/vùng (pin lệch pha 45-100%) và 7 UAV dự bị tại trạm."""
         print("[SCENARIO] Đang khởi tạo 35 UAV (28 tuần tra 4 chiếc/vùng + 7 dự bị tại trạm)...")
-        nodes_mac_dinh = [{
+        nodes_mac_dinh: list[dict[str, Any]] = [{
             "ma_dinh_danh": "TRẠM_KIỂM_LÂM_SƠN_TRÀ",
             "loai_tac_nhan": "TRẠM_MẶT_ĐẤT",
             "vi_do": 16.105,

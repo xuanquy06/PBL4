@@ -101,7 +101,7 @@ class GroundStationServer:
         avg_risk = self._tinh_diem_rui_ro_nhiet_tb(z_id)
         self._cap_nhat_trang_thai_heat_nodes(vi_do, kinh_do, "UNVERIFIED")
 
-        record = {
+        record: dict[str, Any] = {
             "ma_su_co": ma_su_co,
             "thoi_gian": time.strftime("%H:%M:%S"),
             "zone_id": z_id,
@@ -150,7 +150,7 @@ class GroundStationServer:
         record = self.tim_su_co_gan_nhat(vi_do, kinh_do)
         if not record:
             ma_moi = f"FIRE_{int(time.time() * 1000)}"
-            record = {
+            record: dict[str, Any] = {
                 "ma_su_co": ma_moi,
                 "thoi_gian": time.strftime("%H:%M:%S"),
                 "zone_id": zone_id or "ZONE_01",

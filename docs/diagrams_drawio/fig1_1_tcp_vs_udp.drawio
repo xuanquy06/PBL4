@@ -1,0 +1,110 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="diag_1.1_TCP_vs_UDP" name="1.1_TCP_vs_UDP">
+    <mxGraphModel dx="1000" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="920" pageHeight="470" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="2" value="Giao thức TCP (Cổng 9000 - Báo cháy P0 &amp;amp; Lệnh)" style="swimlane;whiteSpace=wrap;html=1;startSize=28;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;fontSize=12;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="15" y="10" width="440" height="450" as="geometry"/>
+        </mxCell>
+        <mxCell id="3" value="Client / Nguồn" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;size=34;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="65.0" y="52" width="120" height="358" as="geometry"/>
+        </mxCell>
+        <mxCell id="4" value="Server / Đích" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;size=34;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="285.0" y="52" width="120" height="358" as="geometry"/>
+        </mxCell>
+        <mxCell id="5" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="120.0" y="96" width="10.0" height="299" as="geometry"/>
+        </mxCell>
+        <mxCell id="6" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="340.0" y="110" width="10.0" height="275" as="geometry"/>
+        </mxCell>
+        <mxCell id="7" value="1. SYN (Mở kết nối)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="130" y="114" as="sourcePoint"/>
+            <mxPoint x="340" y="114" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="8" value="2. SYN-ACK" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="340" y="148" as="sourcePoint"/>
+            <mxPoint x="130" y="148" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="9" value="3. ACK (Thiết lập phiên TCP)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="130" y="180" as="sourcePoint"/>
+            <mxPoint x="340" y="180" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="10" value="alt" style="shape=umlFrame;whiteSpace=wrap;html=1;pointerEvents=0;width=55;height=20;fillColor=none;strokeColor=#666666;fontSize=10;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="45" y="200" width="380" height="150" as="geometry"/>
+        </mxCell>
+        <mxCell id="11" value="4. Khung 26B FIRE_ALERT (Lỗi CRC32)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#b85450;fontColor=#b85450;fontSize=9;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="130" y="240" as="sourcePoint"/>
+            <mxPoint x="340" y="240" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="12" value="5. Truyền lại ARQ (tối đa 3 lần)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d79b00;fontColor=#d79b00;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="130" y="286" as="sourcePoint"/>
+            <mxPoint x="340" y="286" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="13" value="6. ACK hợp lệ (Đúng CRC32)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="340" y="330" as="sourcePoint"/>
+            <mxPoint x="130" y="330" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="14" value="Đảm bảo gói khẩn cấp P0 tới đích (PDR cao)" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="45" y="418" width="380" height="32" as="geometry"/>
+        </mxCell>
+        <mxCell id="15" value="Giao thức UDP (Cổng 9001 - Telemetry 1 Hz &amp;amp; Beacon)" style="swimlane;whiteSpace=wrap;html=1;startSize=28;fillColor=#e1d5e7;strokeColor=#9673a6;swimlaneFillColor=#ffffff;fontSize=12;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="470" y="10" width="435" height="450" as="geometry"/>
+        </mxCell>
+        <mxCell id="16" value="Client / Nguồn" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;size=34;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="520.0" y="52" width="120" height="358" as="geometry"/>
+        </mxCell>
+        <mxCell id="17" value="Server / Đích" style="shape=umlLifeline;perimeter=lifelinePerimeter;whiteSpace=wrap;html=1;container=1;collapsible=0;recursiveResize=0;outlineConnect=0;size=34;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="740.0" y="52" width="120" height="358" as="geometry"/>
+        </mxCell>
+        <mxCell id="18" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="575.0" y="96" width="10.0" height="294" as="geometry"/>
+        </mxCell>
+        <mxCell id="19" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="795.0" y="120" width="10.0" height="260" as="geometry"/>
+        </mxCell>
+        <mxCell id="20" value="1. Datagram TELEMETRY #1 (Không bắt tay)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=open;endFill=0;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="585" y="130" as="sourcePoint"/>
+            <mxPoint x="795" y="130" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="21" value="2. Datagram #2 (CRC32 hợp lệ -&amp;gt; Ghi nhận)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;endArrow=open;endFill=0;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="585" y="195" as="sourcePoint"/>
+            <mxPoint x="795" y="195" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="22" value="3. Datagram #3 sai CRC32 -&amp;gt; HỦY NGAY" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#b85450;fontColor=#b85450;fontSize=9;dashed=1;endArrow=open;endFill=0;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="585" y="265" as="sourcePoint"/>
+            <mxPoint x="795" y="265" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="23" value="4. Datagram #4 kế tiếp (Không chờ ACK)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=open;endFill=0;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="585" y="335" as="sourcePoint"/>
+            <mxPoint x="795" y="335" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="24" value="Độ trễ thấp, nhẹ băng thông; gói lỗi tự bỏ" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;fontColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="500" y="418" width="375" height="32" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

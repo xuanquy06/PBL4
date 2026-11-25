@@ -1,14 +1,12 @@
 """
-Lõi Hệ điều hành (OS Kernel Simulator) chạy thật cho hệ thống SAGSINS PBL4:
-1. Counting Semaphore giới hạn tài nguyên sạc tại Trạm Kiểm Lâm (ChargingDockSemaphore).
-2. Mutex (threading.RLock) bảo vệ miền găng dùng chung (khóa mục tiêu cháy, thống kê & buffer mạng).
-3. Lập lịch ưu tiên 3 cấp P0 / P1 / P2 có chống tràn bộ đệm (BoundedPriorityQueue).
-4. Đa luồng ThreadPoolExecutor & đo tài nguyên tiến trình thật từ Hệ điều hành (PID, Threads, CPU %, RAM MB).
+Lõi Hệ điều hành (OS Kernel Manager) cho hệ thống SAGSINS PBL4:
+1. Mutex (threading.RLock `net_state_lock`) đồng bộ vùng nhớ dùng chung giữa luồng Socket TCP/UDP và luồng chính.
+2. Lập lịch ưu tiên 3 cấp QoS (P0 / P1 / P2) có giới hạn bộ đệm chống tràn RAM (`BoundedPriorityQueue`).
+3. Giám sát tài nguyên tiến trình thực tế của Hệ điều hành (PID, Threads, CPU %, RAM MB).
 """
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import ctypes
 from ctypes import wintypes
 import itertools
@@ -67,94 +65,9 @@ class _PROCESS_MEMORY_COUNTERS(ctypes.Structure):
     ]
 
 
-class ChargingDockSemaphore:
-    """
-    Counting Semaphore thật (threading.Semaphore + RLock) điều phối tài nguyên
-    hữu hạn tại Trạm Kiểm Lâm Sơn Trà (tối đa `capacity` đế sạc đồng thời).
-    UAV đến sau khi hết cổng sẽ bị chặn vào hàng đợi FIFO (`WAITING_DOCK`).
-    """
-
-    def __init__(self, capacity: int = 3):
-        self.capacity = max(1, int(capacity))
-        self._sem = threading.Semaphore(self.capacity)
-        self._lock = threading.RLock()
-        self._active_docks: list[str] = []
-        self._wait_queue: list[str] = []
-        self._wait_start: dict[str, float] = {}
-        self.total_acquisitions = 0
-        self.total_releases = 0
-        self.total_wait_events = 0
-        self.total_wait_time_sec = 0.0
-
-    def try_acquire_dock(self, uav_id: str) -> tuple[bool, int]:
-        """
-        Thử chiếm 1 đế sạc không nghẽn (non-blocking).
-        Trả về `(acquired, wait_queue_position)`:
-        - `(True, 0)` nếu UAV đang giữ cổng hoặc vừa chiếm được cổng theo thứ tự FIFO.
-        - `(False, pos)` nếu cả `capacity` cổng đang bận hoặc có UAV khác xếp trước.
-        """
-        with self._lock:
-            if uav_id in self._active_docks:
-                return True, 0
-
-            can_try = (not self._wait_queue) or (self._wait_queue[0] == uav_id)
-            if can_try and self._sem.acquire(blocking=False):
-                if uav_id in self._wait_queue:
-                    self._wait_queue.remove(uav_id)
-                start_ts = self._wait_start.pop(uav_id, None)
-                if start_ts is not None:
-                    self.total_wait_time_sec += max(0.0, time.monotonic() - start_ts)
-                self._active_docks.append(uav_id)
-                self.total_acquisitions += 1
-                return True, 0
-
-            if uav_id not in self._wait_queue:
-                self._wait_queue.append(uav_id)
-                self._wait_start[uav_id] = time.monotonic()
-                self.total_wait_events += 1
-            pos = self._wait_queue.index(uav_id) + 1
-            return False, pos
-
-    def release_dock(self, uav_id: str) -> bool:
-        """Giải phóng cổng sạc (hoặc rút khỏi hàng đợi chờ) một cách an toàn và idempotent."""
-        with self._lock:
-            released = False
-            if uav_id in self._active_docks:
-                self._active_docks.remove(uav_id)
-                self._sem.release()
-                self.total_releases += 1
-                released = True
-            if uav_id in self._wait_queue:
-                self._wait_queue.remove(uav_id)
-                start_ts = self._wait_start.pop(uav_id, None)
-                if start_ts is not None:
-                    self.total_wait_time_sec += max(0.0, time.monotonic() - start_ts)
-            return released
-
-    def snapshot(self) -> dict[str, Any]:
-        with self._lock:
-            in_use = len(self._active_docks)
-            avg_wait = (
-                round(self.total_wait_time_sec / self.total_wait_events, 2)
-                if self.total_wait_events > 0
-                else 0.0
-            )
-            return {
-                "capacity": self.capacity,
-                "in_use": in_use,
-                "available": max(0, self.capacity - in_use),
-                "active_docks": list(self._active_docks),
-                "wait_queue": list(self._wait_queue),
-                "total_acquisitions": self.total_acquisitions,
-                "total_releases": self.total_releases,
-                "total_wait_events": self.total_wait_events,
-                "avg_wait_sec": avg_wait,
-            }
-
-
 class BoundedPriorityQueue:
     """
-    Hàng đợi lập lịch ưu tiên giới hạn bộ đệm (Bounded Priority Queue - Producer/Consumer):
+    Hàng đợi lập lịch ưu tiên QoS giới hạn bộ đệm (Bounded Priority Queue - Producer/Consumer):
     - Rút gói tin theo thứ tự ưu tiên P0 -> P1 -> P2, cùng mức ưu tiên theo FIFO (`seq`).
     - Tự động hủy gói mới và đếm Buffer Overflow nếu đầy để bảo vệ bộ nhớ.
     """
@@ -227,24 +140,18 @@ class BoundedPriorityQueue:
 
 class OSKernelManager:
     """
-    Trình quản lý tài nguyên Hệ điều hành tập trung cho mô phỏng SAGSINS:
-    - Counting Semaphore trạm sạc (`charging_semaphore`).
-    - Mutex RLock bảo vệ miền găng (`fire_target_lock`, `net_state_lock`).
-    - ThreadPoolExecutor thực thi tác vụ nền song song.
-    - Giám sát hiệu năng tiến trình thực (PID, Threads, CPU %, RAM MB, Scheduler).
+    Trình quản lý tài nguyên Hệ điều hành gắn với tầng Mạng SAGSINS:
+    - Mutex RLock (`net_state_lock`) bảo vệ danh sách tác nhân, Client ngoài và bộ đệm Packet Sniffer
+      khi các luồng Socket TCP/UDP truy cập đồng thời với vòng lặp chính.
+    - Thống kê bộ lập lịch QoS 3 cấp (P0/P1/P2) và tràn bộ đệm (`buffer_drops`).
+    - Giám sát tài nguyên tiến trình thực tế (PID, Threads, CPU %, RAM MB).
     """
 
-    def __init__(self, max_docks: int = 3, max_workers: int = 4):
-        self.charging_semaphore = ChargingDockSemaphore(capacity=max_docks)
-        self.fire_target_lock = threading.RLock()
+    def __init__(self):
         self.net_state_lock = threading.RLock()
         self._stats_lock = threading.RLock()
 
-        self.max_workers = max(1, int(max_workers))
-        self.executor: Optional[ThreadPoolExecutor] = None
-
         self.mutex_acquisitions = 0
-        self.race_conditions_blocked = 0
         self.buffer_drops = 0
         self.dispatched_by_prio = {0: 0, 1: 0, 2: 0}
         self.wait_ms_sum_by_prio = {0: 0.0, 1: 0.0, 2: 0.0}
@@ -254,22 +161,15 @@ class OSKernelManager:
         self._last_cpu_pct = 0.0
 
     def start(self):
-        if self.executor is None:
-            self.executor = ThreadPoolExecutor(
-                max_workers=self.max_workers,
-                thread_name_prefix="SAGSINS-Worker",
-            )
+        self._last_cpu_time = time.process_time()
+        self._last_wall_time = time.monotonic()
 
     def stop(self):
-        if self.executor is not None:
-            self.executor.shutdown(wait=False, cancel_futures=True)
-            self.executor = None
+        pass
 
-    def record_mutex_acquire(self, conflict: bool = False):
+    def record_mutex_acquire(self):
         with self._stats_lock:
             self.mutex_acquisitions += 1
-            if conflict:
-                self.race_conditions_blocked += 1
 
     def record_buffer_drop(self):
         with self._stats_lock:
@@ -345,7 +245,6 @@ class OSKernelManager:
             }
             mutex_snap = {
                 "acquisitions": self.mutex_acquisitions,
-                "race_conditions_blocked": self.race_conditions_blocked,
             }
 
         return {
@@ -355,7 +254,6 @@ class OSKernelManager:
             "cpu_time_sec": cpu_sec,
             "active_threads_count": len(threads_list),
             "threads": threads_list[:16],
-            "charging_semaphore": self.charging_semaphore.snapshot(),
             "mutex": mutex_snap,
             "scheduler": scheduler_snap,
         }

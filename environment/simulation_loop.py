@@ -32,7 +32,7 @@ class SimulationLoop:
         self.so_buoc_thoi_gian = 0
 
         project_data_dir = Path(__file__).resolve().parents[1] / "data"
-        self.scenario: Any = ScenarioManager(data_dir=project_data_dir)
+        self.scenario: Any = ScenarioManager(data_dir=str(project_data_dir))
         self.physics: Any = PhysicsEngine()
         self.broker: Any = MessageBroker(physics_engine=self.physics, scenario_manager=self.scenario)
         self.ground_station_server: Any = GroundStationServer(self.broker)
@@ -191,54 +191,7 @@ class SimulationLoop:
             )
             return {"ok": True, "cmd": "FIRE_ACK"}
 
-        if cmd == "DOCK_REQUEST":
-            acquired, pos = self.broker.os_kernel.charging_semaphore.try_acquire_dock(uav_id)
-            agent = self.broker.lay_tac_nhan(uav_id)
-            if isinstance(agent, UAVAgent):
-                agent.lat = st_lat
-                agent.lon = st_lon
-                agent.toa_do["do_cao"] = st_alt
-                agent.toa_do["van_toc_m_s"] = 0.0
-                if acquired:
-                    agent.chuyen_trang_thai(AgentState.CHARGING)
-                    agent.uav_state = UAVState.CHARGING
-                else:
-                    agent.chuyen_trang_thai(AgentState.WAITING_DOCK)
-                    agent.uav_state = UAVState.WAITING_DOCK
-            if acquired:
-                self._schedule_web_log(
-                    "INFO",
-                    f"[OS_SYNC] 🔌 Client [{uav_id}] acquire() cổng sạc Semaphore thành công ➔ CHARGING."
-                )
-            else:
-                self._schedule_web_log(
-                    "WARN",
-                    f"[OS_SYNC] ⏳ Client [{uav_id}] bị chặn bởi Semaphore (3/3 bận) ➔ Chờ hàng đợi #{pos} (WAITING_DOCK)."
-                )
-            return {
-                "ok": True,
-                "cmd": "DOCK_ACK",
-                "acquired": acquired,
-                "state": "CHARGING" if acquired else "WAITING_DOCK",
-                "queue_pos": pos,
-            }
-
-        if cmd == "DOCK_RELEASE":
-            self.broker.os_kernel.charging_semaphore.release_dock(uav_id)
-            agent = self.broker.lay_tac_nhan(uav_id)
-            if isinstance(agent, UAVAgent):
-                agent.pin_hien_tai = agent.pin_toi_da
-                if agent.trang_thai != AgentState.OFFLINE:
-                    agent.chuyen_trang_thai(AgentState.PATROLLING)
-                    agent.uav_state = UAVState.PATROLLING
-            self._schedule_web_log(
-                "INFO",
-                f"[OS_SYNC] 🔋 Client [{uav_id}] sạc đầy 100% ➔ Gọi Semaphore.release() và quay lại PATROLLING."
-            )
-            return {"ok": True, "cmd": "DOCK_RELEASE_ACK"}
-
         if cmd == "LEAVE":
-            self.broker.os_kernel.charging_semaphore.release_dock(uav_id)
             agent = self.broker.lay_tac_nhan(uav_id)
             if isinstance(agent, UAVAgent):
                 agent.toa_do["van_toc_m_s"] = 0.0
@@ -273,14 +226,16 @@ class SimulationLoop:
         if req_state == "RETURNING":
             agent.chuyen_trang_thai(AgentState.RETURNING)
             agent.uav_state = UAVState.RETURNING
-        elif req_state == "PATROLLING" and agent.uav_state not in (UAVState.CHARGING, UAVState.WAITING_DOCK):
+        elif req_state == "CHARGING":
+            agent.chuyen_trang_thai(AgentState.CHARGING)
+            agent.uav_state = UAVState.CHARGING
+        elif req_state == "PATROLLING":
             agent.chuyen_trang_thai(AgentState.PATROLLING)
             agent.uav_state = UAVState.PATROLLING
         agent.last_external_heartbeat = time.time()
 
     def _handle_external_disconnect(self, uav_id: str, addr: tuple[str, int]):
         norm_id = self._normalize_ext_uav_id(uav_id)
-        self.broker.os_kernel.charging_semaphore.release_dock(norm_id)
         agent = self.broker.lay_tac_nhan(norm_id)
         if isinstance(agent, UAVAgent) and agent.trang_thai != AgentState.OFFLINE:
             agent.toa_do["van_toc_m_s"] = 0.0
@@ -288,7 +243,7 @@ class SimulationLoop:
             agent.uav_state = UAVState.OFFLINE
             self._schedule_web_log(
                 "WARN",
-                f"[CLIENT_NET] 🔌 Client ngoài [{norm_id}] ({addr[0]}:{addr[1]}) mất kết nối TCP ➔ OFFLINE & nhả tài nguyên."
+                f"[CLIENT_NET] 🔌 Client ngoài [{norm_id}] ({addr[0]}:{addr[1]}) mất kết nối TCP ➔ OFFLINE."
             )
 
     def khoi_tao_kich_ban(self):
@@ -447,12 +402,8 @@ class SimulationLoop:
                     if isinstance(res, Exception):
                         print(f"[SIMULATION WARN] Lỗi cập nhật tác nhân: {res}")
 
-                # Cập nhật Heatmap trên Worker Thread (ThreadPoolExecutor thật): làm mát <= 600m và tăng staleness 0.025/s ngoài tầm quét
-                executor = getattr(self.broker.os_kernel, "executor", None)
-                if executor is not None:
-                    await asyncio.get_running_loop().run_in_executor(executor, self.update_heatmap, dt_mo_phong)
-                else:
-                    self.update_heatmap(dt_mo_phong)
+                # Cập nhật Heatmap độ bất định theo thời gian thực
+                self.update_heatmap(dt_mo_phong)
 
                 # Watchdog kiểm tra các nhiệm vụ cháy: nếu UAV trúng thầu gặp nạn/OFFLINE thì kích hoạt tái đấu thầu ngay
                 for ma_phien, mission in list(self._active_fire_missions.items()):
@@ -555,13 +506,13 @@ class SimulationLoop:
         self.broker.thong_ke_toan_mang["nang_luong_tieu_hao_joule"] = tong_nang_luong
         self.scenario.ghi_log_lien_lac_lien_tuc(self._chi_so_lien_lac)
 
-        # Luân phiên gửi telemetry qua broker cho các UAV đang bay trên không (bỏ qua UAV STANDBY/WAITING_DOCK/CHARGING tại trạm).
+        # Luân phiên gửi telemetry qua broker cho các UAV đang bay trên không (bỏ qua UAV STANDBY/CHARGING tại trạm).
         uav_ung_vien = [
             u for u in cac_uav
-            if u.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY, AgentState.WAITING_DOCK, AgentState.CHARGING, AgentState.IDLE)
+            if u.trang_thai not in (AgentState.OFFLINE, AgentState.LOW_BATTERY, AgentState.CHARGING, AgentState.IDLE)
             and not u._dang_o_tai_tram()
             and getattr(getattr(u, "uav_state", None), "value", getattr(u, "uav_state", None)) not in (
-                "STANDBY", "WAITING_DOCK", "CHARGING", "OFFLINE"
+                "STANDBY", "CHARGING", "OFFLINE"
             )
         ]
         if uav_ung_vien:
@@ -828,7 +779,7 @@ class SimulationLoop:
             if hasattr(agent, "_su_co_da_nho_dong_doi"):
                 agent._su_co_da_nho_dong_doi.clear()
             if had_containment or uav_state_val in ("CONTAINING", "RESPONDING"):
-                if agent.trang_thai.value not in ("NGẮT_KẾT_NỐI", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC", "CHỜ_CỔNG_SẠC", "ĐANG_SẠC"):
+                if agent.trang_thai.value not in ("NGẮT_KẾT_NỐI", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC", "ĐANG_SẠC"):
                     agent.chuyen_trang_thai(type(agent.trang_thai).PATROLLING)
                     if hasattr(agent, "uav_state"):
                         agent.uav_state = type(agent.uav_state).PATROLLING

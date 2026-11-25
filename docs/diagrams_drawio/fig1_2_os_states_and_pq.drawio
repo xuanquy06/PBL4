@@ -1,0 +1,111 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="diag_1.2_OS_States_and_PQ" name="1.2_OS_States_and_PQ">
+    <mxGraphModel dx="1000" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="940" pageHeight="450" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <mxCell id="2" value="A. Vòng đời Tiến trình / Luồng 5 Trạng thái" style="swimlane;whiteSpace=wrap;html=1;startSize=28;fillColor=#f5f5f5;strokeColor=#666666;swimlaneFillColor=#ffffff;fontSize=12;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="15" y="10" width="450" height="430" as="geometry"/>
+        </mxCell>
+        <mxCell id="3" value="New&lt;br&gt;(Mới tạo)" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;fontColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="35" y="95" width="90" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="4" value="Ready&lt;br&gt;(Sẵn sàng)" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="180" y="95" width="100" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="5" value="Running&lt;br&gt;(Đang chạy)" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;fontColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="340" y="95" width="100" height="48" as="geometry"/>
+        </mxCell>
+        <mxCell id="6" value="Waiting / Blocked&lt;br&gt;(Chờ Socket I/O&lt;br&gt;hoặc Mutex)" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;fontColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="165" y="285" width="130" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="7" value="Terminated&lt;br&gt;(Kết thúc)" style="rounded=1;arcSize=12;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=10;fontColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="340" y="285" width="100" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="125" y="119" as="sourcePoint"/>
+            <mxPoint x="180" y="119" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="9" value="Cấp CPU" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="280" y="108" as="sourcePoint"/>
+            <mxPoint x="340" y="108" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="10" value="Hết quantum" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d79b00;fontColor=#d79b00;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="340" y="132" as="sourcePoint"/>
+            <mxPoint x="280" y="132" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="11" value="Hoàn tất /&lt;br&gt;Ctrl+C" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#666666;fontColor=#666666;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="390" y="143" as="sourcePoint"/>
+            <mxPoint x="390" y="285" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="12" value="Chờ Socket /&lt;br&gt;Khóa Mutex" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#b85450;fontColor=#b85450;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="365" y="143" as="sourcePoint"/>
+            <mxPoint x="275" y="285" as="targetPoint"/>
+            <Array as="points">
+              <mxPoint x="365" y="225"/>
+              <mxPoint x="275" y="225"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="13" value="Có dữ liệu /&lt;br&gt;Nhả Mutex" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6c8ebf;fontColor=#6c8ebf;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="210" y="285" as="sourcePoint"/>
+            <mxPoint x="210" y="143" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="14" value="B. Producer - Consumer (BoundedPriorityQueue QoS)" style="swimlane;whiteSpace=wrap;html=1;startSize=28;fillColor=#ffe6cc;strokeColor=#d79b00;swimlaneFillColor=#ffffff;fontSize=12;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="480" y="10" width="445" height="430" as="geometry"/>
+        </mxCell>
+        <mxCell id="15" value="&lt;b&gt;Producers&lt;/b&gt;&lt;br&gt;Luồng Socket &amp;amp; Tác tử&lt;br&gt;put_nowait(item)&lt;br&gt;(Maxsize = 100 gói/node)" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#d79b00;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="500" y="62" width="175" height="76" as="geometry"/>
+        </mxCell>
+        <mxCell id="16" value="&lt;b&gt;Buffer Overflow Drop&lt;/b&gt;&lt;br&gt;Từ chối gói mới&lt;br&gt;&amp;amp; tăng buffer_drops&lt;br&gt;khi hàng đợi đầy" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="735" y="62" width="170" height="76" as="geometry"/>
+        </mxCell>
+        <mxCell id="17" value="Full" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#b85450;fontColor=#b85450;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="675" y="100" as="sourcePoint"/>
+            <mxPoint x="735" y="100" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="18" value="Hàng đợi ưu tiên QoS 3 cấp (Rút trước -&amp;gt; sau)" style="swimlane;whiteSpace=wrap;html=1;startSize=24;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;fontSize=12;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="500" y="195" width="405" height="125" as="geometry"/>
+        </mxCell>
+        <mxCell id="19" value="&lt;b&gt;P0 (Khẩn)&lt;/b&gt;&lt;br&gt;FIRE_ALERT,&lt;br&gt;P2P, ACK" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="515" y="234" width="115" height="68" as="geometry"/>
+        </mxCell>
+        <mxCell id="20" value="&lt;b&gt;P1 (Thường)&lt;/b&gt;&lt;br&gt;TELEMETRY,&lt;br&gt;Bàn giao vùng" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="645" y="234" width="115" height="68" as="geometry"/>
+        </mxCell>
+        <mxCell id="21" value="&lt;b&gt;P2 (Thấp)&lt;/b&gt;&lt;br&gt;HELLO_BEACON" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="775" y="234" width="115" height="68" as="geometry"/>
+        </mxCell>
+        <mxCell id="22" value="&lt;b&gt;Consumer (Tác tử rút P0 -&amp;gt; P1 -&amp;gt; P2)&lt;/b&gt;&lt;br&gt;Ghi nhận độ trễ hàng đợi wait_ms vào OSKernelManager" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="550" y="355" width="305" height="62" as="geometry"/>
+        </mxCell>
+        <mxCell id="23" value="put()" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6c8ebf;fontColor=#6c8ebf;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="587" y="138" as="sourcePoint"/>
+            <mxPoint x="587" y="195" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="24" value="get()" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="702" y="320" as="sourcePoint"/>
+            <mxPoint x="702" y="355" as="targetPoint"/>
+          </mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
