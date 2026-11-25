@@ -116,10 +116,14 @@ class SimulationLoop:
 
         if cmd == "JOIN":
             c_lat, c_lon = self._get_zone_center(zone_id)
-            init_lat = float(payload.get("lat") if payload.get("lat") is not None else c_lat)
-            init_lon = float(payload.get("lon") if payload.get("lon") is not None else c_lon)
-            init_alt = float(payload.get("alt") if payload.get("alt") is not None else 1050.0)
-            init_bat = float(payload.get("battery") if payload.get("battery") is not None else 90.0)
+            raw_lat = payload.get("lat")
+            raw_lon = payload.get("lon")
+            raw_alt = payload.get("alt")
+            raw_bat = payload.get("battery")
+            init_lat = float(raw_lat) if raw_lat is not None else c_lat
+            init_lon = float(raw_lon) if raw_lon is not None else c_lon
+            init_alt = float(raw_alt) if raw_alt is not None else 1050.0
+            init_bat = float(raw_bat) if raw_bat is not None else 90.0
             pid = payload.get("pid")
             addr_str = f"{addr[0]}:{addr[1]}"
 
@@ -176,8 +180,10 @@ class SimulationLoop:
 
         if cmd == "FIRE_ALERT":
             c_lat, c_lon = self._get_zone_center(zone_id)
-            f_lat = float(payload.get("lat") if payload.get("lat") is not None else c_lat)
-            f_lon = float(payload.get("lon") if payload.get("lon") is not None else c_lon)
+            raw_f_lat = payload.get("lat")
+            raw_f_lon = payload.get("lon")
+            f_lat = float(raw_f_lat) if raw_f_lat is not None else c_lat
+            f_lon = float(raw_f_lon) if raw_f_lon is not None else c_lon
             if self._main_loop and self._main_loop.is_running():
                 asyncio.run_coroutine_threadsafe(
                     self.kich_hoat_su_co_khan_cap("CHÁY_RỪNG", f_lat, f_lon),
@@ -408,6 +414,8 @@ class SimulationLoop:
                 # Watchdog kiểm tra các nhiệm vụ cháy: nếu UAV trúng thầu gặp nạn/OFFLINE thì kích hoạt tái đấu thầu ngay
                 for ma_phien, mission in list(self._active_fire_missions.items()):
                     wid = mission.get("winner_id")
+                    if not isinstance(wid, str):
+                        continue
                     w_agent = self.broker.danh_sach_tac_nhan.get(wid)
                     if w_agent and (w_agent.trang_thai == AgentState.OFFLINE or w_agent.phan_tram_pin <= 5.0):
                         if wid not in mission.get("failed_uavs", set()):
