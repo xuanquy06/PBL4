@@ -49,19 +49,19 @@ class StandaloneUAVClient:
         host: str = "127.0.0.1",
         tcp_port: int = 9000,
         udp_port: int = 9001,
-        uav_id: str = "UAV_EXT_01",
-        zone_id: str = "ZONE_03",
+        uav_id: str = "UAV_09",
+        zone_id: str = "",
         battery: float = 90.0,
     ):
         self.host = host
         self.tcp_port = int(tcp_port)
         self.udp_port = int(udp_port)
-        self.raw_id = str(uav_id).strip()
+        self.raw_id = str(uav_id).strip() or "UAV_09"
         self.uav_id = self.raw_id if self.raw_id.startswith("MÁY_BAY_") else f"MÁY_BAY_{self.raw_id}"
         self.zone_id = str(zone_id).strip()
         self.pid = os.getpid()
 
-        self.ip_address = assign_node_ip(self.uav_id, "MÁY_BAY", self.zone_id)
+        self.ip_address = assign_node_ip(self.uav_id, "MÁY_BAY", self.zone_id or "ZONE_03")
         self.dst_ip = "10.0.0.1"
 
         self.zone_center = [16.125, 108.255]
@@ -71,6 +71,15 @@ class StandaloneUAVClient:
         self.alt = 1050.0
         self.speed = 40.0
         self.battery = min(100.0, max(5.0, float(battery)))
+        self.battery_capacity_j = 50000.0
+        self.power_w = 80.0
+        self.is_takeover = False
+        self.paused = False
+        self.time_scale = 1.0
+        self.rf_link = "GROUND_LINK"
+        self.rf_hops: list[str] = []
+        self.rf_delay_ms = 0.0
+        self.rf_per = 0.0
         self.state = "PATROLLING"
         self._orbit_angle = 0.0
 
@@ -105,9 +114,10 @@ class StandaloneUAVClient:
         body: dict[str, Any] = {
             "cmd": str(cmd).upper(),
             "uav_id": self.uav_id,
-            "zone_id": self.zone_id,
             "pid": self.pid,
         }
+        if self.zone_id:
+            body["zone_id"] = self.zone_id
         if extra:
             body.update(extra)
         payload_bytes = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
@@ -175,7 +185,7 @@ class StandaloneUAVClient:
         if self._udp_sock is None:
             return
         with self._state_lock:
-            body = {
+            body: dict[str, Any] = {
                 "cmd": "TELEMETRY",
                 "uav_id": self.uav_id,
                 "zone_id": self.zone_id,
@@ -186,6 +196,9 @@ class StandaloneUAVClient:
                 "battery": round(self.battery, 2),
                 "state": self.state,
             }
+            if self._fire_target is not None and self.state == "CONTAINING":
+                body["fire_lat"] = round(self._fire_target[0], 5)
+                body["fire_lon"] = round(self._fire_target[1], 5)
         payload_bytes = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         pkt = NetworkPacket(
             src_ip=self.ip_address,
@@ -221,17 +234,58 @@ class StandaloneUAVClient:
                 "alt": self.alt,
             },
         )
+        if not reply.get("ok"):
+            err_msg = str(reply.get("error") or f"Server từ chối JOIN ({reply.get('cmd')})")
+            self.stop(graceful=False)
+            raise RuntimeError(err_msg)
+
         if reply.get("uav_id"):
             self.uav_id = str(reply["uav_id"])
         if reply.get("assigned_ip"):
             self.ip_address = str(reply["assigned_ip"])
         if reply.get("udp_port"):
             self.udp_port = int(reply["udp_port"])
+        if reply.get("zone_id"):
+            self.zone_id = str(reply["zone_id"])
         if isinstance(reply.get("zone_center"), list) and len(reply["zone_center"]) == 2:
             self.zone_center = [float(reply["zone_center"][0]), float(reply["zone_center"][1])]
-            self.lat, self.lon = self.zone_center[0], self.zone_center[1]
         if isinstance(reply.get("station"), list) and len(reply["station"]) == 2:
             self.station = [float(reply["station"][0]), float(reply["station"][1])]
+        self.is_takeover = bool(reply.get("is_takeover", False))
+        if reply.get("lat") is not None and reply.get("lon") is not None:
+            self.lat = float(reply["lat"])
+            self.lon = float(reply["lon"])
+        else:
+            self.lat, self.lon = self.zone_center[0], self.zone_center[1]
+        if reply.get("alt") is not None:
+            self.alt = float(reply["alt"])
+        if reply.get("battery") is not None:
+            self.battery = min(100.0, max(0.0, float(reply["battery"])))
+        if reply.get("battery_capacity_j") is not None:
+            self.battery_capacity_j = max(1000.0, float(reply["battery_capacity_j"]))
+        if reply.get("power_w") is not None:
+            self.power_w = max(1.0, float(reply["power_w"]))
+        if reply.get("state"):
+            st = str(reply["state"]).upper()
+            self.state = st if st in ("PATROLLING", "TRANSITING", "RETURNING", "CHARGING", "STANDBY", "RESPONDING", "CONTAINING", "OFFLINE") else "PATROLLING"
+        if reply.get("paused") is not None:
+            self.paused = bool(reply["paused"])
+        if reply.get("time_scale") is not None:
+            self.time_scale = max(0.1, float(reply["time_scale"]))
+        if reply.get("rf_link"):
+            self.rf_link = str(reply["rf_link"])
+        if isinstance(reply.get("rf_hops"), list):
+            self.rf_hops = [str(x) for x in reply["rf_hops"]]
+        if reply.get("rf_delay_ms") is not None:
+            self.rf_delay_ms = float(reply["rf_delay_ms"])
+        if reply.get("rf_per") is not None:
+            self.rf_per = float(reply["rf_per"])
+        m_lat = 111320.0
+        m_lon = 111320.0 * max(0.2, math.cos(math.radians(self.zone_center[0])))
+        self._orbit_angle = math.atan2(
+            (self.lat - self.zone_center[0]) * m_lat,
+            (self.lon - self.zone_center[1]) * m_lon,
+        ) % (2.0 * math.pi)
         return reply
 
     def send_corrupted_udp_test(self):
@@ -258,6 +312,7 @@ class StandaloneUAVClient:
     def _handle_server_command(self, payload_obj: dict[str, Any]):
         """Xử lý lệnh đẩy bất đồng bộ từ Server (mô hình ThreadedHandler 2 chiều)."""
         action = str(payload_obj.get("action", "")).upper()
+        should_push_telem = action in ("RTB", "SET_BATTERY", "DISPATCH_FIRE", "RESUME_PATROL")
         with self._state_lock:
             self.server_cmd_rx_count += 1
             self.last_server_cmd = dict(payload_obj)
@@ -269,14 +324,32 @@ class StandaloneUAVClient:
             elif action == "SET_BATTERY" and payload_obj.get("battery") is not None:
                 new_bat = min(100.0, max(0.0, float(payload_obj["battery"])))
                 self.battery = new_bat
-                if new_bat < 25.0:
+                if new_bat <= 0.0:
+                    self._fire_target = None
+                    self.state = "OFFLINE"
+                    self.speed = 0.0
+                elif new_bat < 25.0:
                     self._fire_target = None
                     self.state = "RETURNING"
                     self.speed = 45.0
                 elif new_bat >= 100.0:
                     self._fire_target = None
-                    self.state = "PATROLLING"
-                    self.speed = 40.0
+                    dist_st = _haversine_m(self.lat, self.lon, self.station[0], self.station[1])
+                    if dist_st <= 120.0:
+                        self.state = "STANDBY"
+                        self.speed = 0.0
+                    else:
+                        self.state = "PATROLLING"
+                        self.speed = 40.0
+                else:
+                    if self.state == "OFFLINE":
+                        dist_st = _haversine_m(self.lat, self.lon, self.station[0], self.station[1])
+                        if dist_st <= 120.0:
+                            self.state = "CHARGING"
+                            self.speed = 0.0
+                        else:
+                            self.state = "PATROLLING"
+                            self.speed = 40.0
                 print(f"\n[SERVER -> CLIENT] Nhận lệnh SET_BATTERY={new_bat:.1f}% -> State={self.state}.")
             elif action == "DISPATCH_FIRE" and payload_obj.get("lat") is not None and payload_obj.get("lon") is not None:
                 self._fire_target = (float(payload_obj["lat"]), float(payload_obj["lon"]))
@@ -287,13 +360,44 @@ class StandaloneUAVClient:
                     f"({self._fire_target[0]:.4f}, {self._fire_target[1]:.4f})."
                 )
             elif action == "RESUME_PATROL":
+                if payload_obj.get("zone_id"):
+                    self.zone_id = str(payload_obj["zone_id"])
+                zc = payload_obj.get("zone_center")
+                if isinstance(zc, list) and len(zc) == 2:
+                    self.zone_center = [float(zc[0]), float(zc[1])]
                 self._fire_target = None
-                self.state = "PATROLLING"
-                self.speed = 40.0
-                print(f"\n[SERVER -> CLIENT] Nhận lệnh RESUME_PATROL -> quay lại tuần tra {self.zone_id}.")
+                dist_z = _haversine_m(self.lat, self.lon, self.zone_center[0], self.zone_center[1])
+                if dist_z > 500.0:
+                    self.state = "TRANSITING"
+                    self.speed = 45.0
+                else:
+                    self.state = "PATROLLING"
+                    self.speed = 40.0
+                print(f"\n[SERVER -> CLIENT] Nhận lệnh RESUME_PATROL -> {self.state} tại {self.zone_id}.")
+            elif action == "SET_CLOCK":
+                if payload_obj.get("paused") is not None:
+                    self.paused = bool(payload_obj["paused"])
+                if payload_obj.get("time_scale") is not None:
+                    self.time_scale = max(0.1, float(payload_obj["time_scale"]))
+                print(f"\n[SERVER -> CLIENT] Đồng bộ đồng hồ: Paused={self.paused}, Scale={self.time_scale}x.")
+            elif action == "RF_STATUS":
+                new_link = str(payload_obj.get("link") or self.rf_link)
+                changed = (new_link != self.rf_link)
+                self.rf_link = new_link
+                if isinstance(payload_obj.get("hops"), list):
+                    self.rf_hops = [str(x) for x in payload_obj["hops"]]
+                if payload_obj.get("delay_ms") is not None:
+                    self.rf_delay_ms = float(payload_obj["delay_ms"])
+                if payload_obj.get("per") is not None:
+                    self.rf_per = float(payload_obj["per"])
+                if changed:
+                    print(
+                        f"\n[RF_GATEWAY] Tuyến SAGSINS chuyển sang {self.rf_link} "
+                        f"({max(0, len(self.rf_hops) - 1)} hops, delay={self.rf_delay_ms:.2f} ms, PER={self.rf_per:.4f})."
+                    )
             elif action == "PING":
                 print(f"\n[SERVER -> CLIENT] Nhận lệnh PING kiểm tra kết nối từ Server.")
-        if action in ("RTB", "SET_BATTERY", "DISPATCH_FIRE", "RESUME_PATROL"):
+        if should_push_telem:
             try:
                 self.send_udp_telemetry()
             except OSError:
@@ -399,39 +503,97 @@ class StandaloneUAVClient:
                 setattr(self, attr, None)
 
     def step_flight(self, dt: float):
-        """Cập nhật động học bay & vòng đời Pin của Client trong 1 bước `dt` giây."""
+        """Cập nhật động học bay thực & vòng đời Pin (khớp PA 4 và đồng hồ Server) trong 1 bước `dt` giây."""
         with self._state_lock:
+            if self.paused or self.state in ("OFFLINE", "STANDBY"):
+                self.speed = 0.0
+                return
+
+            eff_dt = max(0.0, float(dt)) * self.time_scale
+            drain_pct = (self.power_w * eff_dt / max(1000.0, self.battery_capacity_j)) * 100.0
+
             if self.state == "RESPONDING" and self._fire_target is not None:
                 t_lat, t_lon = self._fire_target
                 dist_m = _haversine_m(self.lat, self.lon, t_lat, t_lon)
-                if dist_m <= 130.0:
-                    self._orbit_angle = (self._orbit_angle + 0.14 * dt) % (2.0 * math.pi)
+                if dist_m <= 135.0:
+                    self.state = "CONTAINING"
+                    self.speed = 40.0
                     m_lat = 111320.0
                     m_lon = 111320.0 * max(0.2, math.cos(math.radians(t_lat)))
-                    self.lat = t_lat + (130.0 * math.sin(self._orbit_angle)) / m_lat
-                    self.lon = t_lon + (130.0 * math.cos(self._orbit_angle)) / m_lon
+                    self._orbit_angle = math.atan2(
+                        (self.lat - t_lat) * m_lat,
+                        (self.lon - t_lon) * m_lon,
+                    ) % (2.0 * math.pi)
                 else:
-                    step_m = min(dist_m, 140.0 * dt)
+                    step_m = min(dist_m, 50.0 * eff_dt)
                     ratio = step_m / dist_m
                     self.lat += (t_lat - self.lat) * ratio
                     self.lon += (t_lon - self.lon) * ratio
+                    self.speed = 50.0
                 self.alt = 1050.0
-                self.speed = 50.0
-                self.battery = max(5.0, self.battery - 0.45 * dt)
+                self.battery = max(0.0, self.battery - 1.15 * drain_pct)
                 if self.battery < 25.0:
                     self._fire_target = None
                     self.state = "RETURNING"
                     self.speed = 45.0
-            elif self.state == "PATROLLING":
-                self._orbit_angle = (self._orbit_angle + 0.085 * dt) % (2.0 * math.pi)
-                radius_m = 450.0
+            elif self.state == "CONTAINING" and self._fire_target is not None:
+                t_lat, t_lon = self._fire_target
                 m_lat = 111320.0
-                m_lon = 111320.0 * max(0.2, math.cos(math.radians(self.zone_center[0])))
-                self.lat = self.zone_center[0] + (radius_m * math.sin(self._orbit_angle)) / m_lat
-                self.lon = self.zone_center[1] + (radius_m * math.cos(self._orbit_angle)) / m_lon
+                m_lon = 111320.0 * max(0.2, math.cos(math.radians(t_lat)))
+                self._orbit_angle = (self._orbit_angle + (40.0 * eff_dt / 130.0)) % (2.0 * math.pi)
+                tgt_lat = t_lat + (130.0 * math.sin(self._orbit_angle)) / m_lat
+                tgt_lon = t_lon + (130.0 * math.cos(self._orbit_angle)) / m_lon
+                d_step = _haversine_m(self.lat, self.lon, tgt_lat, tgt_lon)
+                if d_step > 1e-3:
+                    mv = min(d_step, 40.0 * eff_dt)
+                    r = mv / d_step
+                    self.lat += (tgt_lat - self.lat) * r
+                    self.lon += (tgt_lon - self.lon) * r
                 self.alt = 1050.0
                 self.speed = 40.0
-                self.battery = max(5.0, self.battery - 0.35 * dt)
+                self.battery = max(0.0, self.battery - drain_pct)
+                if self.battery < 25.0:
+                    self._fire_target = None
+                    self.state = "RETURNING"
+                    self.speed = 45.0
+            elif self.state == "TRANSITING":
+                dist_m = _haversine_m(self.lat, self.lon, self.zone_center[0], self.zone_center[1])
+                if dist_m <= 450.0:
+                    m_lat = 111320.0
+                    m_lon = 111320.0 * max(0.2, math.cos(math.radians(self.zone_center[0])))
+                    self._orbit_angle = math.atan2(
+                        (self.lat - self.zone_center[0]) * m_lat,
+                        (self.lon - self.zone_center[1]) * m_lon,
+                    ) % (2.0 * math.pi)
+                    self.alt = 1050.0
+                    self.state = "PATROLLING"
+                    self.speed = 40.0
+                else:
+                    step_m = min(dist_m, 45.0 * eff_dt)
+                    ratio = step_m / dist_m
+                    self.lat += (self.zone_center[0] - self.lat) * ratio
+                    self.lon += (self.zone_center[1] - self.lon) * ratio
+                    self.alt += (1050.0 - self.alt) * min(1.0, ratio * 2.5)
+                    self.speed = 45.0
+                self.battery = max(0.0, self.battery - drain_pct)
+                if self.battery < 25.0:
+                    self.state = "RETURNING"
+                    self.speed = 45.0
+            elif self.state == "PATROLLING":
+                self._orbit_angle = (self._orbit_angle + (40.0 * eff_dt / 420.0)) % (2.0 * math.pi)
+                m_lat = 111320.0
+                m_lon = 111320.0 * max(0.2, math.cos(math.radians(self.zone_center[0])))
+                tgt_lat = self.zone_center[0] + (380.0 * math.sin(self._orbit_angle)) / m_lat
+                tgt_lon = self.zone_center[1] + (460.0 * math.cos(self._orbit_angle) + 120.0 * math.sin(2.0 * self._orbit_angle)) / m_lon
+                d_step = _haversine_m(self.lat, self.lon, tgt_lat, tgt_lon)
+                if d_step > 1e-3:
+                    mv = min(d_step, 40.0 * eff_dt)
+                    r = mv / d_step
+                    self.lat += (tgt_lat - self.lat) * r
+                    self.lon += (tgt_lon - self.lon) * r
+                self.alt = 1050.0
+                self.speed = 40.0
+                self.battery = max(0.0, self.battery - drain_pct)
                 if self.battery < 25.0:
                     self.state = "RETURNING"
                     self.speed = 45.0
@@ -441,20 +603,20 @@ class StandaloneUAVClient:
                     self.lat, self.lon, self.alt, self.speed = self.station[0], self.station[1], 25.0, 0.0
                     self.state = "CHARGING"
                 else:
-                    step_m = min(dist_m, 120.0 * dt)
+                    step_m = min(dist_m, 45.0 * eff_dt)
                     ratio = step_m / dist_m
                     self.lat += (self.station[0] - self.lat) * ratio
                     self.lon += (self.station[1] - self.lon) * ratio
                     self.alt += (25.0 - self.alt) * ratio
                     self.speed = 45.0
+                self.battery = max(1.0, self.battery - drain_pct)
             elif self.state == "CHARGING":
                 self.lat, self.lon, self.alt, self.speed = self.station[0], self.station[1], 25.0, 0.0
-                self.battery = min(100.0, self.battery + 15.0 * dt)
+                self.battery = min(100.0, self.battery + 15.0 * eff_dt)
                 if self.battery >= 100.0:
                     self.battery = 100.0
-                    self.lat, self.lon, self.alt = self.zone_center[0], self.zone_center[1], 1050.0
-                    self.state = "PATROLLING"
-                    self.speed = 40.0
+                    self.state = "STANDBY"
+                    self.speed = 0.0
 
     def _flight_and_telemetry_loop(self):
         interval = 0.8
@@ -469,10 +631,24 @@ class StandaloneUAVClient:
     def trigger_fire(self) -> dict[str, Any]:
         with self._state_lock:
             f_lat, f_lon = self.lat, self.lon
-        return self.send_tcp_command("FIRE_ALERT", {"lat": f_lat, "lon": f_lon})
+        res = self.send_tcp_command("FIRE_ALERT", {"lat": f_lat, "lon": f_lon})
+        if res.get("ok"):
+            with self._state_lock:
+                self._fire_target = (f_lat, f_lon)
+                self.state = "CONTAINING"
+                self.speed = 40.0
+                if res.get("rf_link"):
+                    self.rf_link = str(res["rf_link"])
+                if isinstance(res.get("rf_hops"), list):
+                    self.rf_hops = [str(x) for x in res["rf_hops"]]
+                if res.get("rf_delay_ms") is not None:
+                    self.rf_delay_ms = float(res["rf_delay_ms"])
+            self.send_udp_telemetry()
+        return res
 
     def trigger_low_battery(self):
         with self._state_lock:
+            self._fire_target = None
             self.battery = 18.0
             self.state = "RETURNING"
             self.speed = 45.0
@@ -480,18 +656,29 @@ class StandaloneUAVClient:
 
     def trigger_full_charge(self) -> dict[str, Any]:
         with self._state_lock:
+            self._fire_target = None
             self.battery = 100.0
-            self.lat, self.lon, self.alt = self.zone_center[0], self.zone_center[1], 1050.0
-            self.state = "PATROLLING"
+            dist_z = _haversine_m(self.lat, self.lon, self.zone_center[0], self.zone_center[1])
+            if dist_z > 500.0:
+                self.state = "TRANSITING"
+                self.speed = 45.0
+            else:
+                self.state = "PATROLLING"
+                self.speed = 40.0
+            st = self.state
         self.send_udp_telemetry()
-        return {"ok": True, "battery": 100.0, "state": "PATROLLING"}
+        return {"ok": True, "battery": 100.0, "state": st}
 
     def status_text(self) -> str:
         with self._state_lock:
+            mode_str = "TAKEOVER" if self.is_takeover else "EXTRA"
+            hop_cnt = max(0, len(self.rf_hops) - 1)
+            clk_str = "PAUSED" if self.paused else f"{self.time_scale:.1f}x"
             return (
-                f"PID={self.pid} | ID={self.uav_id} | IP={self.ip_address} | Zone={self.zone_id} | "
-                f"State={self.state} | Pin={self.battery:.1f}% | Pos=({self.lat:.5f}, {self.lon:.5f}) | "
-                f"UDP_TX={self.udp_tx_count} | TCP_TX={self.tcp_tx_count} (ACK={self.tcp_ack_count}) | "
+                f"PID={self.pid} | ID={self.uav_id} ({mode_str}) | IP={self.ip_address} | Zone={self.zone_id} | "
+                f"State={self.state} | Pin={self.battery:.1f}% ({self.battery_capacity_j/1000.0:.0f}kJ) | "
+                f"Pos=({self.lat:.5f}, {self.lon:.5f}) | RF={self.rf_link} ({hop_cnt} hops, {self.rf_delay_ms:.1f}ms) | "
+                f"Clock={clk_str} | UDP_TX={self.udp_tx_count} | TCP_TX={self.tcp_tx_count} (ACK={self.tcp_ack_count}) | "
                 f"ServerCmd_RX={self.server_cmd_rx_count} | Connected={not self.server_disconnected}"
             )
 
@@ -501,8 +688,8 @@ def main():
     parser.add_argument("--host", default="127.0.0.1", help="IP máy chủ Server (mặc định 127.0.0.1)")
     parser.add_argument("--tcp-port", type=int, default=9000, help="Cổng TCP Server (mặc định 9000)")
     parser.add_argument("--udp-port", type=int, default=9001, help="Cổng UDP Server (mặc định 9001)")
-    parser.add_argument("--id", default="UAV_EXT_01", help="Định danh UAV Client (VD: UAV_EXT_01)")
-    parser.add_argument("--zone", default="ZONE_03", help="Phân khu tuần tra (ZONE_01..ZONE_07)")
+    parser.add_argument("--id", default="UAV_09", help="Định danh UAV tiếp quản hoặc UAV mới (mặc định: UAV_09; Z7: UAV_25)")
+    parser.add_argument("--zone", default="", help="Phân khu nếu tạo UAV mới ngoài đội hình (mặc định lấy theo UAV trên Server)")
     parser.add_argument("--battery", type=float, default=90.0, help="Mức pin khởi tạo (%%)")
     parser.add_argument("--non-interactive", action="store_true", help="Chạy nền không mở menu nhập phím")
     args = parser.parse_args()
@@ -525,19 +712,21 @@ def main():
         )
         client.stop(graceful=False)
         sys.exit(1)
+    mode_lbl = "Tiếp quản UAV đội hình" if client.is_takeover else "UAV mở rộng ngoài đội hình"
     print(
-        f"[UAV_CLIENT] Kết nối thành công! ID={client.uav_id} | IP={client.ip_address} | "
-        f"UDP={args.host}:{client.udp_port} | ACK={ack.get('cmd')}"
+        f"[UAV_CLIENT] Kết nối thành công ({mode_lbl})! ID={client.uav_id} | IP={client.ip_address} | "
+        f"Zone={client.zone_id} | Pin={client.battery:.1f}% ({client.battery_capacity_j/1000.0:.0f}kJ) | "
+        f"RF={client.rf_link} | UDP={args.host}:{client.udp_port} | ACK={ack.get('cmd')}"
     )
     client.start_background()
 
     print("\n--- BẢNG ĐIỀU KHIỂN UAV CLIENT ĐỘC LẬP ---")
-    print("  [f] Báo cháy tại vị trí hiện tại (gửi TCP FIRE_ALERT)")
-    print("  [b] Giả lập Pin yếu 18% (bay về Trạm sạc pin)")
-    print("  [c] Sạc đầy 100% & quay lại vùng tuần tra")
+    print("  [f] Báo cháy tại vị trí hiện tại (gửi TCP FIRE_ALERT qua Virtual RF Gateway)")
+    print("  [b] Giả lập Pin yếu 18% (bay về Trạm sạc pin đúng tốc độ 45 m/s)")
+    print("  [c] Sạc đầy 100% & bay chuyển tiếp về vùng tuần tra (không dịch chuyển tức thời)")
     print("  [e] Gửi thử 1 gói UDP lỗi bit CRC32 (kiểm chứng phát hiện lỗi phía Server)")
-    print("  [s] Xem trạng thái PID / Socket / Gói tin / Pin")
-    print("  [q] Ngắt kết nối lịch sự (hoặc Ctrl+C để giả lập rớt mạng đột ngột)\n")
+    print("  [s] Xem trạng thái PID / Socket / Tuyến RF / Đồng hồ / Pin")
+    print("  [q] Rời mạng lịch sự (trả quyền bay tự động về Server, hoặc Ctrl+C giả lập rớt mạng)\n")
 
     try:
         if args.non_interactive:

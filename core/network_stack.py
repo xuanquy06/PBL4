@@ -280,9 +280,18 @@ class RealSocketTransport:
         self.real_tcp_tx = 0
         self.real_udp_rx = 0
         self.real_udp_crc_errors = 0
+        self.rf_gateway_delivered = 0
+        self.rf_gateway_drops = 0
         self.sim_wireless_sent = 0
         self.sim_wireless_acked = 0
         self.sim_wireless_retrans = 0
+
+    @staticmethod
+    def _normalize_uav_id(raw_id: Any) -> str:
+        val = str(raw_id or "").strip()
+        if not val:
+            return "MÁY_BAY_UAV_09"
+        return val if val.startswith("MÁY_BAY_") else f"MÁY_BAY_{val}"
 
     @staticmethod
     def determine_protocol(loai_tin: Optional[str]) -> str:
@@ -388,6 +397,7 @@ class RealSocketTransport:
     def _handle_tcp_client(self, conn: socket.socket, addr: tuple[str, int]):
         conn.settimeout(0.5)
         bound_uav_id: Optional[str] = None
+        graceful_leave = False
         send_lock = threading.Lock()
         try:
             while self.running:
@@ -422,37 +432,61 @@ class RealSocketTransport:
 
                     if isinstance(payload_obj, dict) and "cmd" in payload_obj:
                         cmd = str(payload_obj["cmd"]).upper()
-                        uav_id = str(payload_obj.get("uav_id") or bound_uav_id or f"MÁY_BAY_UAV_EXT_{addr[1]}")
+                        raw_uav_id = payload_obj.get("uav_id") or bound_uav_id or f"UAV_EXT_{addr[1]}"
+                        uav_id = self._normalize_uav_id(raw_uav_id)
+                        reply_dict: dict[str, Any] = {"ok": True, "cmd": f"{cmd}_ACK"}
+
                         if cmd == "JOIN":
-                            bound_uav_id = uav_id
                             with self._lock:
                                 if self._os_kernel is not None:
                                     self._os_kernel.record_mutex_acquire()
-                                self.external_clients[uav_id] = {
-                                    "uav_id": uav_id,
-                                    "addr": f"{addr[0]}:{addr[1]}",
-                                    "pid": payload_obj.get("pid"),
-                                    "ip": pkt.src_ip,
-                                    "connected_at": time.strftime("%H:%M:%S"),
-                                    "thread_name": threading.current_thread().name,
+                                already_bound = uav_id in self._external_client_conns
+                            if already_bound:
+                                reply_dict = {
+                                    "ok": False,
+                                    "cmd": "JOIN_REJECT",
+                                    "error": f"UAV {uav_id} đang được một tiến trình Client khác điều khiển.",
                                 }
-                                self._external_client_conns[uav_id] = (conn, send_lock)
-                        reply_dict: dict[str, Any] = {"ok": True, "cmd": f"{cmd}_ACK"}
-                        if self.on_external_tcp_cmd is not None:
-                            try:
-                                res = self.on_external_tcp_cmd(pkt, payload_obj, addr)
-                                if isinstance(res, dict):
-                                    reply_dict = res
-                            except Exception as exc:
-                                reply_dict = {"ok": False, "error": str(exc)}
-                        if cmd == "JOIN" and isinstance(reply_dict, dict) and reply_dict.get("assigned_ip"):
-                            with self._lock:
-                                if uav_id in self.external_clients:
-                                    self.external_clients[uav_id]["ip"] = str(reply_dict["assigned_ip"])
+                                should_close = True
+                            else:
+                                if self.on_external_tcp_cmd is not None:
+                                    try:
+                                        res = self.on_external_tcp_cmd(pkt, payload_obj, addr)
+                                        if isinstance(res, dict):
+                                            reply_dict = res
+                                    except Exception as exc:
+                                        reply_dict = {"ok": False, "error": str(exc)}
+                                if reply_dict.get("ok", False):
+                                    bound_uav_id = uav_id
+                                    assigned_ip = str(reply_dict.get("assigned_ip") or pkt.src_ip)
+                                    with self._lock:
+                                        if self._os_kernel is not None:
+                                            self._os_kernel.record_mutex_acquire()
+                                        self.external_clients[uav_id] = {
+                                            "uav_id": uav_id,
+                                            "addr": f"{addr[0]}:{addr[1]}",
+                                            "pid": payload_obj.get("pid"),
+                                            "ip": assigned_ip,
+                                            "connected_at": time.strftime("%H:%M:%S"),
+                                            "thread_name": threading.current_thread().name,
+                                        }
+                                        self._external_client_conns[uav_id] = (conn, send_lock)
+                                else:
+                                    should_close = True
+                        else:
+                            if self.on_external_tcp_cmd is not None:
+                                try:
+                                    res = self.on_external_tcp_cmd(pkt, payload_obj, addr)
+                                    if isinstance(res, dict):
+                                        reply_dict = res
+                                except Exception as exc:
+                                    reply_dict = {"ok": False, "error": str(exc)}
+                            if cmd == "LEAVE":
+                                graceful_leave = True
+                                should_close = True
+
                         self.record_sniffer(pkt, f"EXT_{cmd}", uav_id, "TRẠM_KIỂM_LÂM_SƠN_TRÀ", f"EXT_TCP_{cmd}")
                         ack_payload = json.dumps(reply_dict, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-                        if cmd == "LEAVE":
-                            should_close = True
                 elif not crc_ok:
                     with self._lock:
                         self.crc_errors += 1
@@ -490,7 +524,7 @@ class RealSocketTransport:
                         self._os_kernel.record_mutex_acquire()
                     self.external_clients.pop(bound_uav_id, None)
                     self._external_client_conns.pop(bound_uav_id, None)
-                if self.on_external_disconnect is not None:
+                if not graceful_leave and self.on_external_disconnect is not None:
                     try:
                         self.on_external_disconnect(bound_uav_id, addr)
                     except Exception:
@@ -503,11 +537,12 @@ class RealSocketTransport:
         params: Optional[dict[str, Any]] = None,
     ) -> bool:
         """Chủ động đẩy lệnh điều khiển bất đồng bộ từ Server xuống tiến trình Client TCP (giao tiếp 2 chiều)."""
+        norm_id = self._normalize_uav_id(uav_id)
         with self._lock:
             if self._os_kernel is not None:
                 self._os_kernel.record_mutex_acquire()
-            entry = self._external_client_conns.get(uav_id)
-            meta = self.external_clients.get(uav_id)
+            entry = self._external_client_conns.get(norm_id)
+            meta = self.external_clients.get(norm_id)
             dst_ip = str(meta.get("ip", "10.0.10.1")) if meta else "10.0.10.1"
         if entry is None:
             return False
@@ -538,7 +573,8 @@ class RealSocketTransport:
             self.tcp_sent += 1
             self.real_tcp_tx += 1
             self.tcp_bytes += len(raw)
-        self.record_sniffer(pkt, f"PUSH_{act}", "TRẠM_KIỂM_LÂM_SƠN_TRÀ", uav_id, "SERVER_PUSH")
+        if act != "RF_STATUS":
+            self.record_sniffer(pkt, f"PUSH_{act}", "TRẠM_KIỂM_LÂM_SƠN_TRÀ", norm_id, "SERVER_PUSH")
         return True
 
     def broadcast_command_to_external_clients(
@@ -600,17 +636,32 @@ class RealSocketTransport:
                 except (UnicodeDecodeError, json.JSONDecodeError):
                     payload_obj = None
                 if isinstance(payload_obj, dict) and str(payload_obj.get("cmd", "")).upper() == "TELEMETRY":
-                    uav_id = str(payload_obj.get("uav_id") or f"MÁY_BAY_UAV_EXT_{addr[1]}")
+                    uav_id = self._normalize_uav_id(payload_obj.get("uav_id") or f"UAV_EXT_{addr[1]}")
+                    rf_status: Optional[str] = None
                     if self.on_external_udp_telemetry is not None:
                         try:
-                            self.on_external_udp_telemetry(pkt, payload_obj, addr)
+                            res_status = self.on_external_udp_telemetry(pkt, payload_obj, addr)
+                            if isinstance(res_status, str) and res_status:
+                                rf_status = res_status
                         except Exception:
                             pass
-                    with self._lock:
-                        self._ext_udp_sniff_counter += 1
-                        sample_sniff = (self._ext_udp_sniff_counter % 4 == 1)
-                    if sample_sniff:
-                        self.record_sniffer(pkt, "EXT_TELEM", uav_id, "TRẠM_KIỂM_LÂM_SƠN_TRÀ", "EXT_UDP_OK")
+                    if rf_status in ("RF_OUT_OF_RANGE_DROP", "RF_PER_DROP"):
+                        with self._lock:
+                            self.rf_gateway_drops += 1
+                        self.record_sniffer(pkt, "EXT_TELEM", uav_id, "TRẠM_KIỂM_LÂM_SƠN_TRÀ", rf_status)
+                    else:
+                        with self._lock:
+                            self.rf_gateway_delivered += 1
+                            self._ext_udp_sniff_counter += 1
+                            sample_sniff = (self._ext_udp_sniff_counter % 4 == 1)
+                        if sample_sniff:
+                            self.record_sniffer(
+                                pkt,
+                                "EXT_TELEM",
+                                uav_id,
+                                "TRẠM_KIỂM_LÂM_SƠN_TRÀ",
+                                rf_status or "EXT_UDP_OK",
+                            )
 
     def send_over_wire(
         self,
@@ -716,6 +767,8 @@ class RealSocketTransport:
                 "real_tcp_tx": self.real_tcp_tx,
                 "real_udp_rx": self.real_udp_rx,
                 "real_udp_crc_errors": self.real_udp_crc_errors,
+                "rf_gateway_delivered": self.rf_gateway_delivered,
+                "rf_gateway_drops": self.rf_gateway_drops,
                 "sim_wireless_sent": self.sim_wireless_sent,
                 "sim_wireless_acked": self.sim_wireless_acked,
                 "sim_wireless_retrans": self.sim_wireless_retrans,

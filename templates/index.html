@@ -1485,7 +1485,7 @@
                 let m = markersById.get(n.id);
                 const pos = [n.vi_do, n.kinh_do];
                 const label = n.id.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '').replace('VỆ_TINH_', '');
-                const stateKey = `${n.state}_${n.pin_pct < 25 ? 'crit' : (n.pin_pct < 50 ? 'low' : 'ok')}_${selectedNodeId === n.id}_${n.is_reserve ? 1 : 0}`;
+                const stateKey = `${n.state}_${n.pin_pct < 25 ? 'crit' : (n.pin_pct < 50 ? 'low' : 'ok')}_${selectedNodeId === n.id}_${n.is_reserve ? 1 : 0}_${n.is_external_client ? 1 : 0}`;
                 if (!m) {
                     m = L.marker(pos, { icon: createNodeIcon(n) }).addTo(nodeLayer);
                     m._lastStateKey = stateKey;

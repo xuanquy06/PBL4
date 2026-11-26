@@ -42,10 +42,12 @@ class UAVAgent(BaseAgent):
         super().__init__(bo_dinh_tuyen=bo_dinh_tuyen, **kwargs)
         self.cong_suat_bay_w = max(1.0, float(cong_suat_bay_w))
         self.zone_id = zone_id
+        self.home_zone_id = zone_id
         self.nguong_pin_yeu_pct = LOW_BATTERY_THRESHOLD
         self.so_nhiem_vu_da_nhan = 0
         self.toa_do_muc_tieu: Optional[dict] = None
         self.toa_do_tram_sac: Optional[dict] = None
+        self._toa_do_ve_vung: Optional[dict] = None
         self._vung_tuan_tra_phu: Dict[str, str] = {}
         self._tam_khoanh_vung_chay: Optional[dict] = None
         self._goc_khoanh_vung_rad: float = 0.0
@@ -138,6 +140,7 @@ class UAVAgent(BaseAgent):
         self.toa_do["do_cao"] = float(muc_tieu.get("do_cao", 25.0))
         self.toa_do["van_toc_m_s"] = 0.0
         self.toa_do_tram_sac = None
+        self._toa_do_ve_vung = None
         self.chuyen_trang_thai(AgentState.CHARGING)
         self.uav_state = UAVState.CHARGING
         self._len_lich_log_web(
@@ -298,8 +301,39 @@ class UAVAgent(BaseAgent):
             return
 
         if self.toa_do_muc_tieu:
+            self._toa_do_ve_vung = None
             self._di_chuyen_den_diem_muc_tieu(self.toa_do_muc_tieu, dt_giay, la_tram_sac=False)
             return
+
+        if self._toa_do_ve_vung is not None and self.trang_thai in (AgentState.PATROLLING, AgentState.RELAYING):
+            kc_ve_vung_m = self._khoang_cach_m(
+                self.lat,
+                self.lon,
+                float(self._toa_do_ve_vung["vi_do"]),
+                float(self._toa_do_ve_vung["kinh_do"]),
+            )
+            if kc_ve_vung_m <= 300.0:
+                self._toa_do_ve_vung = None
+            else:
+                kc_3d = self.bo_dinh_tuyen.physics.tinh_khoang_cach_3d(self.toa_do, self._toa_do_ve_vung)
+                van_toc_bay = float(self._toa_do_ve_vung.get("van_toc_m_s", 45.0))
+                if kc_3d > 1.0:
+                    ti_le = min(kc_3d, van_toc_bay * dt_giay) / kc_3d
+                    self.lat += (float(self._toa_do_ve_vung["vi_do"]) - self.lat) * ti_le
+                    self.lon += (float(self._toa_do_ve_vung["kinh_do"]) - self.lon) * ti_le
+                    self.toa_do["do_cao"] = float(self.toa_do["do_cao"]) + (
+                        float(self._toa_do_ve_vung.get("do_cao", 1000.0)) - float(self.toa_do["do_cao"])
+                    ) * ti_le
+                self.toa_do["van_toc_m_s"] = van_toc_bay
+                self.tieu_hao_nang_luong(self.cong_suat_bay_w * dt_giay)
+                if self._khoang_cach_m(
+                    self.lat,
+                    self.lon,
+                    float(self._toa_do_ve_vung["vi_do"]),
+                    float(self._toa_do_ve_vung["kinh_do"]),
+                ) <= 300.0:
+                    self._toa_do_ve_vung = None
+                return
 
         if self._tam_khoanh_vung_chay is not None:
             self._di_chuyen_khoanh_vung_dam_chay(dt_giay)
@@ -794,7 +828,7 @@ class UAVAgent(BaseAgent):
         self.chuyen_trang_thai(AgentState.RESPONDING)
         self.uav_state = UAVState.RESPONDING
         thong_tin_su_co = {
-            "ma_phien_dau_gia": phien_id,
+            "ma_phien_su_co": phien_id,
             "loai_su_co": "CHÁY_RỪNG",
             "vi_do": float(fire_lat),
             "kinh_do": float(fire_lon),
@@ -897,7 +931,7 @@ class UAVAgent(BaseAgent):
 
         thong_diep_p2p = {
             "loai_tin": "YEU_CAU_HO_TRO_CHAY_P2P",
-            "ma_phien_dau_gia": ma_phien,
+            "ma_phien_su_co": ma_phien,
             "loai_su_co": "CHÁY_RỪNG",
             "vi_do": float(fire_lat),
             "kinh_do": float(fire_lon),
@@ -1146,11 +1180,23 @@ class UAVAgent(BaseAgent):
                     return
             pin_du_kien_pct = self._tinh_pin_du_kien_khu_hoi_pct(fire_lat, fire_lon)
             if self.phan_tram_pin > LOW_BATTERY_THRESHOLD and pin_du_kien_pct > LOW_BATTERY_THRESHOLD:
+                if getattr(self, "is_external_client", False):
+                    if hasattr(self.bo_dinh_tuyen, "khoa_muc_tieu_chay"):
+                        if not self.bo_dinh_tuyen.khoa_muc_tieu_chay(fire_lat, fire_lon, self.ma_dinh_danh):
+                            return
+                    net_stack = getattr(self.bo_dinh_tuyen, "network_stack", None)
+                    if net_stack is not None:
+                        net_stack.send_command_to_external_client(
+                            self.ma_dinh_danh,
+                            "DISPATCH_FIRE",
+                            {"lat": fire_lat, "lon": fire_lon},
+                        )
+                    return
                 await self._kich_hoat_xu_ly_chay_tu_chu(
                     fire_lat,
                     fire_lon,
                     pin_du_kien_pct=pin_du_kien_pct,
-                    ma_phien=thong_diep.get("ma_phien_dau_gia"),
+                    ma_phien=thong_diep.get("ma_phien_su_co"),
                     la_p2p=True,
                     uav_phat_hien_goc=thong_diep.get("nguoi_nho") or nguoi_gui,
                 )
@@ -1208,7 +1254,7 @@ class UAVAgent(BaseAgent):
         if hasattr(self.bo_dinh_tuyen, "mo_khoa_muc_tieu_chay"):
             self.bo_dinh_tuyen.mo_khoa_muc_tieu_chay(self.ma_dinh_danh, ha_nhiet=False)
         await self.bo_dinh_tuyen.gui_log_ra_web(
-            "WARN", f"⚠️ [{self.ma_dinh_danh}] HUỶ NHIỆM VỤ #{su_co.get('ma_phien_dau_gia', '')[:8]}: {ly_do}."
+            "WARN", f"⚠️ [{self.ma_dinh_danh}] HUỶ NHIỆM VỤ #{su_co.get('ma_phien_su_co', '')[:8]}: {ly_do}."
         )
         if su_co.get("vi_do") is not None and su_co.get("kinh_do") is not None:
             await self._phat_tin_nhan_p2p_nho_dong_doi(
@@ -1254,7 +1300,7 @@ class UAVAgent(BaseAgent):
             if self.trang_thai in abort_states or self.phan_tram_pin <= 5.0:
                 await self._bao_huy_nhiem_vu(su_co, "Pin sập hoặc UAV đang quay về sạc")
                 return
-            await self._dau_gia_va_truyen(su_co)
+            await self._dinh_tuyen_va_truyen_bao_cao(su_co)
             self._bat_dau_khoanh_vung_su_co(su_co)
         except asyncio.TimeoutError:
             await self.bo_dinh_tuyen.gui_log_ra_web(
@@ -1288,14 +1334,29 @@ class UAVAgent(BaseAgent):
         self._thoi_gian_khoanh_vung_con_lai = 0.0
         self.uav_state = UAVState.CONTAINING
 
+    def dat_muc_tieu_bay_ve_vung(self):
+        """Gán tâm phân khu làm đích bay thẳng khi UAV dự bị cất cánh từ Trạm, tránh kẹt lực đẩy quanh Trạm."""
+        zone_feat = self._lay_da_giac_vung_hien_tai()
+        if zone_feat is not None:
+            c_lon, c_lat = zone_feat.get("properties", {}).get("patrol_center", [108.255, 16.125])
+        else:
+            c_lat, c_lon = 16.125, 108.255
+        self._toa_do_ve_vung = {
+            "vi_do": float(c_lat),
+            "kinh_do": float(c_lon),
+            "do_cao": max(1000.0, float(self.toa_do.get("do_cao", 1000.0))),
+            "van_toc_m_s": 45.0,
+        }
+
     async def _goi_uav_du_bi_thay_ca(self) -> Optional[str]:
         """
-        Đánh thức 1 UAV đang ở trạng thái STANDBY (pin 100%) tại Trạm Kiểm Lâm
-        cất cánh bay thẳng tới phân khu của UAV hiện tại để thế chỗ (duy trì 4/4).
+        Cách C: Khóa cứng 5 UAV / phân khu. Chỉ đánh thức UAV STANDBY thuộc đúng tổ `home_zone_id`
+        cất cánh bay thẳng tới tâm phân khu hiện tại để thế chỗ (duy trì 4/4, không trộn chéo vùng).
         """
         if not self.zone_id or self._dang_o_tai_tram():
             return None
 
+        target_zone = self.home_zone_id or self.zone_id
         tat_ca_uav = [
             u for u in self.bo_dinh_tuyen.danh_sach_tac_nhan.values()
             if u.loai_tac_nhan == "MÁY_BAY" and u.ma_dinh_danh != self.ma_dinh_danh
@@ -1306,24 +1367,19 @@ class UAVAgent(BaseAgent):
             and u.trang_thai != AgentState.OFFLINE
             and u._dang_o_tai_tram()
             and u.phan_tram_pin >= 99.0
+            and (getattr(u, "home_zone_id", None) or getattr(u, "zone_id", None)) == target_zone
         ]
         if not ung_vien_du_bi:
             return None
 
-        # Ưu tiên UAV dự bị được gán sẵn cho phân khu này, nếu không có thì điều động bất kỳ chiếc STANDBY nào tại trạm
-        ung_vien_du_bi.sort(
-            key=lambda u: (
-                0 if getattr(u, "zone_id", None) == self.zone_id else 1,
-                -u.phan_tram_pin,
-                u.ma_dinh_danh,
-            )
-        )
+        ung_vien_du_bi.sort(key=lambda u: (-u.phan_tram_pin, u.ma_dinh_danh))
         u_reserve = ung_vien_du_bi[0]
-        u_reserve.zone_id = self.zone_id
+        u_reserve.zone_id = target_zone
         u_reserve.toa_do["do_cao"] = max(1000.0, float(self.toa_do.get("do_cao", 1000.0)))
         u_reserve.toa_do["van_toc_m_s"] = 45.0
         u_reserve.toa_do_tram_sac = None
         u_reserve.toa_do_muc_tieu = None
+        u_reserve.dat_muc_tieu_bay_ve_vung()
         u_reserve._yeu_cau_ban_giao_da_phat = False
         u_reserve._da_goi_du_bi_thay_ca = False
         u_reserve._waiting_for_relief_id = None
@@ -1365,6 +1421,7 @@ class UAVAgent(BaseAgent):
         if self._dang_o_tai_tram() or self.uav_state in (UAVState.STANDBY, UAVState.CHARGING, UAVState.OFFLINE):
             return
 
+        self._toa_do_ve_vung = None
         if not getattr(self, "_da_goi_du_bi_thay_ca", False):
             self._da_goi_du_bi_thay_ca = True
             await self._ban_giao_su_co_dang_giu(self.phan_tram_pin)
@@ -1436,7 +1493,7 @@ class UAVAgent(BaseAgent):
     def tra_lai_vung_tuan_tra(self, ma_uav_nguon: str):
         self._vung_tuan_tra_phu.pop(ma_uav_nguon, None)
 
-    async def _dau_gia_va_truyen(self, su_co: dict):
+    async def _dinh_tuyen_va_truyen_bao_cao(self, su_co: dict):
         """
         Định tuyến gói tin báo cáo đám cháy từ tâm cháy về Trạm mặt đất qua thuật toán
         Dijkstra đa mục tiêu (`core/message_broker.py`: A2G trực tiếp, FANET Relay, hoặc Vệ tinh LEO).
@@ -1446,7 +1503,7 @@ class UAVAgent(BaseAgent):
         fire_lon = float(su_co["kinh_do"])
         goi_tin = {
             "loai_tin": "GIAO_NHIEM_VU_DU_LIEU",
-            "ma_phien_dau_gia": su_co.get("ma_phien_dau_gia", str(uuid.uuid4())),
+            "ma_phien_su_co": su_co.get("ma_phien_su_co", str(uuid.uuid4())),
             "loai_su_co": su_co.get("loai_su_co", "CHÁY_RỪNG"),
             "toa_do_su_co": {"vi_do": fire_lat, "kinh_do": fire_lon},
             "thoi_diem_khoi_tao": time.time(),

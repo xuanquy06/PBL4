@@ -148,7 +148,7 @@ class GroundStationAgent(BaseAgent):
             toa_do_su_co = thong_diep.get("toa_do_su_co", {})
 
             ban_ghi_ket_qua = {
-                "ma_phien": thong_diep.get("ma_phien_dau_gia", "N/A"),
+                "ma_phien": thong_diep.get("ma_phien_su_co", "N/A"),
                 "loai_su_co": loai_su_co,
                 "toa_do_su_co": toa_do_su_co,
                 "lo_trinh": lo_trinh,
@@ -184,7 +184,7 @@ class GroundStationAgent(BaseAgent):
                     ma_nguoi_nhan=tuyen_phan_hoi[1],
                     thong_diep={
                         "loai_tin": "XAC_NHAN_ACK",
-                        "ma_phien_dau_gia": thong_diep.get("ma_phien_dau_gia"),
+                        "ma_phien_su_co": thong_diep.get("ma_phien_su_co"),
                         "e2e_delay_ms": tong_do_tre_e2e_ms,
                         "tuyen_phan_hoi": tuyen_phan_hoi,
                         "kich_thuoc_kb": 1.0

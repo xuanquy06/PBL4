@@ -1,4 +1,5 @@
 import asyncio
+import random
 import time
 import uuid
 from pathlib import Path
@@ -83,7 +84,7 @@ class SimulationLoop:
 
     @staticmethod
     def _normalize_ext_uav_id(raw_id: Optional[str]) -> str:
-        val = str(raw_id or "UAV_EXT_01").strip()
+        val = str(raw_id or "UAV_09").strip() or "UAV_09"
         return val if val.startswith("MÁY_BAY_") else f"MÁY_BAY_{val}"
 
     def _get_zone_center(self, zone_id: str) -> tuple[float, float]:
@@ -106,29 +107,138 @@ class SimulationLoop:
                     )
         return 16.105, 108.250, 25.0
 
+    def _evaluate_client_rf_gateway(
+        self,
+        agent: UAVAgent,
+        protocol: str = "UDP",
+        kich_thuoc_kb: float = 2.0,
+        probe_pos: Optional[tuple[float, float, float]] = None,
+    ) -> dict[str, Any]:
+        """Kiểm định gói tin từ Client qua mặt phẳng vô tuyến SAGSINS (Virtual RF Gateway theo mô hình FlyNetSim)."""
+        orig_lat = float(agent.toa_do.get("vi_do", 16.125))
+        orig_lon = float(agent.toa_do.get("kinh_do", 108.255))
+        orig_alt = float(agent.toa_do.get("do_cao", 1050.0))
+        if probe_pos is not None:
+            agent.toa_do["vi_do"] = float(probe_pos[0])
+            agent.toa_do["kinh_do"] = float(probe_pos[1])
+            agent.toa_do["do_cao"] = float(probe_pos[2])
+
+        try:
+            st_lat, st_lon, st_alt = self._get_station_coords()
+            dist_station = self.physics.tinh_khoang_cach_3d(
+                agent.toa_do,
+                {"vi_do": st_lat, "kinh_do": st_lon, "do_cao": st_alt},
+            )
+            if dist_station <= 100.0 or agent._dang_o_tai_tram():
+                return {
+                    "ok": True,
+                    "link": "GROUND_LINK",
+                    "hops": [agent.ma_dinh_danh, "TRẠM_KIỂM_LÂM_SƠN_TRÀ"],
+                    "hop_count": 1,
+                    "delay_ms": 0.01,
+                    "per": 0.0,
+                    "reason": "EXT_UDP_A2G",
+                }
+
+            route = self.broker.tim_tuyen_dijkstra_ve_tram(
+                agent.ma_dinh_danh,
+                kich_thuoc_kb=kich_thuoc_kb,
+            )
+            if not route or len(route.get("nodes", [])) < 2:
+                return {
+                    "ok": False,
+                    "link": "OUT_OF_RANGE",
+                    "hops": [],
+                    "hop_count": 0,
+                    "delay_ms": 9999.0,
+                    "per": 1.0,
+                    "reason": "RF_OUT_OF_RANGE_DROP",
+                }
+
+            nodes = list(route["nodes"])
+            channels = route.get("channels", [])
+            delay_ms = round(float(route.get("delay_ms", 0.0)), 2)
+            p_ok = 1.0
+            for ch in channels:
+                p_ok *= max(0.0, 1.0 - float(ch.get("per", 0.0)))
+            path_per = round(max(0.0, min(1.0, 1.0 - p_ok)), 4)
+
+            if len(nodes) == 2:
+                link, ok_tag = "GROUND_LINK", "EXT_UDP_A2G"
+            elif any("VỆ_TINH" in str(n) for n in nodes[1:]):
+                link, ok_tag = "LEO_SATELLITE", "EXT_UDP_LEO"
+            else:
+                link, ok_tag = "FANET_RELAY", "EXT_UDP_FANET"
+
+            if str(protocol).upper() == "UDP" and path_per > 0.0 and random.random() < path_per:
+                self.broker.thong_ke_toan_mang["tong_goi_tin_rot_per"] = (
+                    self.broker.thong_ke_toan_mang.get("tong_goi_tin_rot_per", 0) + 1
+                )
+                return {
+                    "ok": False,
+                    "link": link,
+                    "hops": nodes,
+                    "hop_count": len(nodes) - 1,
+                    "delay_ms": delay_ms,
+                    "per": path_per,
+                    "reason": "RF_PER_DROP",
+                }
+
+            return {
+                "ok": True,
+                "link": link,
+                "hops": nodes,
+                "hop_count": len(nodes) - 1,
+                "delay_ms": delay_ms,
+                "per": path_per,
+                "reason": ok_tag,
+            }
+        finally:
+            if probe_pos is not None:
+                agent.toa_do["vi_do"] = orig_lat
+                agent.toa_do["kinh_do"] = orig_lon
+                agent.toa_do["do_cao"] = orig_alt
+
     def _handle_external_tcp_cmd(self, pkt, payload: dict, addr: tuple[str, int]) -> dict:
         """Xử lý các bản tin điều khiển tin cậy từ tiến trình `uav_client.py` ngoài (trên Thread riêng của Client)."""
         cmd = str(payload.get("cmd", "")).upper()
         uav_id = self._normalize_ext_uav_id(payload.get("uav_id"))
-        zone_id = str(payload.get("zone_id") or "ZONE_03")
-        st_lat, st_lon, st_alt = self._get_station_coords()
+        st_lat, st_lon, _ = self._get_station_coords()
 
         if cmd == "JOIN":
-            c_lat, c_lon = self._get_zone_center(zone_id)
-            raw_lat = payload.get("lat")
-            raw_lon = payload.get("lon")
-            raw_alt = payload.get("alt")
-            raw_bat = payload.get("battery")
-            init_lat = float(raw_lat) if raw_lat is not None else c_lat
-            init_lon = float(raw_lon) if raw_lon is not None else c_lon
-            init_alt = float(raw_alt) if raw_alt is not None else 1050.0
-            init_bat = float(raw_bat) if raw_bat is not None else 90.0
             pid = payload.get("pid")
             addr_str = f"{addr[0]}:{addr[1]}"
 
             with self.broker.os_kernel.net_state_lock:
                 agent = self.broker.danh_sach_tac_nhan.get(uav_id)
-                if agent is None:
+                if agent is not None and isinstance(agent, UAVAgent):
+                    is_takeover = True
+                    agent._is_fleet_uav = getattr(agent, "_is_fleet_uav", "EXT" not in uav_id.upper())
+                    zone_id_eff = agent.zone_id or getattr(agent, "home_zone_id", None) or "ZONE_03"
+                    c_lat, c_lon = self._get_zone_center(zone_id_eff)
+                    if agent.uav_state == UAVState.OFFLINE and agent.pin_hien_tai > 0.0:
+                        if agent._dang_o_tai_tram():
+                            agent.chuyen_trang_thai(AgentState.IDLE)
+                            agent.uav_state = UAVState.STANDBY
+                        else:
+                            agent.chuyen_trang_thai(AgentState.PATROLLING)
+                            agent.uav_state = UAVState.PATROLLING
+                    agent.is_external_client = True
+                    agent.client_pid = pid
+                    agent.client_addr = addr_str
+                    agent.last_external_heartbeat = time.time()
+                else:
+                    is_takeover = False
+                    zone_id_eff = str(payload.get("zone_id") or "ZONE_03")
+                    c_lat, c_lon = self._get_zone_center(zone_id_eff)
+                    raw_lat = payload.get("lat")
+                    raw_lon = payload.get("lon")
+                    raw_alt = payload.get("alt")
+                    raw_bat = payload.get("battery")
+                    init_lat = float(raw_lat) if raw_lat is not None else c_lat
+                    init_lon = float(raw_lon) if raw_lon is not None else c_lon
+                    init_alt = float(raw_alt) if raw_alt is not None else 1050.0
+                    init_bat = float(raw_bat) if raw_bat is not None else 90.0
                     agent = UAVAgent(
                         ma_dinh_danh=uav_id,
                         bo_dinh_tuyen=self.broker,
@@ -136,25 +246,30 @@ class SimulationLoop:
                         kinh_do=init_lon,
                         do_cao=init_alt,
                         pin_khoi_tao_pct=init_bat,
-                        zone_id=zone_id,
+                        zone_id=zone_id_eff,
                         is_external_client=True,
                         client_pid=pid,
                         client_addr=addr_str,
                     )
-                else:
-                    agent.is_external_client = True
-                    agent.zone_id = zone_id
-                    agent.lat = init_lat
-                    agent.lon = init_lon
-                    agent.toa_do["do_cao"] = init_alt
-                    agent.pin_hien_tai = agent.pin_toi_da * min(100.0, max(0.0, init_bat)) / 100.0
-                    agent.client_pid = pid
-                    agent.client_addr = addr_str
-                    agent.last_external_heartbeat = time.time()
+                    agent._is_fleet_uav = False
+                    agent.chuyen_trang_thai(AgentState.PATROLLING)
+                    agent.uav_state = UAVState.PATROLLING
 
-                agent.chuyen_trang_thai(AgentState.PATROLLING)
-                agent.uav_state = UAVState.PATROLLING
                 agent.evaluate_communication_link()
+                rf_info = self._evaluate_client_rf_gateway(agent, protocol="TCP")
+                agent.current_link = rf_info["link"]
+                agent._last_pushed_rf_link = rf_info["link"]
+                cur_state = getattr(getattr(agent, "uav_state", None), "value", "PATROLLING")
+                if getattr(agent, "_toa_do_ve_vung", None) is not None and cur_state == "PATROLLING":
+                    cur_state = "TRANSITING"
+                ack_lat = float(agent.lat)
+                ack_lon = float(agent.lon)
+                ack_alt = float(agent.toa_do.get("do_cao", 1050.0))
+                ack_bat = float(agent.phan_tram_pin)
+                ack_cap_j = float(agent.pin_toi_da)
+                ack_pow_w = float(getattr(agent, "cong_suat_bay_w", 80.0))
+                ack_ip = str(agent.ip_address)
+                ack_home_zone = getattr(agent, "home_zone_id", None) or zone_id_eff
 
             if self._main_loop and self._main_loop.is_running() and not getattr(agent, "_dang_lang_nghe", False):
                 def _spawn_listener(ag=agent):
@@ -162,97 +277,316 @@ class SimulationLoop:
                     self._cac_tac_vu_nen.append(asyncio.create_task(ag.lang_nghe_lien_tuc()))
                 self._main_loop.call_soon_threadsafe(_spawn_listener)
 
+            mode_desc = "tiếp quản UAV đội hình" if is_takeover else "bổ sung UAV ngoài"
             self._schedule_web_log(
                 "INFO",
-                f"[CLIENT_NET] 🛰️ Client [{uav_id}] (PID:{pid}, {addr_str} -> {agent.ip_address}) "
-                f"kết nối TCP :{self.broker.network_stack.tcp_port} vào {zone_id}."
+                f"[CLIENT_NET] 🛰️ Client [{uav_id}] (PID:{pid}, {addr_str} -> {ack_ip}) "
+                f"{mode_desc} qua TCP :{self.broker.network_stack.tcp_port} tại {zone_id_eff} (RF={rf_info['link']})."
             )
             return {
                 "ok": True,
                 "cmd": "JOIN_ACK",
                 "uav_id": uav_id,
-                "assigned_ip": agent.ip_address,
+                "is_takeover": is_takeover,
+                "assigned_ip": ack_ip,
                 "udp_port": self.broker.network_stack.udp_port,
+                "zone_id": zone_id_eff,
+                "home_zone_id": ack_home_zone,
                 "zone_center": [c_lat, c_lon],
                 "station": [st_lat, st_lon],
+                "lat": ack_lat,
+                "lon": ack_lon,
+                "alt": ack_alt,
+                "battery": round(ack_bat, 2),
+                "battery_capacity_j": ack_cap_j,
+                "power_w": ack_pow_w,
+                "state": cur_state,
+                "paused": bool(self.tam_dung),
+                "time_scale": float(self.time_scale),
+                "rf_link": rf_info["link"],
+                "rf_hops": rf_info["hops"],
+                "rf_delay_ms": rf_info["delay_ms"],
+                "rf_per": rf_info["per"],
             }
 
         if cmd == "FIRE_ALERT":
+            agent = self.broker.lay_tac_nhan(uav_id)
+            zone_id = str(payload.get("zone_id") or (getattr(agent, "zone_id", None) if agent else None) or "ZONE_03")
             c_lat, c_lon = self._get_zone_center(zone_id)
             raw_f_lat = payload.get("lat")
             raw_f_lon = payload.get("lon")
             f_lat = float(raw_f_lat) if raw_f_lat is not None else c_lat
             f_lon = float(raw_f_lon) if raw_f_lon is not None else c_lon
-            if self._main_loop and self._main_loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    self.kich_hoat_su_co_khan_cap("CHÁY_RỪNG", f_lat, f_lon),
-                    self._main_loop,
+
+            if isinstance(agent, UAVAgent):
+                rf_info = self._evaluate_client_rf_gateway(agent, protocol="TCP", kich_thuoc_kb=250.0)
+            else:
+                rf_info = {
+                    "ok": True,
+                    "link": "GROUND_LINK",
+                    "hops": [uav_id, "TRẠM_KIỂM_LÂM_SƠN_TRÀ"],
+                    "hop_count": 1,
+                    "delay_ms": 0.01,
+                    "per": 0.0,
+                }
+
+            if not rf_info["ok"]:
+                self._schedule_web_log(
+                    "WARN",
+                    f"[RF_GATEWAY] 📵 Chặn báo cháy TCP từ [{uav_id}] do ngoài vùng phủ sóng A2G/FANET/LEO (OUT_OF_RANGE)."
                 )
+                return {
+                    "ok": False,
+                    "cmd": "FIRE_NACK",
+                    "error": "Mất sóng vô tuyến (OUT_OF_RANGE), không tìm thấy tuyến A2G/FANET/LEO về Trạm.",
+                    "rf_link": "OUT_OF_RANGE",
+                }
+
+            if isinstance(agent, UAVAgent):
+                with self.broker.os_kernel.net_state_lock:
+                    agent._tam_khoanh_vung_chay = {
+                        "vi_do": f_lat,
+                        "kinh_do": f_lon,
+                        "ma_phien": f"FIRE_{uav_id}",
+                    }
+                    agent.trang_thai = AgentState.PATROLLING
+                    agent.uav_state = UAVState.CONTAINING
+                    agent.current_link = rf_info["link"]
+                    agent.tuyen_ve_tram_cuc_bo = rf_info["hops"]
+                    agent.do_tre_ve_tram_cuc_bo_ms = rf_info["delay_ms"]
+
+            if self._main_loop and self._main_loop.is_running():
+                async def _process_client_fire():
+                    res = await self.kich_hoat_su_co_khan_cap("CHÁY_RỪNG", f_lat, f_lon)
+                    ma_phien = res.get("ma_phien") or f"FIRE_{uav_id}"
+                    if isinstance(agent, UAVAgent):
+                        if hasattr(self.broker, "khoa_muc_tieu_chay"):
+                            self.broker.khoa_muc_tieu_chay(f_lat, f_lon, uav_id)
+                        if hasattr(agent, "_tam_khoanh_vung_chay") and isinstance(agent._tam_khoanh_vung_chay, dict):
+                            agent._tam_khoanh_vung_chay["ma_phien"] = ma_phien
+                        if self.ground_station_server and hasattr(self.ground_station_server, "ghi_nhan_khoa_muc_tieu"):
+                            await self.ground_station_server.ghi_nhan_khoa_muc_tieu(
+                                f_lat,
+                                f_lon,
+                                uav_id,
+                                float(agent.phan_tram_pin),
+                                zone_id=zone_id,
+                                la_p2p=False,
+                                uav_phat_hien_goc=uav_id,
+                            )
+                        await self.broker.gui_goi_tin_da_chang_ve_tram(
+                            ma_nguon=uav_id,
+                            thong_diep={
+                                "loai_tin": "FIRE_DETECTION_REPORT",
+                                "ma_su_co": ma_phien,
+                                "ma_phien_su_co": ma_phien,
+                                "uav_phat_hien": uav_id,
+                                "loai_su_co": "CHÁY_RỪNG",
+                                "vi_do": f_lat,
+                                "kinh_do": f_lon,
+                                "thoi_diem_phat_hien": time.time(),
+                                "kich_thuoc_kb": 250.0,
+                            },
+                        )
+                        self.broker.cap_nhat_tuyen_e2e_dam_chay_lien_tuc()
+
+                asyncio.run_coroutine_threadsafe(_process_client_fire(), self._main_loop)
             else:
                 self.trigger_fire(f_lat, f_lon)
             self._schedule_web_log(
                 "ALERT",
-                f"[CLIENT_NET] 🔥 Client [{uav_id}] ({addr[0]}:{addr[1]}) gửi báo cháy TCP tại ({f_lat:.4f}, {f_lon:.4f})."
+                f"[CLIENT_NET] 🔥 Client [{uav_id}] ({addr[0]}:{addr[1]}) báo cháy tại ({f_lat:.4f}, {f_lon:.4f}) "
+                f"qua {rf_info['link']} ({rf_info['hop_count']} hops, {rf_info['delay_ms']:.2f} ms)."
             )
-            return {"ok": True, "cmd": "FIRE_ACK"}
+            return {
+                "ok": True,
+                "cmd": "FIRE_ACK",
+                "rf_link": rf_info["link"],
+                "rf_hops": rf_info["hops"],
+                "rf_hop_count": rf_info["hop_count"],
+                "rf_delay_ms": rf_info["delay_ms"],
+            }
 
         if cmd == "LEAVE":
             agent = self.broker.lay_tac_nhan(uav_id)
             if isinstance(agent, UAVAgent):
+                is_fleet = bool(getattr(agent, "_is_fleet_uav", "EXT" not in uav_id.upper()))
+                with self.broker.os_kernel.net_state_lock:
+                    agent.is_external_client = False
+                    agent.client_pid = None
+                    agent.client_addr = None
+                    if is_fleet:
+                        agent.zone_id = getattr(agent, "home_zone_id", None) or agent.zone_id
+                        if agent.pin_hien_tai <= 0.0:
+                            agent.toa_do["van_toc_m_s"] = 0.0
+                            agent.chuyen_trang_thai(AgentState.OFFLINE)
+                            agent.uav_state = UAVState.OFFLINE
+                        elif agent._dang_o_tai_tram() or self.physics.tinh_khoang_cach_3d(
+                            agent.toa_do,
+                            {"vi_do": st_lat, "kinh_do": st_lon, "do_cao": agent.toa_do.get("do_cao", 25.0)},
+                        ) <= 100.0:
+                            if agent.phan_tram_pin >= 100.0:
+                                agent.chuyen_trang_thai(AgentState.IDLE)
+                                agent.uav_state = UAVState.STANDBY
+                            else:
+                                agent.chuyen_trang_thai(AgentState.CHARGING)
+                                agent.uav_state = UAVState.CHARGING
+                        elif agent.uav_state == UAVState.STANDBY or agent.trang_thai == AgentState.OFFLINE:
+                            agent.chuyen_trang_thai(AgentState.PATROLLING)
+                            agent.uav_state = UAVState.PATROLLING
+                            agent.toa_do["van_toc_m_s"] = 40.0
+                        agent.evaluate_communication_link()
+                    else:
+                        agent.toa_do["van_toc_m_s"] = 0.0
+                        agent.chuyen_trang_thai(AgentState.OFFLINE)
+                        agent.uav_state = UAVState.OFFLINE
+                if is_fleet:
+                    self._schedule_web_log(
+                        "INFO",
+                        f"[CLIENT_NET] 👋 Client [{uav_id}] rời mạng lịch sự (LEAVE) ➔ Bàn giao lại quyền bay tự động cho Server."
+                    )
+                else:
+                    self._schedule_web_log(
+                        "WARN",
+                        f"[CLIENT_NET] 👋 Client [{uav_id}] rời mạng lịch sự (LEAVE) ➔ OFFLINE."
+                    )
+            return {"ok": True, "cmd": "LEAVE_ACK"}
+
+        return {"ok": False, "error": f"Unknown cmd: {cmd}"}
+
+    def _handle_external_udp_telemetry(self, pkt, payload: dict, addr: tuple[str, int]) -> str:
+        uav_id = self._normalize_ext_uav_id(payload.get("uav_id"))
+        agent = self.broker.lay_tac_nhan(uav_id)
+        if not isinstance(agent, UAVAgent):
+            return "EXT_UDP_UNKNOWN"
+
+        req_state = str(payload.get("state", "")).upper()
+        if req_state == "OFFLINE":
+            with self.broker.os_kernel.net_state_lock:
+                agent.toa_do["van_toc_m_s"] = 0.0
+                agent.pin_hien_tai = 0.0
+                agent._tam_khoanh_vung_chay = None
+                agent.chuyen_trang_thai(AgentState.OFFLINE)
+                agent.uav_state = UAVState.OFFLINE
+                agent.last_external_heartbeat = time.time()
+            return "EXT_UDP_OFFLINE"
+
+        new_lat = float(payload["lat"]) if payload.get("lat") is not None else float(agent.lat)
+        new_lon = float(payload["lon"]) if payload.get("lon") is not None else float(agent.lon)
+        new_alt = float(payload["alt"]) if payload.get("alt") is not None else float(agent.toa_do.get("do_cao", 1050.0))
+
+        with self.broker.os_kernel.net_state_lock:
+            rf_info = self._evaluate_client_rf_gateway(
+                agent,
+                protocol="UDP",
+                kich_thuoc_kb=2.0,
+                probe_pos=(new_lat, new_lon, new_alt),
+            )
+            if not rf_info["ok"]:
+                if rf_info["reason"] == "RF_OUT_OF_RANGE_DROP":
+                    agent.current_link = "OUT_OF_RANGE"
+                    now_ts = time.time()
+                    prev_link = getattr(agent, "_last_pushed_rf_link", None)
+                    last_oor = float(getattr(agent, "_last_oor_push_ts", 0.0))
+                    if prev_link != "OUT_OF_RANGE" or (now_ts - last_oor) >= 5.0:
+                        agent._last_pushed_rf_link = "OUT_OF_RANGE"
+                        agent._last_oor_push_ts = now_ts
+                        self.broker.network_stack.send_command_to_external_client(
+                            agent.ma_dinh_danh,
+                            "RF_STATUS",
+                            {"link": "OUT_OF_RANGE", "hops": [], "hop_count": 0, "delay_ms": 9999.0, "per": 1.0},
+                        )
+                return str(rf_info["reason"])
+
+            agent.lat = new_lat
+            agent.lon = new_lon
+            agent.toa_do["do_cao"] = new_alt
+            if payload.get("speed") is not None:
+                agent.toa_do["van_toc_m_s"] = float(payload["speed"])
+            if payload.get("battery") is not None:
+                bat_pct = min(100.0, max(0.0, float(payload["battery"])))
+                agent.pin_hien_tai = agent.pin_toi_da * bat_pct / 100.0
+
+            if req_state == "RETURNING":
+                agent._tam_khoanh_vung_chay = None
+                agent.chuyen_trang_thai(AgentState.RETURNING)
+                agent.uav_state = UAVState.RETURNING
+            elif req_state == "CHARGING":
+                agent._tam_khoanh_vung_chay = None
+                agent.chuyen_trang_thai(AgentState.CHARGING)
+                agent.uav_state = UAVState.CHARGING
+            elif req_state == "STANDBY":
+                agent._tam_khoanh_vung_chay = None
+                agent.chuyen_trang_thai(AgentState.IDLE)
+                agent.uav_state = UAVState.STANDBY
+            elif req_state in ("PATROLLING", "TRANSITING"):
+                agent._tam_khoanh_vung_chay = None
+                agent.chuyen_trang_thai(AgentState.PATROLLING)
+                agent.uav_state = UAVState.PATROLLING
+            elif req_state == "RESPONDING":
+                agent._tam_khoanh_vung_chay = None
+                agent.chuyen_trang_thai(AgentState.RESPONDING)
+                agent.uav_state = UAVState.RESPONDING
+            elif req_state == "CONTAINING":
+                f_lat = payload.get("fire_lat")
+                f_lon = payload.get("fire_lon")
+                if f_lat is not None and f_lon is not None:
+                    cur_tam = getattr(agent, "_tam_khoanh_vung_chay", None)
+                    ma_phien = (cur_tam or {}).get("ma_phien") or f"FIRE_{agent.ma_dinh_danh}"
+                    agent._tam_khoanh_vung_chay = {
+                        "vi_do": float(f_lat),
+                        "kinh_do": float(f_lon),
+                        "ma_phien": ma_phien,
+                    }
+                agent.chuyen_trang_thai(AgentState.PATROLLING)
+                agent.uav_state = UAVState.CONTAINING
+
+            agent.current_link = rf_info["link"]
+            agent.in_comm_range = (rf_info["link"] == "GROUND_LINK")
+            agent.direct_los = agent.in_comm_range
+            agent.relay_required = not agent.in_comm_range
+            agent.relay_target_id = rf_info["hops"][1] if len(rf_info["hops"]) >= 2 and rf_info["link"] != "GROUND_LINK" else None
+            agent.tuyen_ve_tram_cuc_bo = rf_info["hops"]
+            agent.do_tre_ve_tram_cuc_bo_ms = rf_info["delay_ms"]
+            agent.last_external_heartbeat = time.time()
+
+            pkt_cnt = int(getattr(agent, "_rf_udp_cnt", 0)) + 1
+            agent._rf_udp_cnt = pkt_cnt
+            prev_link = getattr(agent, "_last_pushed_rf_link", None)
+            if prev_link != rf_info["link"] or pkt_cnt % 6 == 0:
+                agent._last_pushed_rf_link = rf_info["link"]
+                self.broker.network_stack.send_command_to_external_client(
+                    agent.ma_dinh_danh,
+                    "RF_STATUS",
+                    {
+                        "link": rf_info["link"],
+                        "hops": rf_info["hops"],
+                        "hop_count": rf_info["hop_count"],
+                        "delay_ms": rf_info["delay_ms"],
+                        "per": rf_info["per"],
+                    },
+                )
+            return str(rf_info["reason"])
+
+    def _handle_external_disconnect(self, uav_id: str, addr: tuple[str, int]):
+        norm_id = self._normalize_ext_uav_id(uav_id)
+        agent = self.broker.lay_tac_nhan(norm_id)
+        if isinstance(agent, UAVAgent):
+            is_fleet = bool(getattr(agent, "_is_fleet_uav", "EXT" not in norm_id.upper()))
+            with self.broker.os_kernel.net_state_lock:
+                agent.is_external_client = False
+                agent.client_pid = None
+                agent.client_addr = None
+                agent._tam_khoanh_vung_chay = None
                 agent.toa_do["van_toc_m_s"] = 0.0
                 agent.chuyen_trang_thai(AgentState.OFFLINE)
                 agent.uav_state = UAVState.OFFLINE
             self._schedule_web_log(
                 "WARN",
-                f"[CLIENT_NET] 👋 Client [{uav_id}] rời mạng lịch sự (LEAVE) ➔ OFFLINE."
+                f"[CLIENT_NET] 🔌 Client [{norm_id}] ({addr[0]}:{addr[1]}) mất kết nối TCP đột ngột ➔ OFFLINE."
             )
-            return {"ok": True, "cmd": "LEAVE_ACK"}
-
-        return {"ok": False, "error": f"Unknown cmd: {cmd}"}
-
-    def _handle_external_udp_telemetry(self, pkt, payload: dict, addr: tuple[str, int]):
-        uav_id = self._normalize_ext_uav_id(payload.get("uav_id"))
-        agent = self.broker.lay_tac_nhan(uav_id)
-        if not isinstance(agent, UAVAgent):
-            return
-        if payload.get("lat") is not None:
-            agent.lat = float(payload["lat"])
-        if payload.get("lon") is not None:
-            agent.lon = float(payload["lon"])
-        if payload.get("alt") is not None:
-            agent.toa_do["do_cao"] = float(payload["alt"])
-        if payload.get("speed") is not None:
-            agent.toa_do["van_toc_m_s"] = float(payload["speed"])
-        if payload.get("battery") is not None:
-            bat_pct = min(100.0, max(0.0, float(payload["battery"])))
-            agent.pin_hien_tai = agent.pin_toi_da * bat_pct / 100.0
-
-        req_state = str(payload.get("state", "")).upper()
-        if req_state == "RETURNING":
-            agent.chuyen_trang_thai(AgentState.RETURNING)
-            agent.uav_state = UAVState.RETURNING
-        elif req_state == "CHARGING":
-            agent.chuyen_trang_thai(AgentState.CHARGING)
-            agent.uav_state = UAVState.CHARGING
-        elif req_state == "PATROLLING":
-            agent.chuyen_trang_thai(AgentState.PATROLLING)
-            agent.uav_state = UAVState.PATROLLING
-        elif req_state == "RESPONDING":
-            agent.chuyen_trang_thai(AgentState.RESPONDING)
-            agent.uav_state = UAVState.RESPONDING
-        agent.last_external_heartbeat = time.time()
-
-    def _handle_external_disconnect(self, uav_id: str, addr: tuple[str, int]):
-        norm_id = self._normalize_ext_uav_id(uav_id)
-        agent = self.broker.lay_tac_nhan(norm_id)
-        if isinstance(agent, UAVAgent) and agent.trang_thai != AgentState.OFFLINE:
-            agent.toa_do["van_toc_m_s"] = 0.0
-            agent.chuyen_trang_thai(AgentState.OFFLINE)
-            agent.uav_state = UAVState.OFFLINE
-            self._schedule_web_log(
-                "WARN",
-                f"[CLIENT_NET] 🔌 Client ngoài [{norm_id}] ({addr[0]}:{addr[1]}) mất kết nối TCP ➔ OFFLINE."
-            )
+            if is_fleet and self._main_loop and self._main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(agent._goi_uav_du_bi_thay_ca(), self._main_loop)
 
     def khoi_tao_kich_ban(self):
         """Đọc dữ liệu từ ScenarioManager và khởi tạo toàn bộ các thực thể mạng"""
@@ -280,10 +614,11 @@ class SimulationLoop:
             if loai == "TRẠM_MẶT_ĐẤT":
                 GroundStationAgent(**node_cfg, bo_dinh_tuyen=self.broker)
             elif loai == "MÁY_BAY":
-                UAVAgent(
+                uav_ag = UAVAgent(
                     **node_cfg,
                     bo_dinh_tuyen=self.broker
                 )
+                uav_ag._is_fleet_uav = True
 
         # Khởi tạo trạng thái liên kết ban đầu cho tất cả Vệ tinh và UAV
         for agent in self.broker.danh_sach_tac_nhan.values():
@@ -316,7 +651,11 @@ class SimulationLoop:
         print(f"[WEB-UI] Truy cập qua LAN: http://{lan_ip}:8000/ | http://{lan_ip}:8000/dashboard")
         print(f"[CLIENT-SERVER] TCP Server: 0.0.0.0:{t_port} | UDP Server: 0.0.0.0:{u_port} (Mode: {self.broker.network_stack.socket_mode})")
         if t_port > 0:
-            print(f"[CLIENT-SERVER] Lệnh kết nối Client ngoài: python uav_client.py --host {lan_ip} --tcp-port {t_port} --udp-port {u_port} --id UAV_EXT_01 --zone ZONE_03")
+            print(
+                f"[CLIENT-SERVER] Tiếp quản UAV đội hình: python uav_client.py --host {lan_ip} "
+                f"--tcp-port {t_port} --udp-port {u_port} --id UAV_09 "
+                f"(hoặc --id UAV_25 để thử nghiệm FANET/LEO từ ZONE_07)"
+            )
 
         with self.broker.os_kernel.net_state_lock:
             tac_nhan_init = list(self.broker.danh_sach_tac_nhan.values())
@@ -348,6 +687,11 @@ class SimulationLoop:
             self.time_scale = time_scale
         if tam_dung is not None:
             self.tam_dung = tam_dung
+
+        self.broker.network_stack.broadcast_command_to_external_clients(
+            "SET_CLOCK",
+            {"paused": bool(self.tam_dung), "time_scale": float(self.time_scale)},
+        )
 
         trang_thai = (
             "TẠM DỪNG"
@@ -548,7 +892,7 @@ class SimulationLoop:
                 )
 
     async def _lap_lich_ban_giao_vung(self, cac_uav: list):
-        """Đảm bảo mỗi phân khu Z1..Z7 luôn duy trì đủ 4 UAV hoạt động bằng cách đánh thức UAV STANDBY khi thiếu quân."""
+        """Cách C: Khóa cứng 5 UAV/phân khu — chỉ điều động UAV STANDBY thuộc đúng tổ `home_zone_id` của vùng đó."""
         active_air_states = ("PATROLLING", "RELAYING", "CONTAINING", "RESPONDING")
         standby_pool = [
             u for u in cac_uav
@@ -567,21 +911,32 @@ class SimulationLoop:
                 and not u._dang_o_tai_tram()
                 and getattr(getattr(u, "uav_state", None), "value", getattr(u, "uav_state", None)) in active_air_states
             ]
-            while len(uavs_active_in_zone) < 4 and standby_pool:
-                standby_pool.sort(
-                    key=lambda u: (0 if getattr(u, "zone_id", None) == zone_id else 1, u.ma_dinh_danh)
-                )
-                u_reserve = standby_pool.pop(0)
+            zone_standby = [
+                u for u in standby_pool
+                if (getattr(u, "home_zone_id", None) or getattr(u, "zone_id", None)) == zone_id
+            ]
+            zone_standby.sort(key=lambda u: u.ma_dinh_danh)
+            while len(uavs_active_in_zone) < 4 and zone_standby:
+                u_reserve = zone_standby.pop(0)
+                standby_pool.remove(u_reserve)
                 u_reserve.zone_id = zone_id
                 u_reserve.toa_do["do_cao"] = 1000.0
                 u_reserve.toa_do["van_toc_m_s"] = 45.0
                 u_reserve.toa_do_tram_sac = None
                 u_reserve.toa_do_muc_tieu = None
+                if hasattr(u_reserve, "dat_muc_tieu_bay_ve_vung"):
+                    u_reserve.dat_muc_tieu_bay_ve_vung()
                 u_reserve._yeu_cau_ban_giao_da_phat = False
                 u_reserve._da_goi_du_bi_thay_ca = False
                 u_reserve._waiting_for_relief_id = None
                 u_reserve._da_ban_giao_tai_cho = False
                 u_reserve.chuyen_trang_thai(AgentState.PATROLLING)
+                if getattr(u_reserve, "is_external_client", False):
+                    self.broker.network_stack.send_command_to_external_client(
+                        u_reserve.ma_dinh_danh,
+                        "RESUME_PATROL",
+                        {"zone_id": zone_id, "zone_center": list(self._get_zone_center(zone_id))},
+                    )
                 uavs_active_in_zone.append(u_reserve)
                 await self.broker.gui_log_ra_web(
                     "INFO",
@@ -654,7 +1009,7 @@ class SimulationLoop:
             bao_cao = {
                 "loai_tin": "FIRE_DETECTION_REPORT",
                 "ma_su_co": ma_phien,
-                "ma_phien_dau_gia": ma_phien,
+                "ma_phien_su_co": ma_phien,
                 "uav_phat_hien": uav.ma_dinh_danh,
                 "loai_su_co": loai_su_co,
                 "vi_do": vi_do,

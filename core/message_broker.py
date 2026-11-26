@@ -885,7 +885,7 @@ class MessageBroker:
         tong_nang_luong = round(sum(float(channel.get("energy_j", 0.0)) for channel in channels), 3)
         proto_e2e = self.network_stack.determine_protocol(loai_tin)
         ket_qua_e2e = {
-            "ma_phien": thong_diep.get("ma_phien_dau_gia", "TELEM"),
+            "ma_phien": thong_diep.get("ma_phien_su_co", "TELEM"),
             "uav_id": ma_nguon,
             "loai_su_co": loai_tin,
             "protocol": proto_e2e,

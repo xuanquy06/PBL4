@@ -885,7 +885,7 @@
             bar.innerHTML = `
                 <span class="sock-pill" style="border-color:rgba(59,130,246,0.45);color:#93c5fd;">${tcpTxt} (Real RX:${tm.real_tcp_rx || 0} TX:${tm.real_tcp_tx || 0})</span>
                 <span class="sock-pill" style="border-color:rgba(168,85,247,0.45);color:#c4b5fd;">${udpTxt} (Real RX:${tm.real_udp_rx || 0})</span>
-                <span class="sock-pill" style="border-color:rgba(16,185,129,0.45);color:#6ee7b7;">Clients ngoài: ${extCount} · SimWire: ${simWire}</span>
+                <span class="sock-pill" style="border-color:rgba(16,185,129,0.45);color:#6ee7b7;">Clients ngoài: ${extCount} · SimWire: ${simWire} · RF Drop: ${tm.rf_gateway_drops || 0}</span>
                 <span class="sock-pill" style="color:var(--accent-green);">${tm.socket_mode || 'REAL_OS_SOCKET'} · ${totalKb} KB</span>
             `;
 

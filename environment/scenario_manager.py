@@ -8,6 +8,17 @@ from datetime import datetime
 from typing import Any, Optional
 from skyfield.api import load
 
+# Dung lượng pin phân cấp theo cự ly phân khu so với Trạm Kiểm Lâm (cách C + ngưỡng 25% + 45 m/s)
+ZONE_BATTERY_CAPACITY_J: dict[str, float] = {
+    "ZONE_01": 50000.0,
+    "ZONE_02": 50000.0,
+    "ZONE_03": 50000.0,
+    "ZONE_04": 50000.0,
+    "ZONE_05": 70000.0,
+    "ZONE_06": 90000.0,
+    "ZONE_07": 110000.0,
+}
+
 
 @dataclass
 class HeatNode:
@@ -728,24 +739,42 @@ class ScenarioManager:
         if self._kich_ban_can_tai_sinh():
             self._sinh_du_lieu_csv_mac_dinh()
 
-        # 1. Đọc danh sách Node (Trạm mặt đất & UAV)
+        # 1. Đọc danh sách Node (Trạm mặt đất & UAV) và tự đồng bộ dung lượng pin theo phân khu
         danh_sach_nodes = []
+        raw_rows = []
+        csv_needs_sync = False
         with open(self.nodes_csv_path, mode="r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
+            fieldnames = list(reader.fieldnames or [])
             for row in reader:
+                zid = row.get("zone_id") or ""
+                pin_max = float(row["pin_max_joule"])
+                if row["loai_tac_nhan"] == "MÁY_BAY" and zid in ZONE_BATTERY_CAPACITY_J:
+                    target_pin = ZONE_BATTERY_CAPACITY_J[zid]
+                    if abs(pin_max - target_pin) > 1e-3:
+                        pin_max = target_pin
+                        row["pin_max_joule"] = str(target_pin)
+                        csv_needs_sync = True
+                raw_rows.append(row)
                 danh_sach_nodes.append({
                     "ma_dinh_danh": row["ma_dinh_danh"],
                     "loai_tac_nhan": row["loai_tac_nhan"],
                     "vi_do": float(row["vi_do"]),
                     "kinh_do": float(row["kinh_do"]),
                     "do_cao": float(row["do_cao"]),
-                    "pin_max_joule": float(row["pin_max_joule"]),
+                    "pin_max_joule": pin_max,
                     "pin_khoi_tao_pct": float(row.get("pin_khoi_tao_pct") or 100.0),
-                    **({"zone_id": row["zone_id"]} if row.get("zone_id") else {}),
+                    **({"zone_id": zid} if zid else {}),
                     "cong_suat_dbm": float(row["cong_suat_dbm"]),
                     "tan_so_hz": float(row["tan_so_hz"]),
                     "bang_thong_hz": float(row["bang_thong_hz"])
                 })
+
+        if csv_needs_sync and fieldnames:
+            with open(self.nodes_csv_path, mode="w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(raw_rows)
 
         # 2. Đọc danh sách Waypoints của từng UAV
         ban_do_waypoints = {}
@@ -1002,7 +1031,7 @@ class ScenarioManager:
                     "vi_do": round(init_lat, 5),
                     "kinh_do": round(init_lon, 5),
                     "do_cao": altitude,
-                    "pin_max_joule": 50000.0,
+                    "pin_max_joule": ZONE_BATTERY_CAPACITY_J.get(zid, 50000.0),
                     "pin_khoi_tao_pct": random.randint(*battery_ranges[sub_index]),
                     "zone_id": zid,
                     "cong_suat_dbm": 35.0,
@@ -1029,7 +1058,7 @@ class ScenarioManager:
                 "vi_do": 16.105,
                 "kinh_do": 108.250,
                 "do_cao": 25.0,
-                "pin_max_joule": 50000.0,
+                "pin_max_joule": ZONE_BATTERY_CAPACITY_J.get(zid, 50000.0),
                 "pin_khoi_tao_pct": 100,
                 "zone_id": zid,
                 "cong_suat_dbm": 35.0,
