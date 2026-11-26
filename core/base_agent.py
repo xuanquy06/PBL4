@@ -11,7 +11,7 @@ class AgentState(str, Enum):
     """Máy trạng thái hữu hạn (FSM) chuẩn hóa cho các tác nhân trong mạng SAGSINS"""
     IDLE = "NHÀN_RỖI"                 # Sẵn sàng chờ lệnh (Trạm mặt đất / Vệ tinh)
     PATROLLING = "ĐANG_TUẦN_TRA"      # Đang bay theo quỹ đạo quét sự cố (UAV)
-    BIDDING = "ĐANG_ĐẤU_GIÁ"          # Đang thương lượng giao thức Contract Net Protocol
+    RESPONDING = "ĐANG_PHẢN_ỨNG"      # Đang phản ứng tiếp cận sự cố cháy rừng
     RELAYING = "ĐANG_TRUYỀN_TẢI"      # Đang đóng vai trò trạm trung chuyển dữ liệu
     RETURNING = "ĐANG_QUAY_VỀ_SẠC"    # UAV quay về trạm để tránh cạn pin
     CHARGING = "ĐANG_SẠC"             # UAV nạp pin tại trạm mặt đất

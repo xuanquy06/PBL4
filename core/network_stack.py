@@ -1,9 +1,11 @@
 """
 Lõi Mạng máy tính (TCP/IP Transport & Packet Framing Stack) cho SAGSINS PBL4:
-1. Cấp phát IPv4 theo Subnet (Trạm, 7 phân khu UAV, UAV dự bị, Vệ tinh LEO).
-2. Đóng gói khung nhị phân chuẩn 26-byte Header + Checksum CRC32 + TTL + Seq/Ack.
-3. Truyền nhận qua Socket TCP (tin cậy, có ACK) và Socket UDP thật của HĐH trên 127.0.0.1.
-4. Bộ đệm vòng Packet Sniffer phục vụ quan sát trực tiếp cấu trúc gói tin trên Dashboard.
+1. Quy hoạch địa chỉ IPv4 logic theo Subnet (dải riêng RFC 1918: 10.0.x.y) cho các nút mô phỏng.
+2. Đóng gói khung nhị phân 26-byte Header + Checksum CRC32 (IEEE 802.3 / RFC 1952) + TTL + Seq/Ack.
+3. Mặt phẳng Socket OS thật (2-tier Client-Server): TCP Threaded Server (:9000, giao tiếp 2 chiều)
+   và UDP Datagram Server (:9001, kiểm tra CRC32) kết nối tiến trình `uav_client.py` qua LAN/Loopback.
+4. Mặt phẳng vô tuyến mô phỏng nội bộ (35 UAV + 3 LEO): đóng gói/kiểm chứng CRC32 in-process,
+   tách bạch hoàn toàn với lưu lượng Socket OS thật (không đẩy vòng self-loopback).
 """
 from __future__ import annotations
 
@@ -190,7 +192,12 @@ def _recv_exact(conn: socket.socket, n_bytes: int) -> Optional[bytes]:
     chunks = []
     received = 0
     while received < n_bytes:
-        chunk = conn.recv(n_bytes - received)
+        try:
+            chunk = conn.recv(n_bytes - received)
+        except socket.timeout:
+            if received == 0:
+                raise
+            continue
         if not chunk:
             return None
         chunks.append(chunk)
@@ -216,10 +223,11 @@ def detect_local_lan_ip() -> str:
 
 class RealSocketTransport:
     """
-    Lớp giao vận Multi-threaded TCP/UDP Socket Server + Client Wire cho SAGSINS:
-    - TCP Server (mặc định 0.0.0.0:9000): sinh 1 OS Thread riêng phục vụ từng Client kết nối.
-    - UDP Server (mặc định 0.0.0.0:9001): nhận datagram Telemetry không kết nối.
-    - Hỗ trợ đồng thời cả gói nội bộ 35 UAV mô phỏng lẫn tiến trình `uav_client.py` độc lập ngoài mạng LAN.
+    Lớp giao vận Multi-threaded TCP/UDP Socket Server (2-tier Client-Server) cho SAGSINS:
+    - TCP Server (mặc định 0.0.0.0:9000): sinh 1 OS Thread riêng phục vụ từng Client kết nối,
+      hỗ trợ giao tiếp hai chiều (nhận lệnh từ Client và chủ động đẩy `SERVER_CMD` xuống Client).
+    - UDP Server (mặc định 0.0.0.0:9001): nhận datagram Telemetry không kết nối và kiểm tra CRC32.
+    - Tách bạch rõ lưu lượng Socket OS thật (`real_*`) với kênh vô tuyến mô phỏng nội bộ (`sim_wireless_*`).
     """
 
     def __init__(
@@ -231,8 +239,6 @@ class RealSocketTransport:
     ):
         self._os_kernel = os_kernel
         self._lock = os_kernel.net_state_lock if os_kernel is not None else threading.RLock()
-        self._tcp_client_lock = threading.Lock()
-        self._udp_client_lock = threading.Lock()
 
         self.bind_host = bind_host
         self.preferred_tcp_port = int(preferred_tcp_port)
@@ -247,11 +253,10 @@ class RealSocketTransport:
         self.on_external_udp_telemetry: Optional[Callable[..., Any]] = None
         self.on_external_disconnect: Optional[Callable[..., Any]] = None
         self.external_clients: dict[str, dict[str, Any]] = {}
+        self._external_client_conns: dict[str, tuple[socket.socket, threading.Lock]] = {}
 
         self._tcp_server_sock: Optional[socket.socket] = None
         self._udp_server_sock: Optional[socket.socket] = None
-        self._tcp_client_sock: Optional[socket.socket] = None
-        self._udp_client_sock: Optional[socket.socket] = None
         self._tcp_thread: Optional[threading.Thread] = None
         self._udp_thread: Optional[threading.Thread] = None
 
@@ -270,6 +275,14 @@ class RealSocketTransport:
         self.ttl_drops = 0
         self.tcp_bytes = 0
         self.udp_bytes = 0
+
+        self.real_tcp_rx = 0
+        self.real_tcp_tx = 0
+        self.real_udp_rx = 0
+        self.real_udp_crc_errors = 0
+        self.sim_wireless_sent = 0
+        self.sim_wireless_acked = 0
+        self.sim_wireless_retrans = 0
 
     @staticmethod
     def determine_protocol(loai_tin: Optional[str]) -> str:
@@ -305,7 +318,6 @@ class RealSocketTransport:
             self._udp_server_sock = udp_srv
             self.tcp_port = int(tcp_srv.getsockname()[1])
             self.udp_port = int(udp_srv.getsockname()[1])
-            self._udp_client_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
             self.running = True
             self.socket_mode = "REAL_OS_SOCKET"
@@ -330,8 +342,15 @@ class RealSocketTransport:
     def stop(self):
         self.running = False
         with self._lock:
+            conns = [c for c, _ in self._external_client_conns.values()]
+            self._external_client_conns.clear()
             self.external_clients.clear()
-        for sock_attr in ("_tcp_client_sock", "_udp_client_sock", "_tcp_server_sock", "_udp_server_sock"):
+        for c in conns:
+            try:
+                c.close()
+            except OSError:
+                pass
+        for sock_attr in ("_tcp_server_sock", "_udp_server_sock"):
             sock_obj = getattr(self, sock_attr, None)
             if sock_obj is not None:
                 try:
@@ -369,6 +388,7 @@ class RealSocketTransport:
     def _handle_tcp_client(self, conn: socket.socket, addr: tuple[str, int]):
         conn.settimeout(0.5)
         bound_uav_id: Optional[str] = None
+        send_lock = threading.Lock()
         try:
             while self.running:
                 try:
@@ -389,6 +409,8 @@ class RealSocketTransport:
                 pkt, crc_ok, _ = NetworkPacket.decode_and_verify(frame)
                 with self._lock:
                     self.tcp_rx_packets += 1
+                    self.real_tcp_rx += 1
+                    self.tcp_bytes += len(frame)
 
                 ack_payload = b""
                 should_close = False
@@ -414,6 +436,7 @@ class RealSocketTransport:
                                     "connected_at": time.strftime("%H:%M:%S"),
                                     "thread_name": threading.current_thread().name,
                                 }
+                                self._external_client_conns[uav_id] = (conn, send_lock)
                         reply_dict: dict[str, Any] = {"ok": True, "cmd": f"{cmd}_ACK"}
                         if self.on_external_tcp_cmd is not None:
                             try:
@@ -430,6 +453,9 @@ class RealSocketTransport:
                         ack_payload = json.dumps(reply_dict, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                         if cmd == "LEAVE":
                             should_close = True
+                elif not crc_ok:
+                    with self._lock:
+                        self.crc_errors += 1
 
                 ack_num = pkt.seq_num if (pkt is not None and crc_ok) else 0
                 ack_pkt = NetworkPacket(
@@ -444,7 +470,11 @@ class RealSocketTransport:
                     payload=ack_payload,
                 )
                 ack_wire = ack_pkt.encode()
-                conn.sendall(struct.pack("!I", len(ack_wire)) + ack_wire)
+                with send_lock:
+                    conn.sendall(struct.pack("!I", len(ack_wire)) + ack_wire)
+                with self._lock:
+                    self.real_tcp_tx += 1
+                    self.tcp_bytes += len(ack_wire)
                 if should_close:
                     break
         except OSError:
@@ -459,11 +489,71 @@ class RealSocketTransport:
                     if self._os_kernel is not None:
                         self._os_kernel.record_mutex_acquire()
                     self.external_clients.pop(bound_uav_id, None)
+                    self._external_client_conns.pop(bound_uav_id, None)
                 if self.on_external_disconnect is not None:
                     try:
                         self.on_external_disconnect(bound_uav_id, addr)
                     except Exception:
                         pass
+
+    def send_command_to_external_client(
+        self,
+        uav_id: str,
+        action: str,
+        params: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        """Chủ động đẩy lệnh điều khiển bất đồng bộ từ Server xuống tiến trình Client TCP (giao tiếp 2 chiều)."""
+        with self._lock:
+            if self._os_kernel is not None:
+                self._os_kernel.record_mutex_acquire()
+            entry = self._external_client_conns.get(uav_id)
+            meta = self.external_clients.get(uav_id)
+            dst_ip = str(meta.get("ip", "10.0.10.1")) if meta else "10.0.10.1"
+        if entry is None:
+            return False
+        conn, send_lock = entry
+        act = str(action).upper()
+        body: dict[str, Any] = {"cmd": "SERVER_CMD", "action": act}
+        if params:
+            body.update(params)
+        payload_bytes = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        pkt = NetworkPacket(
+            src_ip="10.0.0.1",
+            dst_ip=dst_ip,
+            protocol="TCP",
+            priority=0,
+            seq_num=self.next_seq(),
+            ack_num=0,
+            ttl=16,
+            flags=FLAG_DATA,
+            payload=payload_bytes,
+        )
+        raw = pkt.encode()
+        try:
+            with send_lock:
+                conn.sendall(struct.pack("!I", len(raw)) + raw)
+        except OSError:
+            return False
+        with self._lock:
+            self.tcp_sent += 1
+            self.real_tcp_tx += 1
+            self.tcp_bytes += len(raw)
+        self.record_sniffer(pkt, f"PUSH_{act}", "TRẠM_KIỂM_LÂM_SƠN_TRÀ", uav_id, "SERVER_PUSH")
+        return True
+
+    def broadcast_command_to_external_clients(
+        self,
+        action: str,
+        params: Optional[dict[str, Any]] = None,
+    ) -> int:
+        """Gửi lệnh điều khiển từ Server tới toàn bộ tiến trình Client đang kết nối."""
+        with self._lock:
+            client_ids = list(self._external_client_conns.keys())
+        sent = 0
+        for cid in client_ids:
+            if self.send_command_to_external_client(cid, action, params):
+                sent += 1
+        return sent
 
     def _udp_server_loop(self):
         srv = self._udp_server_sock
@@ -481,7 +571,30 @@ class RealSocketTransport:
             pkt, crc_ok, _ = NetworkPacket.decode_and_verify(data)
             with self._lock:
                 self.udp_rx_packets += 1
-            if pkt is not None and crc_ok and pkt.payload:
+                self.real_udp_rx += 1
+                self.udp_bytes += len(data)
+            if pkt is None or not crc_ok:
+                with self._lock:
+                    self.crc_errors += 1
+                    self.real_udp_crc_errors += 1
+                err_pkt = pkt or NetworkPacket(
+                    src_ip=addr[0] if addr else "0.0.0.0",
+                    dst_ip="10.0.0.1",
+                    protocol="UDP",
+                    priority=1,
+                    seq_num=0,
+                    ttl=0,
+                    payload=data[:64],
+                )
+                self.record_sniffer(
+                    err_pkt,
+                    "EXT_UDP",
+                    f"EXT_{addr[0]}:{addr[1]}",
+                    "TRẠM_KIỂM_LÂM_SƠN_TRÀ",
+                    "EXT_UDP_CRC_ERR",
+                )
+                continue
+            if pkt.payload:
                 try:
                     payload_obj = json.loads(pkt.payload.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError):
@@ -494,19 +607,10 @@ class RealSocketTransport:
                         except Exception:
                             pass
                     with self._lock:
-                        self.udp_bytes += len(data)
                         self._ext_udp_sniff_counter += 1
                         sample_sniff = (self._ext_udp_sniff_counter % 4 == 1)
                     if sample_sniff:
                         self.record_sniffer(pkt, "EXT_TELEM", uav_id, "TRẠM_KIỂM_LÂM_SƠN_TRÀ", "EXT_UDP_OK")
-
-    def _ensure_tcp_client(self) -> socket.socket:
-        if self._tcp_client_sock is None:
-            cli = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            cli.settimeout(2.0)
-            cli.connect(("127.0.0.1", self.tcp_port))
-            self._tcp_client_sock = cli
-        return self._tcp_client_sock
 
     def send_over_wire(
         self,
@@ -514,7 +618,8 @@ class RealSocketTransport:
         inject_bit_error: bool = False
     ) -> tuple[bool, bool, Optional[int]]:
         """
-        Đóng gói nhị phân + truyền qua Socket OS thật (hoặc wire verifier khi server chưa chạy).
+        Mô phỏng đóng gói khung nhị phân + kiểm chứng lỗi bit CRC32 trên kênh vô tuyến nội bộ (in-process).
+        KHÔNG đẩy vòng qua Socket loopback của cùng tiến trình để tránh trộn lẫn với lưu lượng Socket OS thật.
         Trả về `(delivered_ok, crc_ok, ack_num)`.
         """
         raw = packet.encode()
@@ -524,73 +629,27 @@ class RealSocketTransport:
         if packet.protocol == "TCP":
             with self._lock:
                 self.tcp_sent += 1
+                self.sim_wireless_sent += 1
                 self.tcp_bytes += wire_len
                 if packet.flags & FLAG_RETRANS:
                     self.tcp_retransmissions += 1
+                    self.sim_wireless_retrans += 1
 
-            if self.running and self.tcp_port > 0 and self.socket_mode == "REAL_OS_SOCKET":
-                try:
-                    with self._tcp_client_lock:
-                        for attempt in range(2):
-                            try:
-                                cli = self._ensure_tcp_client()
-                                cli.sendall(struct.pack("!I", wire_len) + wire_bytes)
-                                ack_len_hdr = _recv_exact(cli, 4)
-                                if not ack_len_hdr:
-                                    raise OSError("TCP connection closed by peer")
-                                ack_len = struct.unpack("!I", ack_len_hdr)[0]
-                                ack_raw = _recv_exact(cli, ack_len)
-                                if not ack_raw:
-                                    raise OSError("Incomplete ACK frame")
-                                ack_pkt, ack_crc_ok, _ = NetworkPacket.decode_and_verify(ack_raw)
-                                valid_ack = (
-                                    ack_pkt is not None
-                                    and ack_crc_ok
-                                    and bool(ack_pkt.flags & FLAG_ACK)
-                                    and ack_pkt.ack_num == packet.seq_num
-                                )
-                                if valid_ack:
-                                    with self._lock:
-                                        self.tcp_acked += 1
-                                    return True, True, ack_pkt.ack_num
-                                with self._lock:
-                                    self.crc_errors += 1
-                                return False, False, None
-                            except OSError:
-                                if self._tcp_client_sock is not None:
-                                    try:
-                                        self._tcp_client_sock.close()
-                                    except OSError:
-                                        pass
-                                    self._tcp_client_sock = None
-                                if attempt == 1:
-                                    raise
-                except OSError:
-                    with self._lock:
-                        self.socket_mode = "IN_PROCESS_WIRE"
-
-            # Fallback in-process verification khi không ở chế độ server loop hoặc sandbox chặn loopback
             pkt_chk, crc_ok, _ = NetworkPacket.decode_and_verify(wire_bytes)
             if crc_ok and pkt_chk is not None:
                 with self._lock:
                     self.tcp_acked += 1
+                    self.sim_wireless_acked += 1
                 return True, True, pkt_chk.seq_num
             with self._lock:
                 self.crc_errors += 1
             return False, False, None
 
-        # Giao thức UDP: gửi 1 lần, không ACK, tự hủy nếu CRC lỗi
+        # Kênh datagram không tin cậy (UDP mô phỏng): gửi 1 lần, hủy ngay nếu lỗi CRC32
         with self._lock:
             self.udp_sent += 1
+            self.sim_wireless_sent += 1
             self.udp_bytes += wire_len
-
-        if self.running and self.udp_port > 0 and self._udp_client_sock is not None and self.socket_mode == "REAL_OS_SOCKET":
-            try:
-                with self._udp_client_lock:
-                    self._udp_client_sock.sendto(wire_bytes, ("127.0.0.1", self.udp_port))
-            except OSError:
-                with self._lock:
-                    self.socket_mode = "IN_PROCESS_WIRE"
 
         _, crc_ok, _ = NetworkPacket.decode_and_verify(wire_bytes)
         if crc_ok:
@@ -653,6 +712,13 @@ class RealSocketTransport:
                 "ttl_drops": self.ttl_drops,
                 "tcp_bytes": self.tcp_bytes,
                 "udp_bytes": self.udp_bytes,
+                "real_tcp_rx": self.real_tcp_rx,
+                "real_tcp_tx": self.real_tcp_tx,
+                "real_udp_rx": self.real_udp_rx,
+                "real_udp_crc_errors": self.real_udp_crc_errors,
+                "sim_wireless_sent": self.sim_wireless_sent,
+                "sim_wireless_acked": self.sim_wireless_acked,
+                "sim_wireless_retrans": self.sim_wireless_retrans,
                 "external_clients_count": len(self.external_clients),
                 "external_clients": list(self.external_clients.values()),
                 "sniffer": list(self.packet_sniffer),

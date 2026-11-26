@@ -38,7 +38,6 @@ class SimulationLoop:
         self.ground_station_server: Any = GroundStationServer(self.broker)
         setattr(self.broker, "ground_station_server", self.ground_station_server)
         setattr(self.broker, "simulation_loop", self)
-        self._active_fire_missions: Dict[str, dict] = {}
         self._main_loop: Optional[asyncio.AbstractEventLoop] = None
         self.broker.network_stack.on_external_tcp_cmd = self._handle_external_tcp_cmd
         self.broker.network_stack.on_external_udp_telemetry = self._handle_external_udp_telemetry
@@ -238,6 +237,9 @@ class SimulationLoop:
         elif req_state == "PATROLLING":
             agent.chuyen_trang_thai(AgentState.PATROLLING)
             agent.uav_state = UAVState.PATROLLING
+        elif req_state == "RESPONDING":
+            agent.chuyen_trang_thai(AgentState.RESPONDING)
+            agent.uav_state = UAVState.RESPONDING
         agent.last_external_heartbeat = time.time()
 
     def _handle_external_disconnect(self, uav_id: str, addr: tuple[str, int]):
@@ -367,6 +369,17 @@ class SimulationLoop:
             raise ValueError(f"Không tìm thấy UAV {ma_uav}")
 
         await agent.dat_pin_gia_lap(phan_tram_pin)
+        if getattr(agent, "is_external_client", False):
+            pushed = self.broker.network_stack.send_command_to_external_client(
+                agent.ma_dinh_danh,
+                "SET_BATTERY",
+                {"battery": float(phan_tram_pin)},
+            )
+            if pushed:
+                await self.broker.gui_log_ra_web(
+                    "INFO",
+                    f"[CLIENT_NET] Đã đẩy lệnh TCP SET_BATTERY={float(phan_tram_pin):.1f}% xuống Client [{agent.ma_dinh_danh}]."
+                )
         for node in self.broker.danh_sach_tac_nhan.values():
             if isinstance(node, UAVAgent):
                 node.evaluate_communication_link()
@@ -410,16 +423,6 @@ class SimulationLoop:
 
                 # Cập nhật Heatmap độ bất định theo thời gian thực
                 self.update_heatmap(dt_mo_phong)
-
-                # Watchdog kiểm tra các nhiệm vụ cháy: nếu UAV trúng thầu gặp nạn/OFFLINE thì kích hoạt tái đấu thầu ngay
-                for ma_phien, mission in list(self._active_fire_missions.items()):
-                    wid = mission.get("winner_id")
-                    if not isinstance(wid, str):
-                        continue
-                    w_agent = self.broker.danh_sach_tac_nhan.get(wid)
-                    if w_agent and (w_agent.trang_thai == AgentState.OFFLINE or w_agent.phan_tram_pin <= 5.0):
-                        if wid not in mission.get("failed_uavs", set()):
-                            asyncio.create_task(self.xu_ly_uav_gap_su_co_nhiem_vu(ma_phien, wid, "UAV sập nguồn/OFFLINE"))
 
                 self._thoi_gian_tich_luy_kiem_tra_lien_lac += dt_mo_phong
                 if self._thoi_gian_tich_luy_kiem_tra_lien_lac >= 5.0:
@@ -738,9 +741,10 @@ class SimulationLoop:
             if hasattr(self.broker, "dong_bo_trang_thai_toan_mang"):
                 await self.broker.dong_bo_trang_thai_toan_mang()
 
+        ground_station_server = getattr(self, "ground_station_server", None)
         swarm_state = (
-            self.ground_station_server.xuat_trang_thai_phan_ung()
-            if hasattr(self, "ground_station_server") and hasattr(self.ground_station_server, "xuat_trang_thai_phan_ung")
+            ground_station_server.xuat_trang_thai_phan_ung()
+            if ground_station_server is not None and hasattr(ground_station_server, "xuat_trang_thai_phan_ung")
             else None
         )
         return {
@@ -796,6 +800,7 @@ class SimulationLoop:
             self.ground_station_server.su_co_hien_tai = None
             self.ground_station_server.danh_sach_su_co.clear()
 
+        self.broker.network_stack.broadcast_command_to_external_clients("RESUME_PATROL")
         await self.broker.phat_su_kien_ra_web("SWARM_RESPONSE_UPDATE", None)
         await self.broker.dong_bo_trang_thai_toan_mang()
         return {
@@ -816,7 +821,7 @@ class SimulationLoop:
         swarm_state = (
             self.ground_station_server.xuat_trang_thai_phan_ung()
             if hasattr(self, "ground_station_server") and hasattr(self.ground_station_server, "xuat_trang_thai_phan_ung")
-            else self.broker.phien_dau_gia_gan_nhat
+            else None
         )
         fire_routes = list(getattr(self.broker, "danh_sach_tuyen_e2e_chay", []) or [])
         with self.broker.os_kernel.net_state_lock:

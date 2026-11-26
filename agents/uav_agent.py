@@ -108,7 +108,7 @@ class UAVAgent(BaseAgent):
             return
         if (
             getattr(self, "_tam_khoanh_vung_chay", None) is not None
-            and trang_thai_moi in (AgentState.PATROLLING, AgentState.BIDDING, AgentState.RELAYING)
+            and trang_thai_moi in (AgentState.PATROLLING, AgentState.RESPONDING, AgentState.RELAYING)
         ):
             self.uav_state = UAVState.CONTAINING
             return
@@ -116,7 +116,7 @@ class UAVAgent(BaseAgent):
             AgentState.IDLE: UAVState.STANDBY,
             AgentState.CHARGING: UAVState.CHARGING,
             AgentState.PATROLLING: UAVState.PATROLLING,
-            AgentState.BIDDING: UAVState.RESPONDING,
+            AgentState.RESPONDING: UAVState.RESPONDING,
             AgentState.RELAYING: UAVState.RELAYING,
             AgentState.RETURNING: UAVState.RETURNING,
             AgentState.LOW_BATTERY_RTB: UAVState.RETURNING,
@@ -791,7 +791,7 @@ class UAVAgent(BaseAgent):
             self._den_muc_tieu.set()
 
         self.so_nhiem_vu_da_nhan += 1
-        self.chuyen_trang_thai(AgentState.BIDDING)
+        self.chuyen_trang_thai(AgentState.RESPONDING)
         self.uav_state = UAVState.RESPONDING
         thong_tin_su_co = {
             "ma_phien_dau_gia": phien_id,
@@ -1169,7 +1169,7 @@ class UAVAgent(BaseAgent):
             if self.bo_dinh_tuyen.physics.tinh_khoang_cach_3d(self.toa_do, self.toa_do_muc_tieu) <= 50.0:
                 self._den_muc_tieu.set()
             self.so_nhiem_vu_da_nhan += 1
-            self.chuyen_trang_thai(AgentState.BIDDING)
+            self.chuyen_trang_thai(AgentState.RESPONDING)
             self._tac_vu_su_co = asyncio.create_task(self._thuc_hien_nhiem_vu(thong_diep.copy()))
 
         elif loai_tin == "YEU_CAU_BAN_GIAO_VUNG":

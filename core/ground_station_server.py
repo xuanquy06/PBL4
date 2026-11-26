@@ -81,7 +81,6 @@ class GroundStationServer:
 
     async def _dong_bo_su_kien_ra_web(self):
         payload = self.xuat_trang_thai_phan_ung()
-        self.broker.phien_dau_gia_gan_nhat = payload
         if hasattr(self.broker, "phat_su_kien_ra_web"):
             await self.broker.phat_su_kien_ra_web("SWARM_RESPONSE_UPDATE", payload)
 

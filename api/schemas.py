@@ -23,3 +23,13 @@ class CapNhatPinNodeRequest(BaseModel):
     """Schema cho phép người dùng giả lập kịch bản sập nguồn hoặc sạc đầy pin cho UAV"""
     ma_dinh_danh: str = Field(..., description="Mã định danh của Node (VD: MÁY_BAY_UAV_01)")
     phan_tram_pin_moi: float = Field(..., ge=0.0, le=100.0, description="Mức pin mới (%)")
+
+
+class ClientCommandRequest(BaseModel):
+    """Schema đẩy lệnh điều khiển bất đồng bộ từ Server xuống tiến trình uav_client.py (giao tiếp TCP 2 chiều)"""
+    uav_id: str = Field(..., description="Định danh UAV Client (VD: UAV_EXT_01 hoặc MÁY_BAY_UAV_EXT_01)")
+    action: Literal["RTB", "RESUME_PATROL", "PING", "DISPATCH_FIRE"] = Field(
+        ..., description="Lệnh điều khiển đẩy xuống Client qua kênh TCP"
+    )
+    vi_do: Optional[float] = Field(default=None, ge=-90.0, le=90.0, description="Vĩ độ mục tiêu (dùng cho DISPATCH_FIRE)")
+    kinh_do: Optional[float] = Field(default=None, ge=-180.0, le=180.0, description="Kinh độ mục tiêu (dùng cho DISPATCH_FIRE)")

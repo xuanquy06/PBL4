@@ -847,10 +847,13 @@
                 document.getElementById('kPdr').textContent = `${pdr}%`;
                 document.getElementById('kDelay').textContent = `${net.do_tre_trung_binh_ms || 0} ms`;
                 if (transportMetrics) {
+                    const realTcp = (transportMetrics.real_tcp_rx || 0) + (transportMetrics.real_tcp_tx || 0);
+                    const realUdp = transportMetrics.real_udp_rx || 0;
+                    const simWire = transportMetrics.sim_wireless_sent || 0;
                     document.getElementById('kPackets').textContent =
-                        `TCP ACK: ${transportMetrics.tcp_acked || 0} (Retrans: ${transportMetrics.tcp_retransmissions || 0}) · UDP: ${transportMetrics.udp_sent || 0}`;
+                        `Real Sock TCP:${realTcp} UDP:${realUdp} · Sim Wire:${simWire}`;
                     document.getElementById('kDrops').textContent =
-                        `CRC Err: ${transportMetrics.crc_errors || 0} · TTL Drop: ${transportMetrics.ttl_drops || 0} · PER: ${net.tong_goi_tin_rot_per || 0}`;
+                        `CRC Err: ${transportMetrics.crc_errors || 0} (UDP:${transportMetrics.real_udp_crc_errors || 0}) · TTL: ${transportMetrics.ttl_drops || 0}`;
                 } else {
                     const outOfRange = net.tong_goi_tin_ngoai_vung_phu ?? net.tong_goi_tin_mat_los ?? 0;
                     document.getElementById('kPackets').textContent = `${ok} / ${sent} gói thành công`;
@@ -878,10 +881,11 @@
             const udpTxt = tm.udp_port > 0 ? `UDP 0.0.0.0:${tm.udp_port}` : 'UDP Wire';
             const totalKb = (((tm.tcp_bytes || 0) + (tm.udp_bytes || 0)) / 1024).toFixed(1);
             const extCount = tm.external_clients_count || 0;
+            const simWire = tm.sim_wireless_sent || 0;
             bar.innerHTML = `
-                <span class="sock-pill" style="border-color:rgba(59,130,246,0.45);color:#93c5fd;">${tcpTxt} (RX:${tm.tcp_rx_packets || 0})</span>
-                <span class="sock-pill" style="border-color:rgba(168,85,247,0.45);color:#c4b5fd;">${udpTxt} (RX:${tm.udp_rx_packets || 0})</span>
-                <span class="sock-pill" style="border-color:rgba(16,185,129,0.45);color:#6ee7b7;">Clients ngoài: ${extCount}</span>
+                <span class="sock-pill" style="border-color:rgba(59,130,246,0.45);color:#93c5fd;">${tcpTxt} (Real RX:${tm.real_tcp_rx || 0} TX:${tm.real_tcp_tx || 0})</span>
+                <span class="sock-pill" style="border-color:rgba(168,85,247,0.45);color:#c4b5fd;">${udpTxt} (Real RX:${tm.real_udp_rx || 0})</span>
+                <span class="sock-pill" style="border-color:rgba(16,185,129,0.45);color:#6ee7b7;">Clients ngoài: ${extCount} · SimWire: ${simWire}</span>
                 <span class="sock-pill" style="color:var(--accent-green);">${tm.socket_mode || 'REAL_OS_SOCKET'} · ${totalKb} KB</span>
             `;
 

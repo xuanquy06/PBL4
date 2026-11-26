@@ -127,43 +127,7 @@ class SatelliteAgent(BaseAgent):
         if loai_tin == "HELLO_BEACON":
             return
 
-        if loai_tin == "CFP_GOI_THAU":
-            if self.trang_thai in (AgentState.LOW_BATTERY, AgentState.OFFLINE, AgentState.BIDDING):
-                return
-            self.chuyen_trang_thai(AgentState.BIDDING)
-            try:
-                bao_gia = self.bo_dinh_tuyen.tao_bao_gia(
-                    self.ma_dinh_danh,
-                    nguoi_gui,
-                    thong_diep.get("thong_so_kenh", {}),
-                    float(thong_diep.get("kich_thuoc_kb", 250.0))
-                )
-                if not bao_gia:
-                    return
-                await self.bo_dinh_tuyen.gui_don_huong(
-                    self.ma_dinh_danh,
-                    nguoi_gui,
-                    {
-                        "loai_tin": "PROPOSE_BAO_GIA",
-                        "ma_phien_dau_gia": thong_diep.get("ma_phien_dau_gia"),
-                        "chi_phi": bao_gia["chi_phi"],
-                        "loai_ung_vien": self.loai_tac_nhan,
-                        "tuyen": bao_gia["tuyen"],
-                        "nang_luong_du_kien_joule": bao_gia["nang_luong_du_kien_joule"],
-                        "do_tre_du_kien_ms": bao_gia["do_tre_du_kien_ms"],
-                        "dung_luong_du_kien_mbps": bao_gia["dung_luong_du_kien_mbps"],
-                        "pin_pct": self.phan_tram_pin,
-                        "kich_thuoc_kb": 2.0
-                    }
-                )
-                await self.bo_dinh_tuyen.gui_log_ra_web(
-                    "BID", f"[{self.ma_dinh_danh}] Báo giá tuyến {bao_gia['tuyen']} · chi phí {bao_gia['chi_phi']}."
-                )
-            finally:
-                if self.trang_thai == AgentState.BIDDING:
-                    self.chuyen_trang_thai(AgentState.IDLE)
-
-        elif loai_tin in ("GIAO_NHIEM_VU_DU_LIEU", "PROPOSE", "REFUSE"):
+        if loai_tin == "GIAO_NHIEM_VU_DU_LIEU":
             self.chuyen_trang_thai(AgentState.RELAYING)
             try:
                 await self._chuyen_tiep_du_lieu(thong_diep)

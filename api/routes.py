@@ -4,7 +4,8 @@ from fastapi.responses import FileResponse
 from api.schemas import (
     KichHoatSuCoRequest,
     DieuKhienThoiGianRequest,
-    CapNhatPinNodeRequest
+    CapNhatPinNodeRequest,
+    ClientCommandRequest,
 )
 
 
@@ -33,7 +34,7 @@ def tao_bo_dinh_tuyen_api(sim_loop) -> APIRouter:
 
     @router.post("/api/su-co")
     async def kich_hoat_su_co(req: KichHoatSuCoRequest):
-        """Mô phỏng phát hiện điểm cháy và điều động UAV qua FIPA-CNP."""
+        """Mô phỏng phát hiện điểm cháy qua bản đồ điểm nhiệt và điều phối tự trị MAS."""
         ket_qua = await sim_loop.kich_hoat_su_co_khan_cap(
             loai_su_co=req.loai_su_co,
             vi_do=req.vi_do,
@@ -80,6 +81,29 @@ def tao_bo_dinh_tuyen_api(sim_loop) -> APIRouter:
             "state": getattr(getattr(agent, "uav_state", agent.trang_thai), "value", str(agent.trang_thai)),
             "routes": routes,
         }
+
+    @router.post("/api/client-command")
+    async def gui_lenh_client_ngoai(req: ClientCommandRequest):
+        """Chủ động đẩy lệnh TCP bất đồng bộ từ Server xuống tiến trình uav_client.py đang kết nối."""
+        norm_id = sim_loop._normalize_ext_uav_id(req.uav_id)
+        params = {}
+        if req.vi_do is not None:
+            params["lat"] = req.vi_do
+        if req.kinh_do is not None:
+            params["lon"] = req.kinh_do
+        ok = sim_loop.broker.network_stack.send_command_to_external_client(
+            norm_id, req.action, params or None
+        )
+        if not ok:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Client {norm_id} chưa kết nối TCP hoặc đã ngắt kết nối."
+            )
+        await sim_loop.broker.gui_log_ra_web(
+            "INFO",
+            f"[CLIENT_NET] Đã đẩy lệnh TCP {req.action} từ Server xuống Client [{norm_id}]."
+        )
+        return {"ok": True, "uav_id": norm_id, "action": req.action}
 
     @router.get("/api/xuat-csv")
     async def tai_file_ket_qua_csv():

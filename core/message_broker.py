@@ -40,7 +40,6 @@ class MessageBroker:
                 pass
         self.danh_sach_tac_nhan: Dict[str, Any] = {}
         self.danh_sach_client_ws: List[WebSocket] = []
-        self.phien_dau_gia_gan_nhat: Optional[dict[str, Any]] = None
         self.tuyen_e2e_gan_nhat: Optional[dict[str, Any]] = None
         self.tuyen_e2e_chay_hien_tai: Optional[dict[str, Any]] = None
         self.danh_sach_tuyen_e2e_chay: List[dict[str, Any]] = []
@@ -222,7 +221,7 @@ class MessageBroker:
                     or (
                         ke_tiep.loai_tac_nhan == "MÁY_BAY"
                         and (
-                            ke_tiep.trang_thai.value in ("ĐANG_ĐẤU_GIÁ", "ĐANG_SẠC")
+                            ke_tiep.trang_thai.value in ("ĐANG_PHẢN_ỨNG", "ĐANG_SẠC")
                             or getattr(ke_tiep, "_dang_o_tai_tram", lambda: False)()
                         )
                     )
@@ -260,23 +259,15 @@ class MessageBroker:
                 energy_j = self._uoc_tinh_nang_luong_truyen(hien_tai, kich_thuoc_kb)
                 kenh_co_nang_luong: RouteChannel = {**kenh, "energy_j": energy_j}
 
-                # Trọng số cân bằng tải khi đi qua UAV Relay hoặc Vệ tinh LEO Backhaul
                 so_luong_relay = len(getattr(ke_tiep, "_relay_requesters", ()))
-                relay_load_penalty = so_luong_relay * 2.0 if ke_tiep.loai_tac_nhan == "MÁY_BAY" else 0.0
-                battery_penalty = (
-                    (100.0 - ke_tiep.phan_tram_pin) * 0.08
-                    if ke_tiep.loai_tac_nhan == "MÁY_BAY" else 0.0
-                )
-                space_backhaul_cost = 18.0 if ke_tiep.loai_tac_nhan == "VỆ_TINH_LEO" else 0.0
-
-                weight = (
-                    kenh["do_tre_ms"]
-                    + 40.0 / max(0.5, kenh["dung_luong_mbps"])
-                    + energy_j
-                    + ke_tiep.tai_hang_doi_pct * 0.05
-                    + relay_load_penalty
-                    + battery_penalty
-                    + space_backhaul_cost
+                weight = self._tinh_trong_so_lien_ket(
+                    do_tre_ms=kenh["do_tre_ms"],
+                    dung_luong_mbps=kenh["dung_luong_mbps"],
+                    energy_j=energy_j,
+                    loai_ke_tiep=ke_tiep.loai_tac_nhan,
+                    tai_hang_doi_pct=ke_tiep.tai_hang_doi_pct,
+                    pin_pct=ke_tiep.phan_tram_pin,
+                    so_luong_relay=so_luong_relay,
                 )
                 next_cost = chi_phi + weight
                 if next_cost < chi_phi_tot_nhat.get(ma_ke_tiep, float("inf")):
@@ -340,7 +331,7 @@ class MessageBroker:
                 > getattr(bat_dau, "NEIGHBOR_TIMEOUT_SEC", 15.0)
                 or info.get("trang_thai") in (
                     "NGẮT_KẾT_NỐI",
-                    "ĐANG_ĐẤU_GIÁ",
+                    "ĐANG_PHẢN_ỨNG",
                     "ĐANG_SẠC"
                 )
                 or (
@@ -412,16 +403,16 @@ class MessageBroker:
                 continue
 
             energy_j = self._uoc_tinh_nang_luong_truyen(bat_dau, kich_thuoc_kb)
-            link_cost = (
-                channel["do_tre_ms"]
-                + 40.0 / max(0.5, channel["dung_luong_mbps"])
-                + energy_j
-                + float(info.get("tai_hang_doi_pct", 0.0)) * 0.05
+            so_luong_relay = len(getattr(neighbor, "_relay_requesters", ()))
+            link_cost = self._tinh_trong_so_lien_ket(
+                do_tre_ms=channel["do_tre_ms"],
+                dung_luong_mbps=channel["dung_luong_mbps"],
+                energy_j=energy_j,
+                loai_ke_tiep=str(info.get("loai_tac_nhan", "")),
+                tai_hang_doi_pct=float(info.get("tai_hang_doi_pct", 0.0)),
+                pin_pct=float(info.get("pin_pct", 100.0)),
+                so_luong_relay=so_luong_relay,
             )
-            if info.get("loai_tac_nhan") == "MÁY_BAY":
-                link_cost += (100.0 - float(info.get("pin_pct", 100.0))) * 0.08
-            elif info.get("loai_tac_nhan") == "VỆ_TINH_LEO":
-                link_cost += 18.0
 
             path = [ma_bat_dau, *downstream_path]
             if len(path) != len(set(path)):
@@ -461,45 +452,43 @@ class MessageBroker:
         return route
 
     @staticmethod
+    def _tinh_trong_so_lien_ket(
+        do_tre_ms: float,
+        dung_luong_mbps: float,
+        energy_j: float,
+        loai_ke_tiep: str,
+        tai_hang_doi_pct: float,
+        pin_pct: float,
+        so_luong_relay: int = 0,
+    ) -> float:
+        """
+        Hàm chi phí đa mục tiêu chuẩn hóa không thứ nguyên (Weighted Sum Normalization) cho Dijkstra.
+        Các ngưỡng tham chiếu (D_ref=50 ms, B_ref=10 Mbps, E_ref=5 J, R_ref=5 luồng)
+        và hệ số trọng số ưu tiên là tham số giả lập thực nghiệm của mô hình mô phỏng.
+        """
+        d_norm = min(1.0, max(0.0, float(do_tre_ms)) / 50.0)
+        b_norm = min(1.0, 10.0 / max(0.5, float(dung_luong_mbps)))
+        e_norm = min(1.0, max(0.0, float(energy_j)) / 5.0)
+        q_norm = min(1.0, max(0.0, float(tai_hang_doi_pct)) / 100.0)
+        is_uav = (loai_ke_tiep == "MÁY_BAY")
+        r_norm = min(1.0, max(0, int(so_luong_relay)) / 5.0) if is_uav else 0.0
+        p_norm = ((100.0 - min(100.0, max(0.0, float(pin_pct)))) / 100.0) if is_uav else 0.0
+        leo_penalty = 1.50 if loai_ke_tiep == "VỆ_TINH_LEO" else 0.0
+
+        return (
+            0.20 * d_norm
+            + 0.20 * b_norm
+            + 0.10 * e_norm
+            + 0.10 * q_norm
+            + 0.20 * r_norm
+            + 0.20 * p_norm
+            + leo_penalty
+        )
+
+    @staticmethod
     def _uoc_tinh_nang_luong_truyen(agent, kich_thuoc_kb: float) -> float:
         cong_suat_w = 10.0 ** ((agent.radio_config["cong_suat_phat_dbm"] - 30.0) / 10.0)
         return round(cong_suat_w * 0.05 * (kich_thuoc_kb / 10.0), 4)
-
-    def tao_bao_gia(self, ma_ung_vien: str, ma_nguon: str, thong_so_chang_dau: dict[str, Any], kich_thuoc_kb: float) -> Optional[dict[str, Any]]:
-        """Định giá đường truyền từ nguồn, qua ứng viên, đến một trạm mặt đất."""
-        ung_vien = self.danh_sach_tac_nhan.get(ma_ung_vien)
-        if not ung_vien:
-            return None
-        tuyen: dict[str, Any]
-        if ung_vien.loai_tac_nhan == "TRẠM_MẶT_ĐẤT":
-            tuyen = {"nodes": [ma_ung_vien], "channels": [], "cost": 0.0, "energy_j": 0.0, "delay_ms": 0.0}
-        else:
-            tuyen_tim = self.tim_tuyen_den_tram_mat_dat(
-                ma_ung_vien, kich_thuoc_kb, loai_tru={ma_nguon}
-            )
-            if not tuyen_tim:
-                return None
-            tuyen = tuyen_tim
-
-        bw_dau = max(0.5, thong_so_chang_dau.get("dung_luong_mbps", 0.0))
-        bw_tuyen = [max(0.5, kenh["dung_luong_mbps"]) for kenh in tuyen["channels"]]
-        bw_nut_that_co_chai = min([bw_dau, *bw_tuyen])
-        tong_tre = thong_so_chang_dau.get("do_tre_ms", 9999.0) + tuyen["delay_ms"]
-        energy = self._uoc_tinh_nang_luong_truyen(
-            self.danh_sach_tac_nhan[ma_nguon], kich_thuoc_kb
-        ) + tuyen["energy_j"]
-        energy += 0.02 * (kich_thuoc_kb / 10.0) * (len(tuyen["channels"]) + 1)
-        chi_phi = tong_tre + 120.0 / bw_nut_that_co_chai + energy
-        if ung_vien.loai_tac_nhan in ("MÁY_BAY", "VỆ_TINH_LEO"):
-            chi_phi += (100.0 - ung_vien.phan_tram_pin) * 0.15
-        chi_phi += ung_vien.tai_hang_doi_pct * 0.2
-        return {
-            "chi_phi": round(chi_phi, 3),
-            "tuyen": [*tuyen["nodes"]],
-            "nang_luong_du_kien_joule": round(energy, 3),
-            "do_tre_du_kien_ms": round(tong_tre, 3),
-            "dung_luong_du_kien_mbps": round(bw_nut_that_co_chai, 3)
-        }
 
     def tim_tuyen_dijkstra_ve_tram(
         self,
@@ -566,11 +555,11 @@ class MessageBroker:
     # =========================================================================
     async def gui_don_huong(self, ma_nguoi_gui: str, ma_nguoi_nhan: str, thong_diep: dict) -> bool:
         """
-        Truyền gói tin điểm-nối-điểm (Unicast) qua chồng giao thức Mạng/Giao vận thật:
+        Truyền gói tin điểm-nối-điểm (Unicast) trên Mặt phẳng Mạng vô tuyến mô phỏng:
         - Giảm TTL ở mỗi hop, hủy gói nếu TTL <= 0 (TTL_DROP).
-        - Đóng gói khung nhị phân 26-byte Header + Checksum CRC32.
-        - Truyền qua Socket TCP (ARQ có truyền lại tối đa 3 lần khi lỗi bit + ACK)
-          hoặc Socket UDP (gửi 1 lần, rớt ngay nếu lỗi bit CRC32).
+        - Đóng gói khung nhị phân 26-byte Header + Checksum CRC32 (IEEE 802.3) trong mô phỏng kênh PHY.
+        - Kênh tin cậy mô phỏng cơ chế Stop-and-Wait RDT/ARQ (Kurose & Ross, Ch. 3, tối đa 3 lần khi lỗi PER);
+          kênh Telemetry không tin cậy (UDP) gửi 1 lần và hủy ngay nếu sai CRC32.
         """
         nguoi_gui = self.danh_sach_tac_nhan.get(ma_nguoi_gui)
         nguoi_nhan = self.danh_sach_tac_nhan.get(ma_nguoi_nhan)
@@ -939,9 +928,7 @@ class MessageBroker:
     async def phat_su_kien_ra_web(self, loai_su_kien: str, du_lieu):
         """Đẩy gói tin JSON thời gian thực xuống tất cả trình duyệt đang mở"""
         thoi_diem = time.strftime("%H:%M:%S")
-        if loai_su_kien in ("SWARM_RESPONSE_UPDATE", "CNP_AUCTION_RESULT"):
-            self.phien_dau_gia_gan_nhat = du_lieu
-        elif loai_su_kien == "E2E_ROUTE_COMPLETED":
+        if loai_su_kien == "E2E_ROUTE_COMPLETED":
             if isinstance(du_lieu, dict) and (
                 du_lieu.get("is_fire_route") or not self.tuyen_e2e_chay_hien_tai
             ):
@@ -1134,7 +1121,7 @@ class MessageBroker:
         swarm_state = (
             self.ground_station_server.xuat_trang_thai_phan_ung()
             if self.ground_station_server and hasattr(self.ground_station_server, "xuat_trang_thai_phan_ung")
-            else self.phien_dau_gia_gan_nhat
+            else None
         )
         await self.phat_su_kien_ra_web("WORLD_STATE", {
             "nodes": danh_sach_nodes,

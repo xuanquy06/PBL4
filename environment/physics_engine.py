@@ -148,10 +148,10 @@ class PhysicsEngine:
 
     def kiem_tra_ban_kinh_phu_song(self, pos1: dict, pos2: dict) -> tuple[bool, float, float]:
         """
-        Kiểm tra điều kiện nằm trong Bán kính phủ sóng vô tuyến (Communication Range - Phương án 3):
+        Kiểm tra điều kiện nằm trong Bán kính phủ sóng vô tuyến (tham số thực nghiệm mô hình):
         - Liên kết Vũ trụ (ISL / A2S / S2G): khoảng cách 3D <= MAX_SPACE_COMM_RANGE_M (2500 km).
-        - Liên kết Không-Đất (A2G): khoảng cách 3D <= MAX_A2G_COMM_RANGE_M (4.2 km).
-        - Liên kết Không-Không (A2A FANET): khoảng cách 3D <= MAX_A2A_COMM_RANGE_M (7.0 km).
+        - Liên kết Không-Đất (A2G): khoảng cách 3D <= MAX_A2G_COMM_RANGE_M (3.5 km).
+        - Liên kết Không-Không (A2A FANET): khoảng cách 3D <= MAX_A2A_COMM_RANGE_M (2.8 km).
         Trả về: (trong_vung_phu, khoang_cach_m, ban_kinh_toi_da_m).
         """
         alt1 = float(pos1["do_cao"])
@@ -217,19 +217,18 @@ class PhysicsEngine:
         if is_space_link:
             do_tre_ms += 12.0
 
-        # 2. Suy hao không gian tự do (Free-Space Path Loss - FSPL)
+        # 2. Suy hao không gian tự do chuẩn ITU-R P.525 (Free-Space Path Loss - FSPL)
         fspl_db = (
             20.0 * math.log10(khoang_cach_hieu_dung_m)
             + 20.0 * math.log10(effective_freq_hz)
             + 20.0 * math.log10(4.0 * math.pi / SPEED_OF_LIGHT)
         )
 
-        # Suy hao phụ theo khoảng cách tương đối trong vùng phủ sóng
+        # Suy hao phụ thực nghiệm trong mô hình mô phỏng (suy hao khí quyển / tán xạ rừng)
         suy_hao_phu_db = 0.0
         if is_space_link and min(float(pos1["do_cao"]), float(pos2["do_cao"])) < 20000.0:
             suy_hao_phu_db = 2.0 + 6.0 * (ty_le_khoang_cach ** 2)
         elif not is_space_link and min(float(pos1["do_cao"]), float(pos2["do_cao"])) < 100.0:
-            # Suy hao tán xạ môi trường rừng theo khoảng cách A2G
             suy_hao_phu_db = 4.0 + (khoang_cach_hieu_dung_m / 1000.0) * 1.5
         else:
             suy_hao_phu_db = 2.0 * (ty_le_khoang_cach ** 2)
@@ -240,7 +239,7 @@ class PhysicsEngine:
         tong_antenna_gain_dbi = 54.0 if is_space_link else 16.0
         cong_suat_thu_dbm = effective_tx_dbm + tong_antenna_gain_dbi - tong_suy_hao_db
 
-        # 4. Công suất nhiễu nhiệt nền (Thermal Noise: N = k * T * B) + Noise Figure (5 dB)
+        # 4. Công suất nhiễu nhiệt nền chuẩn Nyquist-Johnson (Thermal Noise: N = k * T * B) + Noise Figure (5 dB)
         noise_watts = BOLTZMANN_CONST * SYSTEM_TEMP_K * effective_bw_hz
         noise_dbm = 10.0 * math.log10(noise_watts * 1000.0) + 5.0
 
@@ -248,12 +247,12 @@ class PhysicsEngine:
         snr_db = cong_suat_thu_dbm - noise_dbm
         snr_linear = 10.0 ** (snr_db / 10.0)
 
-        # 6. Dung lượng kênh truyền thực tế (hiệu suất phổ thực tế = 0.45 * giới hạn Shannon, trần phần cứng)
+        # 6. Dung lượng kênh theo định lý Shannon-Hartley (hệ số suy giảm hiệu suất phổ 0.45 là tham số mô phỏng)
         dung_luong_bps = 0.45 * effective_bw_hz * math.log2(1.0 + max(0.0, snr_linear))
         max_hw_mbps = 65.0 if is_space_link else 54.0
         dung_luong_mbps = min(max_hw_mbps, dung_luong_bps / 1e6)
 
-        # 7. Xác suất lỗi gói tin (PER) tăng dần theo khoảng cách (d / R_max) kết hợp SNR
+        # 7. Hàm PER đơn giản hóa (tham số thực nghiệm theo tỷ lệ khoảng cách d/R_max và SNR)
         if snr_db < -2.0:
             per_snr = 1.0
         elif snr_db > 25.0:
