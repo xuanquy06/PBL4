@@ -758,6 +758,79 @@
             pointer-events: none;
         }
 
+        /* DARK UAV POPUP CONTROLS */
+        .uav-dark-popup .leaflet-popup-content-wrapper {
+            background: rgba(17, 24, 39, 0.96);
+            color: var(--text-main);
+            border: 1px solid var(--border-strong);
+            border-radius: var(--radius-md);
+            box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
+            padding: 0;
+        }
+        .uav-dark-popup .leaflet-popup-tip {
+            background: rgba(17, 24, 39, 0.96);
+            border: 1px solid var(--border-strong);
+        }
+        .uav-dark-popup .leaflet-popup-content {
+            margin: 10px 12px;
+            font-family: var(--font-sans);
+            font-size: 11px;
+            line-height: 1.4;
+        }
+        .uav-dark-popup .leaflet-popup-close-button {
+            color: var(--text-muted);
+            top: 6px;
+            right: 6px;
+        }
+        .uav-dark-popup .leaflet-popup-close-button:hover {
+            color: var(--text-main);
+        }
+        .uav-popup-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding-right: 14px;
+            margin-bottom: 5px;
+        }
+        .uav-popup-id {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            font-size: 12px;
+            color: var(--accent-blue);
+        }
+        .uav-popup-badge {
+            font-family: var(--font-mono);
+            font-size: 9.5px;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 4px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+        }
+        .uav-popup-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px 10px;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid rgba(40, 52, 71, 0.8);
+        }
+        .uav-popup-actions {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 5px;
+        }
+        .uav-popup-actions .btn {
+            justify-content: center;
+            padding: 4px 6px;
+            font-size: 10.5px;
+        }
+
         @media (prefers-reduced-motion: reduce) {
             *, ::before, ::after {
                 animation-duration: 0.01ms !important;
@@ -829,7 +902,7 @@
         <div class="map-wrap">
             <div id="map"></div>
 
-            <!-- Top-left: Fire & Fault controls -->
+            <!-- Top-left: Fire controls -->
             <div class="map-float float-top-left">
                 <button id="btnFireMode" class="btn btn-danger" onclick="toggleFireMode()">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
@@ -839,11 +912,6 @@
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                     <span>Xoá cháy</span>
                 </button>
-                <div class="divider-v" aria-hidden="true"></div>
-                <select id="faultUavSelect" class="select-sm" aria-label="Chọn UAV giả lập sự cố"></select>
-                <button class="btn btn-danger" onclick="injectBattery(0)" title="Sập nguồn 0%">Sập</button>
-                <button class="btn btn-warn" onclick="injectBattery(18)" title="Pin yếu 18% (Kích hoạt RTB & Thay ca)">Pin yếu</button>
-                <button class="btn btn-ok" onclick="injectBattery(100)" title="Nạp đầy pin 100%">Sạc</button>
             </div>
 
             <!-- Top-right: Layer toggles (A2G, LEO disabled by default; FANET enabled) -->
@@ -1240,6 +1308,16 @@
                     txt.textContent = `Đang chọn: ${shortId}`;
                 }
                 if (activeSideTab === 'SYS') fetchRoutingTable(selectedNodeId);
+                if (pan) {
+                    const mk = markersById.get(selectedNodeId);
+                    if (mk && typeof mk.openPopup === 'function') {
+                        const latest = nodesCache.find(x => x.id === selectedNodeId);
+                        if (latest && latest.loai === 'MÁY_BAY') {
+                            mk.setPopupContent(buildUavPopupHtml(latest));
+                            mk.openPopup();
+                        }
+                    }
+                }
             } else {
                 bar.style.display = 'none';
                 if (activeSideTab === 'SYS') fetchRoutingTable('MÁY_BAY_UAV_01');
@@ -1356,6 +1434,46 @@
             if (b) map.fitBounds(b.pad(0.15));
         }
 
+        function buildUavPopupHtml(n) {
+            const safeId = String(n.id || '').replace(/'/g, "\\'");
+            const shortId = String(n.id || '').replace('MÁY_BAY_', '');
+            const pin = Number(n.pin_pct ?? 0);
+            const batColor = pin < 25 ? '#ef4444' : (pin < 50 ? '#f59e0b' : '#22c55e');
+            const linkLabel = n.current_link === 'GROUND_LINK'
+                ? 'A2G'
+                : (n.current_link === 'FANET_RELAY' ? 'FANET' : (n.current_link === 'LEO_SATELLITE' ? 'LEO' : 'OFFLINE'));
+            const stateTxt = (n.is_reserve || n.state === 'STANDBY') ? 'STANDBY' : (n.state || n.trang_thai || '—');
+            const roleTag = n.is_external_client ? ' [CLIENT]' : (n.is_reserve ? ' [DỰ BỊ]' : '');
+            const extActions = n.is_external_client
+                ? `<div class="uav-popup-actions" style="margin-top:5px;">
+                        <button class="btn" style="border-color:rgba(56,189,248,0.5);color:#7dd3fc;" onclick="sendClientCommand('${safeId}','RTB')" title="Đẩy lệnh TCP gọi Client bay về Trạm">Gọi RTB</button>
+                        <button class="btn" style="border-color:rgba(16,185,129,0.5);color:#6ee7b7;" onclick="sendClientCommand('${safeId}','RESUME_PATROL')" title="Đẩy lệnh TCP quay lại tuần tra">Tuần tra</button>
+                        <button class="btn" onclick="sendClientCommand('${safeId}','PING')" title="Gửi lệnh PING kiểm tra kết nối TCP">Ping TCP</button>
+                   </div>`
+                : '';
+
+            return `
+                <div class="uav-popup">
+                    <div class="uav-popup-head">
+                        <span class="uav-popup-id">${shortId}${roleTag}</span>
+                        <span class="uav-popup-badge">${stateTxt}</span>
+                    </div>
+                    <div class="uav-popup-meta">
+                        <span>IP: <b style="color:var(--text-main)">${n.ip || '—'}</b></span>
+                        <span>Vùng: <b style="color:var(--text-main)">${n.zone_id || '—'}</b></span>
+                        <span>Pin: <b style="color:${batColor}">${pin}%</b></span>
+                        <span>Kênh: <b style="color:var(--text-main)">${linkLabel}</b></span>
+                    </div>
+                    <div class="uav-popup-actions">
+                        <button class="btn btn-danger" onclick="injectBattery(0, '${safeId}')" title="Sập nguồn 0%">Sập 0%</button>
+                        <button class="btn btn-warn" onclick="injectBattery(18, '${safeId}')" title="Pin yếu 18% (RTB & Thay ca)">Pin yếu</button>
+                        <button class="btn btn-ok" onclick="injectBattery(100, '${safeId}')" title="Nạp đầy pin 100%">Sạc 100%</button>
+                    </div>
+                    ${extActions}
+                </div>
+            `;
+        }
+
         function updateNodesAndLinks(nodes) {
             nodesCache = nodes || [];
             const byId = new Map(nodesCache.map(n => [n.id, n]));
@@ -1373,6 +1491,12 @@
                     m._lastStateKey = stateKey;
                     m.bindTooltip(label, { permanent: true, direction: 'top', offset: [0, -8], className: 'node-label' });
                     if (!showLabels) m.closeTooltip();
+                    if (n.loai === 'MÁY_BAY') {
+                        m.bindPopup(() => {
+                            const latest = nodesCache.find(x => x.id === n.id) || n;
+                            return buildUavPopupHtml(latest);
+                        }, { maxWidth: 265, minWidth: 220, autoPan: false, className: 'uav-dark-popup' });
+                    }
                     m.on('click', () => selectNode(n.id, false));
                     markersById.set(n.id, m);
                 } else {
@@ -1380,6 +1504,9 @@
                     if (m._lastStateKey !== stateKey) {
                         m.setIcon(createNodeIcon(n));
                         m._lastStateKey = stateKey;
+                    }
+                    if (n.loai === 'MÁY_BAY' && m.isPopupOpen()) {
+                        m.setPopupContent(buildUavPopupHtml(n));
                     }
                 }
 
@@ -1518,7 +1645,6 @@
             });
 
             renderNodeList();
-            populateFaultSelect();
         }
 
         function setNodeFilter(filter, btn) {
@@ -1573,17 +1699,6 @@
                     </div>
                 `;
             }).join('');
-        }
-
-        function populateFaultSelect() {
-            const sel = document.getElementById('faultUavSelect');
-            if (sel.options.length > 0) return;
-            nodesCache.filter(n => n.loai === 'MÁY_BAY').forEach(u => {
-                const opt = document.createElement('option');
-                opt.value = u.id;
-                opt.textContent = u.id.replace('MÁY_BAY_', '') + ` (${u.zone_id || ''})`;
-                sel.appendChild(opt);
-            });
         }
 
         function computeAvgHeatRisk() {
@@ -1852,12 +1967,20 @@
             } catch (_) {}
         });
 
-        async function injectBattery(pct) {
-            const id = document.getElementById('faultUavSelect').value;
+        async function injectBattery(pct, nodeId = selectedNodeId) {
+            const id = nodeId || selectedNodeId;
             if (!id) return;
             await fetch('/api/cap-nhat-pin', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ma_dinh_danh: id, phan_tram_pin_moi: pct })
+            });
+        }
+
+        async function sendClientCommand(nodeId, action) {
+            if (!nodeId) return;
+            await fetch('/api/client-command', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uav_id: nodeId, action })
             });
         }
 
