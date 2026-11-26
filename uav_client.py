@@ -101,6 +101,17 @@ class StandaloneUAVClient:
         self.tcp_tx_count = 0
         self.tcp_ack_count = 0
         self.udp_tx_count = 0
+        self.interactive_prompt = False
+        self._print_lock = threading.Lock()
+
+    def _prompt_label(self) -> str:
+        return self.uav_id.replace("MÁY_BAY_", "")
+
+    def _print_async(self, msg: str):
+        with self._print_lock:
+            print(f"\n{msg}", flush=True)
+            if self.interactive_prompt and self._running and not self.server_disconnected:
+                print(f"{self._prompt_label()}> ", end="", flush=True)
 
     def _next_seq(self) -> int:
         with self._tcp_lock:
@@ -313,6 +324,7 @@ class StandaloneUAVClient:
         """Xử lý lệnh đẩy bất đồng bộ từ Server (mô hình ThreadedHandler 2 chiều)."""
         action = str(payload_obj.get("action", "")).upper()
         should_push_telem = action in ("RTB", "SET_BATTERY", "DISPATCH_FIRE", "RESUME_PATROL")
+        async_msg: Optional[str] = None
         with self._state_lock:
             self.server_cmd_rx_count += 1
             self.last_server_cmd = dict(payload_obj)
@@ -320,7 +332,7 @@ class StandaloneUAVClient:
                 self._fire_target = None
                 self.state = "RETURNING"
                 self.speed = 45.0
-                print(f"\n[SERVER -> CLIENT] Nhận lệnh RTB -> {self.uav_id} đang bay về Trạm sạc pin.")
+                async_msg = f"[SERVER -> CLIENT] Nhận lệnh RTB -> {self._prompt_label()} đang bay về Trạm sạc pin."
             elif action == "SET_BATTERY" and payload_obj.get("battery") is not None:
                 new_bat = min(100.0, max(0.0, float(payload_obj["battery"])))
                 self.battery = new_bat
@@ -350,13 +362,13 @@ class StandaloneUAVClient:
                         else:
                             self.state = "PATROLLING"
                             self.speed = 40.0
-                print(f"\n[SERVER -> CLIENT] Nhận lệnh SET_BATTERY={new_bat:.1f}% -> State={self.state}.")
+                async_msg = f"[SERVER -> CLIENT] Nhận lệnh SET_BATTERY={new_bat:.1f}% -> State={self.state}."
             elif action == "DISPATCH_FIRE" and payload_obj.get("lat") is not None and payload_obj.get("lon") is not None:
                 self._fire_target = (float(payload_obj["lat"]), float(payload_obj["lon"]))
                 self.state = "RESPONDING"
                 self.speed = 50.0
-                print(
-                    f"\n[SERVER -> CLIENT] Nhận lệnh DISPATCH_FIRE tới "
+                async_msg = (
+                    f"[SERVER -> CLIENT] Nhận lệnh DISPATCH_FIRE tới "
                     f"({self._fire_target[0]:.4f}, {self._fire_target[1]:.4f})."
                 )
             elif action == "RESUME_PATROL":
@@ -373,13 +385,13 @@ class StandaloneUAVClient:
                 else:
                     self.state = "PATROLLING"
                     self.speed = 40.0
-                print(f"\n[SERVER -> CLIENT] Nhận lệnh RESUME_PATROL -> {self.state} tại {self.zone_id}.")
+                async_msg = f"[SERVER -> CLIENT] Nhận lệnh RESUME_PATROL -> {self.state} tại {self.zone_id}."
             elif action == "SET_CLOCK":
                 if payload_obj.get("paused") is not None:
                     self.paused = bool(payload_obj["paused"])
                 if payload_obj.get("time_scale") is not None:
                     self.time_scale = max(0.1, float(payload_obj["time_scale"]))
-                print(f"\n[SERVER -> CLIENT] Đồng bộ đồng hồ: Paused={self.paused}, Scale={self.time_scale}x.")
+                async_msg = f"[SERVER -> CLIENT] Đồng bộ đồng hồ: Paused={self.paused}, Scale={self.time_scale}x."
             elif action == "RF_STATUS":
                 new_link = str(payload_obj.get("link") or self.rf_link)
                 changed = (new_link != self.rf_link)
@@ -391,12 +403,14 @@ class StandaloneUAVClient:
                 if payload_obj.get("per") is not None:
                     self.rf_per = float(payload_obj["per"])
                 if changed:
-                    print(
-                        f"\n[RF_GATEWAY] Tuyến SAGSINS chuyển sang {self.rf_link} "
+                    async_msg = (
+                        f"[RF_GATEWAY] Tuyến SAGSINS chuyển sang {self.rf_link} "
                         f"({max(0, len(self.rf_hops) - 1)} hops, delay={self.rf_delay_ms:.2f} ms, PER={self.rf_per:.4f})."
                     )
             elif action == "PING":
-                print(f"\n[SERVER -> CLIENT] Nhận lệnh PING kiểm tra kết nối từ Server.")
+                async_msg = "[SERVER -> CLIENT] Nhận lệnh PING kiểm tra kết nối từ Server."
+        if async_msg:
+            self._print_async(async_msg)
         if should_push_telem:
             try:
                 self.send_udp_telemetry()
@@ -429,7 +443,7 @@ class StandaloneUAVClient:
                 if self._running:
                     self.server_disconnected = True
                     self._running = False
-                    print("\n[CLIENT_NET] Mất kết nối TCP với Server (Server đã đóng hoặc ngắt mạng).")
+                    self._print_async("[CLIENT_NET] Mất kết nối TCP với Server (Server đã đóng hoặc ngắt mạng).")
                 break
 
             pkt, crc_ok, _ = NetworkPacket.decode_and_verify(frame)
@@ -634,9 +648,14 @@ class StandaloneUAVClient:
         res = self.send_tcp_command("FIRE_ALERT", {"lat": f_lat, "lon": f_lon})
         if res.get("ok"):
             with self._state_lock:
-                self._fire_target = (f_lat, f_lon)
-                self.state = "CONTAINING"
-                self.speed = 40.0
+                if res.get("handover_p2p"):
+                    self._fire_target = None
+                    self.state = "RETURNING"
+                    self.speed = 45.0
+                else:
+                    self._fire_target = (f_lat, f_lon)
+                    self.state = "CONTAINING"
+                    self.speed = 40.0
                 if res.get("rf_link"):
                     self.rf_link = str(res["rf_link"])
                 if isinstance(res.get("rf_hops"), list):
@@ -669,6 +688,38 @@ class StandaloneUAVClient:
         self.send_udp_telemetry()
         return {"ok": True, "battery": 100.0, "state": st}
 
+    def route_text(self) -> str:
+        with self._state_lock:
+            hop_cnt = max(0, len(self.rf_hops) - 1)
+            short_hops = [
+                h.replace("MÁY_BAY_", "").replace("TRẠM_KIỂM_LÂM_", "").replace("VỆ_TINH_", "")
+                for h in self.rf_hops
+            ]
+            path_str = " -> ".join(short_hops) if short_hops else "(Chưa có tuyến)"
+            return (
+                f"Kênh: {self.rf_link} | Số chặng: {hop_cnt} | Trễ E2E: {self.rf_delay_ms:.2f} ms | "
+                f"PER: {self.rf_per * 100:.2f}%\n"
+                f"Lộ trình: {path_str}"
+            )
+
+    def format_status_box(self) -> str:
+        with self._state_lock:
+            mode_str = "TIẾP QUẢN (TAKEOVER)" if self.is_takeover else "MỞ RỘNG (EXTRA)"
+            hop_cnt = max(0, len(self.rf_hops) - 1)
+            clk_str = "TẠM DỪNG" if self.paused else f"{self.time_scale:.1f}x"
+            short_hops = [
+                h.replace("MÁY_BAY_", "").replace("TRẠM_KIỂM_LÂM_", "").replace("VỆ_TINH_", "")
+                for h in self.rf_hops
+            ]
+            path_str = " -> ".join(short_hops) if short_hops else "Đang cập nhật"
+            return (
+                f"--- TRẠNG THÁI {self._prompt_label()} ({mode_str}) ---\n"
+                f"  Tiến trình & Mạng : PID={self.pid} | IP={self.ip_address} | Vùng={self.zone_id} | Kết nối={'OK' if not self.server_disconnected else 'MẤT KẾT NỐI'}\n"
+                f"  Bay & Năng lượng  : State={self.state} ({self.speed:.0f} m/s) | Pin={self.battery:.1f}% ({self.battery_capacity_j/1000.0:.0f} kJ) | Pos=({self.lat:.5f}, {self.lon:.5f})\n"
+                f"  Tuyến vô tuyến RF : {self.rf_link} ({hop_cnt} chặng, {self.rf_delay_ms:.2f} ms, PER={self.rf_per*100:.2f}%) | {path_str}\n"
+                f"  Gói tin & Đồng hồ : UDP_TX={self.udp_tx_count} | TCP_TX={self.tcp_tx_count} (ACK={self.tcp_ack_count}) | ServerCmd_RX={self.server_cmd_rx_count} | Clock={clk_str}"
+            )
+
     def status_text(self) -> str:
         with self._state_lock:
             mode_str = "TAKEOVER" if self.is_takeover else "EXTRA"
@@ -681,6 +732,25 @@ class StandaloneUAVClient:
                 f"Clock={clk_str} | UDP_TX={self.udp_tx_count} | TCP_TX={self.tcp_tx_count} (ACK={self.tcp_ack_count}) | "
                 f"ServerCmd_RX={self.server_cmd_rx_count} | Connected={not self.server_disconnected}"
             )
+
+
+def _print_control_menu(client: StandaloneUAVClient):
+    short_id = client._prompt_label()
+    mode_lbl = "TIẾP QUẢN ĐỘI HÌNH" if client.is_takeover else "MỞ RỘNG NGOÀI ĐỘI HÌNH"
+    leave_desc = "trả quyền bay tự động về Server" if client.is_takeover else "ngắt nút khỏi bản đồ"
+    print("\n======================================================================")
+    print(f" BẢNG ĐIỀU KHIỂN UAV CLIENT | {short_id} ({mode_lbl})")
+    print(f" PID={client.pid} | IP={client.ip_address} | Vùng={client.zone_id} | Pin={client.battery:.1f}% ({client.battery_capacity_j/1000.0:.0f}kJ) | RF={client.rf_link}")
+    print("----------------------------------------------------------------------")
+    print("  [f] Giả lập cảm biến phát hiện cháy tại vị trí bay (TCP FIRE_ALERT)")
+    print("  [b] Giả lập pin yếu 18% & bay về Trạm sạc (RTB -> CHARGING)")
+    print("  [c] Giả lập nạp đầy 100% & bay về vùng (kiểm thử phục hồi pin)")
+    print("  [e] Gửi thử 1 gói UDP lỗi bit CRC32 (kiểm lỗi phía Server)")
+    print("  [r] Xem chi tiết tuyến vô tuyến SAGSINS (A2G / FANET / LEO)")
+    print("  [s] Xem trạng thái tiến trình, Socket & Pin")
+    print("  [h] Hiện lại bảng điều khiển")
+    print(f"  [q] Rời mạng lịch sự ({leave_desc}) | Ctrl+C: Rớt mạng đột ngột")
+    print("======================================================================\n")
 
 
 def main():
@@ -718,44 +788,83 @@ def main():
         f"Zone={client.zone_id} | Pin={client.battery:.1f}% ({client.battery_capacity_j/1000.0:.0f}kJ) | "
         f"RF={client.rf_link} | UDP={args.host}:{client.udp_port} | ACK={ack.get('cmd')}"
     )
+    client.interactive_prompt = not args.non_interactive
     client.start_background()
 
-    print("\n--- BẢNG ĐIỀU KHIỂN UAV CLIENT ĐỘC LẬP ---")
-    print("  [f] Báo cháy tại vị trí hiện tại (gửi TCP FIRE_ALERT qua Virtual RF Gateway)")
-    print("  [b] Giả lập Pin yếu 18% (bay về Trạm sạc pin đúng tốc độ 45 m/s)")
-    print("  [c] Sạc đầy 100% & bay chuyển tiếp về vùng tuần tra (không dịch chuyển tức thời)")
-    print("  [e] Gửi thử 1 gói UDP lỗi bit CRC32 (kiểm chứng phát hiện lỗi phía Server)")
-    print("  [s] Xem trạng thái PID / Socket / Tuyến RF / Đồng hồ / Pin")
-    print("  [q] Rời mạng lịch sự (trả quyền bay tự động về Server, hoặc Ctrl+C giả lập rớt mạng)\n")
+    if not args.non_interactive:
+        _print_control_menu(client)
 
     try:
         if args.non_interactive:
             while not client.server_disconnected:
                 time.sleep(1.0)
         else:
+            prompt_lbl = client._prompt_label()
             while not client.server_disconnected:
-                cmd = input("client> ").strip().lower()
+                cmd = input(f"{prompt_lbl}> ").strip().lower()
+                if not cmd:
+                    continue
                 if cmd == "f":
+                    cur_st = client.state
+                    if cur_st != "PATROLLING":
+                        reason_map = {
+                            "OFFLINE": "UAV đang sập nguồn 0% (OFFLINE). Hãy bấm [c] hoặc 'Sạc 100%' trên Web trước.",
+                            "STANDBY": "UAV đang trực chiến tại Trạm Kiểm Lâm, chưa bay ra vùng rừng tuần tra.",
+                            "CHARGING": "UAV đang sạc pin tại Trạm Kiểm Lâm, chưa thể quét cháy rừng.",
+                            "TRANSITING": "UAV đang bay chuyển tiếp từ Trạm ra phân khu, chưa vào vùng tuần tra.",
+                            "RETURNING": "UAV đang bay về Trạm do pin yếu (< 25%), không thể nhận nhiệm vụ cháy mới.",
+                            "RESPONDING": "UAV đang cơ động xử lý một đám cháy khác.",
+                            "CONTAINING": "UAV đang khoanh vùng đám cháy hiện tại (130 m).",
+                        }
+                        print(f"[CẢNH BÁO] {reason_map.get(cur_st, f'Trạng thái hiện tại ({cur_st}) chưa sẵn sàng báo cháy.')}")
+                        continue
                     try:
                         res = client.trigger_fire()
-                        print(f"[TCP -> FIRE_ACK] Đã báo cháy tại ({client.lat:.4f}, {client.lon:.4f}) -> {res}")
+                        if res.get("ok"):
+                            if res.get("handover_p2p"):
+                                print(
+                                    f"[TCP -> FIRE_ACK] Đã báo cháy ({client.lat:.4f}, {client.lon:.4f}) về Trạm "
+                                    f"| Pin khứ hồi yếu ({res.get('pin_khu_hoi_pct')}% <= 25%) -> Đã bàn giao P2P cho đồng đội, UAV quay về sạc!"
+                                )
+                            else:
+                                print(
+                                    f"[TCP -> FIRE_ACK] Báo cháy & khóa mục tiêu tại ({client.lat:.4f}, {client.lon:.4f}) "
+                                    f"| Pin khứ hồi={res.get('pin_khu_hoi_pct')}% | Kênh={res.get('rf_link')} | "
+                                    f"Chặng={res.get('rf_hop_count')} | Trễ={res.get('rf_delay_ms')} ms"
+                                )
+                        else:
+                            print(f"[RF_GATEWAY -> FIRE_NACK] Không gửi được báo cháy: {res.get('error')}")
                     except (OSError, RuntimeError, TimeoutError) as exc:
                         print(f"[LỖI TCP] Không thể gửi lệnh tới Server: {exc}")
                 elif cmd == "b":
+                    if client.state == "OFFLINE":
+                        print("[CẢNH BÁO] UAV đang sập nguồn 0% (OFFLINE). Không thể bay về Trạm.")
+                        continue
                     client.trigger_low_battery()
-                    print("[CLIENT] Pin đặt về 18% -> Đang bay thẳng về Trạm để sạc pin...")
+                    print("[CLIENT] Pin đặt về 18% -> Đang bay thẳng về Trạm (45 m/s) để sạc pin...")
                 elif cmd == "c":
                     res = client.trigger_full_charge()
-                    print(f"[UDP -> TELEMETRY] Đã sạc 100% & quay lại tuần tra -> {res}")
+                    st_new = res.get("state")
+                    hanh_vi = "đang bay chuyển tiếp về vùng" if st_new == "TRANSITING" else "đang tuần tra tại vùng"
+                    print(f"[UDP -> TELEMETRY] Đã nạp pin 100% ({hanh_vi}, State={st_new}).")
                 elif cmd == "e":
                     client.send_corrupted_udp_test()
-                    print("[UDP -> CRC32_TEST] Đã gửi 1 gói UDP lỗi bit tới Server.")
+                    print("[UDP -> CRC32_TEST] Đã gửi 1 gói UDP lỗi bit tới Server (kiểm tra EXT_UDP_CRC_ERR trên Dashboard).")
+                elif cmd == "r":
+                    print(f"[RF_GATEWAY] {client.route_text()}")
                 elif cmd == "s":
-                    print(f"[STATUS] {client.status_text()}")
+                    print(client.format_status_box())
+                elif cmd == "h":
+                    _print_control_menu(client)
                 elif cmd == "q":
-                    print("[UAV_CLIENT] Đang gửi TCP LEAVE và ngắt kết nối...")
+                    if client.is_takeover:
+                        print(f"[UAV_CLIENT] Đang gửi TCP LEAVE để trả quyền bay {prompt_lbl} về Server...")
+                    else:
+                        print("[UAV_CLIENT] Đang gửi TCP LEAVE và ngắt kết nối...")
                     client.stop(graceful=True)
                     break
+                else:
+                    print(f"[CLIENT] Lệnh '{cmd}' không hợp lệ. Gõ [h] để xem danh sách phím.")
     except (KeyboardInterrupt, EOFError):
         print("\n[UAV_CLIENT] Đã dừng tiến trình Client đột ngột.")
         client.stop(graceful=False)

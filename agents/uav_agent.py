@@ -219,6 +219,13 @@ class UAVAgent(BaseAgent):
 
         if self.is_external_client:
             await self._cap_nhat_duong_truyen()
+            if (
+                self.uav_state in (UAVState.PATROLLING, UAVState.RELAYING)
+                and self.trang_thai in (AgentState.PATROLLING, AgentState.RELAYING)
+                and self._tam_khoanh_vung_chay is None
+                and not self._dang_o_tai_tram()
+            ):
+                await self._kiem_tra_va_xu_ly_dam_chay_tu_chu()
             return
 
         # 1. Xử lý UAV đang sạc tại Trạm (CHARGING): hồi nhanh +15% pin/giây -> đạt 100% chuyển về STANDBY
@@ -814,6 +821,33 @@ class UAVAgent(BaseAgent):
                 f"➔ Đã khóa mục tiêu, bay thẳng tới tâm cháy ({fire_lat:.4f}, {fire_lon:.4f}) & khoanh vùng 130m."
             )
 
+        if getattr(self, "is_external_client", False):
+            self.so_nhiem_vu_da_nhan += 1
+            self.chuyen_trang_thai(AgentState.RESPONDING)
+            self.uav_state = UAVState.RESPONDING
+            net_stack = getattr(self.bo_dinh_tuyen, "network_stack", None)
+            if net_stack is not None:
+                net_stack.send_command_to_external_client(
+                    self.ma_dinh_danh,
+                    "DISPATCH_FIRE",
+                    {"lat": float(fire_lat), "lon": float(fire_lon)},
+                )
+            await self.bo_dinh_tuyen.gui_goi_tin_da_chang_ve_tram(
+                ma_nguon=self.ma_dinh_danh,
+                thong_diep={
+                    "loai_tin": "FIRE_DETECTION_REPORT",
+                    "ma_su_co": phien_id,
+                    "ma_phien_su_co": phien_id,
+                    "uav_phat_hien": self.ma_dinh_danh,
+                    "loai_su_co": "CHÁY_RỪNG",
+                    "vi_do": float(fire_lat),
+                    "kinh_do": float(fire_lon),
+                    "thoi_diem_phat_hien": time.time(),
+                    "kich_thuoc_kb": 250.0,
+                },
+            )
+            return
+
         self.toa_do_muc_tieu = {
             "vi_do": float(fire_lat),
             "kinh_do": float(fire_lon),
@@ -1180,18 +1214,6 @@ class UAVAgent(BaseAgent):
                     return
             pin_du_kien_pct = self._tinh_pin_du_kien_khu_hoi_pct(fire_lat, fire_lon)
             if self.phan_tram_pin > LOW_BATTERY_THRESHOLD and pin_du_kien_pct > LOW_BATTERY_THRESHOLD:
-                if getattr(self, "is_external_client", False):
-                    if hasattr(self.bo_dinh_tuyen, "khoa_muc_tieu_chay"):
-                        if not self.bo_dinh_tuyen.khoa_muc_tieu_chay(fire_lat, fire_lon, self.ma_dinh_danh):
-                            return
-                    net_stack = getattr(self.bo_dinh_tuyen, "network_stack", None)
-                    if net_stack is not None:
-                        net_stack.send_command_to_external_client(
-                            self.ma_dinh_danh,
-                            "DISPATCH_FIRE",
-                            {"lat": fire_lat, "lon": fire_lon},
-                        )
-                    return
                 await self._kich_hoat_xu_ly_chay_tu_chu(
                     fire_lat,
                     fire_lon,

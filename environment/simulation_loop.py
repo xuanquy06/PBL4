@@ -311,12 +311,52 @@ class SimulationLoop:
 
         if cmd == "FIRE_ALERT":
             agent = self.broker.lay_tac_nhan(uav_id)
+            if isinstance(agent, UAVAgent) and (
+                agent.uav_state in (UAVState.OFFLINE, UAVState.STANDBY, UAVState.CHARGING, UAVState.CONTAINING, UAVState.RESPONDING)
+                or agent._dang_o_tai_tram()
+            ):
+                return {
+                    "ok": False,
+                    "cmd": "FIRE_NACK",
+                    "error": f"UAV đang ở trạng thái {agent.uav_state.value}, chỉ báo cháy mới khi đang tuần tra trong vùng rừng.",
+                }
+
             zone_id = str(payload.get("zone_id") or (getattr(agent, "zone_id", None) if agent else None) or "ZONE_03")
             c_lat, c_lon = self._get_zone_center(zone_id)
             raw_f_lat = payload.get("lat")
             raw_f_lon = payload.get("lon")
             f_lat = float(raw_f_lat) if raw_f_lat is not None else c_lat
             f_lon = float(raw_f_lon) if raw_f_lon is not None else c_lon
+
+            matched_zone = None
+            features = (getattr(self.scenario, "patrol_zones", None) or {}).get("features", [])
+            if features and hasattr(self.scenario, "_diem_nam_trong_vung"):
+                for feat in features:
+                    if self.scenario._diem_nam_trong_vung(f_lat, f_lon, feat):
+                        matched_zone = feat.get("properties", {}).get("zone_id")
+                        break
+                if matched_zone is None:
+                    return {
+                        "ok": False,
+                        "cmd": "FIRE_NACK",
+                        "error": "Tọa độ báo cháy nằm ngoài 7 phân khu rừng Sơn Trà (tại Trạm hoặc mặt biển).",
+                    }
+                zone_id = str(matched_zone)
+
+            already_locked = bool(
+                hasattr(self.broker, "kiem_tra_muc_tieu_da_khoa")
+                and self.broker.kiem_tra_muc_tieu_da_khoa(f_lat, f_lon, ban_kinh_khoa_m=600.0)
+            )
+            near_active = any(
+                self.broker._khoang_cach_mat_dat_m(f_lat, f_lon, float(f.get("lat", 0.0)), float(f.get("lon", 0.0))) <= 600.0
+                for f in (getattr(self.scenario, "active_fires", None) or [])
+            )
+            if already_locked or near_active:
+                return {
+                    "ok": False,
+                    "cmd": "FIRE_NACK",
+                    "error": "Đã có đám cháy đang được xử lý gần vị trí này (<= 600 m).",
+                }
 
             if isinstance(agent, UAVAgent):
                 rf_info = self._evaluate_client_rf_gateway(agent, protocol="TCP", kich_thuoc_kb=250.0)
@@ -342,53 +382,87 @@ class SimulationLoop:
                     "rf_link": "OUT_OF_RANGE",
                 }
 
+            pin_khu_hoi_pct = float(agent.phan_tram_pin) if isinstance(agent, UAVAgent) else 90.0
+            handover_p2p = False
             if isinstance(agent, UAVAgent):
+                pin_khu_hoi_pct = float(agent._tinh_pin_du_kien_khu_hoi_pct(f_lat, f_lon))
+                handover_p2p = not (agent.phan_tram_pin > LOW_BATTERY_THRESHOLD and pin_khu_hoi_pct > LOW_BATTERY_THRESHOLD)
                 with self.broker.os_kernel.net_state_lock:
-                    agent._tam_khoanh_vung_chay = {
-                        "vi_do": f_lat,
-                        "kinh_do": f_lon,
-                        "ma_phien": f"FIRE_{uav_id}",
-                    }
-                    agent.trang_thai = AgentState.PATROLLING
-                    agent.uav_state = UAVState.CONTAINING
                     agent.current_link = rf_info["link"]
                     agent.tuyen_ve_tram_cuc_bo = rf_info["hops"]
                     agent.do_tre_ve_tram_cuc_bo_ms = rf_info["delay_ms"]
+                    if handover_p2p:
+                        agent._tam_khoanh_vung_chay = None
+                        agent.trang_thai = AgentState.RETURNING
+                        agent.uav_state = UAVState.RETURNING
+                    else:
+                        agent._tam_khoanh_vung_chay = {
+                            "vi_do": f_lat,
+                            "kinh_do": f_lon,
+                            "ma_phien": f"FIRE_{uav_id}",
+                        }
+                        agent.trang_thai = AgentState.PATROLLING
+                        agent.uav_state = UAVState.CONTAINING
 
             if self._main_loop and self._main_loop.is_running():
                 async def _process_client_fire():
                     res = await self.kich_hoat_su_co_khan_cap("CHÁY_RỪNG", f_lat, f_lon)
                     ma_phien = res.get("ma_phien") or f"FIRE_{uav_id}"
                     if isinstance(agent, UAVAgent):
-                        if hasattr(self.broker, "khoa_muc_tieu_chay"):
-                            self.broker.khoa_muc_tieu_chay(f_lat, f_lon, uav_id)
-                        if hasattr(agent, "_tam_khoanh_vung_chay") and isinstance(agent._tam_khoanh_vung_chay, dict):
-                            agent._tam_khoanh_vung_chay["ma_phien"] = ma_phien
-                        if self.ground_station_server and hasattr(self.ground_station_server, "ghi_nhan_khoa_muc_tieu"):
-                            await self.ground_station_server.ghi_nhan_khoa_muc_tieu(
-                                f_lat,
-                                f_lon,
-                                uav_id,
-                                float(agent.phan_tram_pin),
-                                zone_id=zone_id,
-                                la_p2p=False,
-                                uav_phat_hien_goc=uav_id,
+                        if handover_p2p:
+                            if self.ground_station_server and hasattr(self.ground_station_server, "ghi_nhan_phat_hien_dam_chay"):
+                                await self.ground_station_server.ghi_nhan_phat_hien_dam_chay(
+                                    f_lat,
+                                    f_lon,
+                                    uav_id,
+                                    0.0,
+                                    zone_id=zone_id,
+                                )
+                            await self.broker.gui_goi_tin_da_chang_ve_tram(
+                                ma_nguon=uav_id,
+                                thong_diep={
+                                    "loai_tin": "FIRE_DETECTION_REPORT",
+                                    "ma_su_co": ma_phien,
+                                    "ma_phien_su_co": ma_phien,
+                                    "uav_phat_hien": uav_id,
+                                    "loai_su_co": "CHÁY_RỪNG",
+                                    "vi_do": f_lat,
+                                    "kinh_do": f_lon,
+                                    "thoi_diem_phat_hien": time.time(),
+                                    "kich_thuoc_kb": 250.0,
+                                },
                             )
-                        await self.broker.gui_goi_tin_da_chang_ve_tram(
-                            ma_nguon=uav_id,
-                            thong_diep={
-                                "loai_tin": "FIRE_DETECTION_REPORT",
-                                "ma_su_co": ma_phien,
-                                "ma_phien_su_co": ma_phien,
-                                "uav_phat_hien": uav_id,
-                                "loai_su_co": "CHÁY_RỪNG",
-                                "vi_do": f_lat,
-                                "kinh_do": f_lon,
-                                "thoi_diem_phat_hien": time.time(),
-                                "kich_thuoc_kb": 250.0,
-                            },
-                        )
-                        self.broker.cap_nhat_tuyen_e2e_dam_chay_lien_tuc()
+                            await agent._phat_tin_nhan_p2p_nho_dong_doi(f_lat, f_lon, pin_khu_hoi_pct)
+                        else:
+                            if hasattr(self.broker, "khoa_muc_tieu_chay"):
+                                self.broker.khoa_muc_tieu_chay(f_lat, f_lon, uav_id)
+                            if hasattr(agent, "_tam_khoanh_vung_chay") and isinstance(agent._tam_khoanh_vung_chay, dict):
+                                agent._tam_khoanh_vung_chay["ma_phien"] = ma_phien
+                            if self.ground_station_server and hasattr(self.ground_station_server, "ghi_nhan_khoa_muc_tieu"):
+                                await self.ground_station_server.ghi_nhan_khoa_muc_tieu(
+                                    f_lat,
+                                    f_lon,
+                                    uav_id,
+                                    pin_khu_hoi_pct,
+                                    zone_id=zone_id,
+                                    la_p2p=False,
+                                    uav_phat_hien_goc=uav_id,
+                                )
+                            await self.broker.gui_goi_tin_da_chang_ve_tram(
+                                ma_nguon=uav_id,
+                                thong_diep={
+                                    "loai_tin": "FIRE_DETECTION_REPORT",
+                                    "ma_su_co": ma_phien,
+                                    "ma_phien_su_co": ma_phien,
+                                    "uav_phat_hien": uav_id,
+                                    "loai_su_co": "CHÁY_RỪNG",
+                                    "vi_do": f_lat,
+                                    "kinh_do": f_lon,
+                                    "thoi_diem_phat_hien": time.time(),
+                                    "kich_thuoc_kb": 250.0,
+                                },
+                            )
+                            self.broker.cap_nhat_tuyen_e2e_dam_chay_lien_tuc()
 
                 asyncio.run_coroutine_threadsafe(_process_client_fire(), self._main_loop)
             else:
@@ -396,11 +470,14 @@ class SimulationLoop:
             self._schedule_web_log(
                 "ALERT",
                 f"[CLIENT_NET] 🔥 Client [{uav_id}] ({addr[0]}:{addr[1]}) báo cháy tại ({f_lat:.4f}, {f_lon:.4f}) "
-                f"qua {rf_info['link']} ({rf_info['hop_count']} hops, {rf_info['delay_ms']:.2f} ms)."
+                f"qua {rf_info['link']} ({rf_info['hop_count']} hops, {rf_info['delay_ms']:.2f} ms"
+                f"{', bàn giao P2P do pin khứ hồi yếu' if handover_p2p else ''})."
             )
             return {
                 "ok": True,
                 "cmd": "FIRE_ACK",
+                "handover_p2p": handover_p2p,
+                "pin_khu_hoi_pct": round(pin_khu_hoi_pct, 1),
                 "rf_link": rf_info["link"],
                 "rf_hops": rf_info["hops"],
                 "rf_hop_count": rf_info["hop_count"],
@@ -1145,6 +1222,8 @@ class SimulationLoop:
                 agent._ket_thuc_khoanh_vung_chay()
             if hasattr(agent, "_su_co_da_nho_dong_doi"):
                 agent._su_co_da_nho_dong_doi.clear()
+            if hasattr(agent, "_da_phat_hien_dam_chay"):
+                agent._da_phat_hien_dam_chay.clear()
             if had_containment or uav_state_val in ("CONTAINING", "RESPONDING"):
                 if agent.trang_thai.value not in ("NGẮT_KẾT_NỐI", "PIN_YẾU_RTB", "ĐANG_QUAY_VỀ_SẠC", "ĐANG_SẠC"):
                     agent.chuyen_trang_thai(type(agent.trang_thai).PATROLLING)
