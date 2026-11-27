@@ -330,13 +330,13 @@
         <mxCell id="5" value="Lớp 2: Phân tách Mặt phẳng Triển khai (Client - Server) &amp;amp; Lõi Điều phối" style="swimlane;whiteSpace=wrap;html=1;startSize=26;fillColor=#f5f5f5;strokeColor=#666666;swimlaneFillColor=#ffffff;fontSize=12;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="20" y="164" width="900" height="232" as="geometry"/>
         </mxCell>
-        <mxCell id="6" value="&lt;b&gt;Mặt phẳng 1: Client Độc lập&lt;br&gt;(uav_client.py · PID riêng)&lt;/b&gt;&lt;br&gt;• Terminal khác / Máy LAN&lt;br&gt;• Đóng gói 26B + CRC32&lt;br&gt;• TCP (:9000): JOIN, FIRE, LEAVE&lt;br&gt;• UDP (:9001): TELEMETRY 1 Hz" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="6" value="&lt;b&gt;Mặt phẳng 1: Client Độc lập&lt;br&gt;(uav_client.py · PID riêng)&lt;/b&gt;&lt;br&gt;• Tiếp quản UAV_09 (hoặc UAV_EXT_*)&lt;br&gt;• Đóng gói 26B + CRC32&lt;br&gt;• TCP (:9000): JOIN, FIRE, LEAVE&lt;br&gt;• UDP (:9001): Virtual RF Gateway" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="40" y="206" width="215" height="172" as="geometry"/>
         </mxCell>
         <mxCell id="7" value="Tiến trình Server Trạm Kiểm Lâm (main.py · PID chính)" style="swimlane;whiteSpace=wrap;html=1;startSize=24;fillColor=#ffffff;strokeColor=#000000;swimlaneFillColor=#ffffff;fontSize=12;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="340" y="202" width="560" height="180" as="geometry"/>
         </mxCell>
-        <mxCell id="8" value="&lt;b&gt;Lõi Mạng (network_stack &amp;amp; broker)&lt;/b&gt;&lt;br&gt;• Socket thật: TCP :9000 &amp;amp; UDP :9001&lt;br&gt;• TCP ARQ (ACK/Retry) vs UDP CRC32&lt;br&gt;• Định tuyến đa tầng A2G / FANET / LEO&lt;br&gt;• Bảng định tuyến L3 &amp;amp; Packet Sniffer" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=9;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="8" value="&lt;b&gt;Lõi Mạng (network_stack &amp;amp; broker)&lt;/b&gt;&lt;br&gt;• Socket thật: TCP :9000 &amp;amp; UDP :9001&lt;br&gt;• Virtual RF Gateway (A2G/FANET/LEO)&lt;br&gt;• TCP ARQ (ACK/Retry) vs UDP CRC32&lt;br&gt;• Định tuyến Dijkstra &amp;amp; Packet Sniffer" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=9;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="355" y="236" width="260" height="134" as="geometry"/>
         </mxCell>
         <mxCell id="9" value="&lt;b&gt;Lõi Hệ điều hành (os_kernel.py)&lt;/b&gt;&lt;br&gt;• Đa tiến trình Server / Client&lt;br&gt;• Luồng TCP/UDP phục vụ từng Client&lt;br&gt;• Mutex RLock (net_state_lock)&lt;br&gt;• PriorityQueue QoS (P0 &amp;gt; P1 &amp;gt; P2)&lt;br&gt;• Giám sát OS (PID, TID, CPU, RAM)" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=9;fontColor=#000000;" vertex="1" parent="1">
@@ -499,19 +499,19 @@
         <mxCell id="7" value="" style="html=1;points=[];perimeter=orthogonalPerimeter;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
           <mxGeometry x="765.0" y="190" width="10.0" height="140" as="geometry"/>
         </mxCell>
-        <mxCell id="8" value="1. TCP JOIN (ID, Zone, Pin=90%)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="8" value="1. TCP JOIN (UAV_09, PID) - Tiếp quản" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="165" y="86" as="sourcePoint"/>
             <mxPoint x="465" y="86" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="9" value="2. JOIN_ACK (IP=10.0.10.1, UDP=9001) + Thread Client" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="9" value="2. JOIN_ACK (IP=10.0.3.1, PA 4, RF) + Thread" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="465" y="122" as="sourcePoint"/>
             <mxPoint x="165" y="122" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="10" value="3. UDP TELEMETRY định kỳ 1 Hz" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;fontColor=#9673a6;fontSize=9;dashed=1;endArrow=open;endFill=0;" edge="1" parent="1">
+        <mxCell id="10" value="3. UDP TELEMETRY (0.8s) qua Virtual RF Gateway" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;fontColor=#9673a6;fontSize=9;dashed=1;endArrow=open;endFill=0;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="165" y="166" as="sourcePoint"/>
             <mxPoint x="465" y="166" as="targetPoint"/>
@@ -535,25 +535,25 @@
             <mxPoint x="765" y="282" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="14" value="7. TCP FIRE_ACK (xác nhận ghi nhận cháy)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="14" value="7. TCP FIRE_ACK / FIRE_NACK" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="465" y="324" as="sourcePoint"/>
             <mxPoint x="165" y="324" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="15" value="8. UDP TELEMETRY khi bay về Trạm sạc" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;fontColor=#9673a6;fontSize=9;dashed=1;endArrow=open;endFill=0;" edge="1" parent="1">
+        <mxCell id="15" value="8. SERVER_CMD (DISPATCH_FIRE / SET_CLOCK / RF)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#0284c7;fontColor=#0284c7;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
-            <mxPoint x="165" y="368" as="sourcePoint"/>
-            <mxPoint x="465" y="368" as="targetPoint"/>
+            <mxPoint x="465" y="368" as="sourcePoint"/>
+            <mxPoint x="165" y="368" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="16" value="9. TCP LEAVE (ngắt kết nối lịch sự)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="16" value="9. TCP LEAVE (trả quyền Autopilot về Server)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="165" y="412" as="sourcePoint"/>
             <mxPoint x="465" y="412" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="17" value="10. LEAVE_ACK -&amp;gt; Đóng Socket &amp;amp; thoát Thread" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="17" value="10. LEAVE_ACK -&amp;gt; Khôi phục UAV_09 &amp;amp; thoát Thread" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;dashed=1;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="465" y="448" as="sourcePoint"/>
             <mxPoint x="165" y="448" as="targetPoint"/>
@@ -562,7 +562,7 @@
         <mxCell id="18" value="opt" style="shape=umlFrame;whiteSpace=wrap;html=1;pointerEvents=0;width=55;height=20;fillColor=none;strokeColor=#b85450;fontSize=10;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="35" y="488" width="850" height="52" as="geometry"/>
         </mxCell>
-        <mxCell id="19" value="Thread SAGSINS-TCP-Client phát hiện EOF -&amp;gt; Khóa Mutex net_state_lock xóa phiên Client &amp;amp; chuyển UAV sang OFFLINE." style="text;html=1;align=center;verticalAlign=center;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="19" value="Thread SAGSINS-TCP-Client phát hiện EOF -&amp;gt; Khóa Mutex net_state_lock, chuyển OFFLINE &amp;amp; gọi STANDBY thế chỗ." style="text;html=1;align=center;verticalAlign=center;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="420" y="512" width="80" height="20" as="geometry"/>
         </mxCell>
       </root>
@@ -585,7 +585,7 @@
         <mxCell id="5" value="&lt;b&gt;UAV phát hiện cháy&lt;/b&gt;&lt;br&gt;VD: Z7 (10.0.7.1)" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="35" y="214" width="145" height="68" as="geometry"/>
         </mxCell>
-        <mxCell id="6" value="&lt;b&gt;UAV Chuyển tiếp&lt;/b&gt;&lt;br&gt;Mesh &amp;lt;= 2.200 m" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="6" value="&lt;b&gt;UAV Chuyển tiếp&lt;/b&gt;&lt;br&gt;Mesh &amp;lt;= 2.800 m" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="215" y="214" width="145" height="68" as="geometry"/>
         </mxCell>
         <mxCell id="7" value="&lt;b&gt;UAV gần Trạm&lt;/b&gt;&lt;br&gt;VD: Z1 (10.0.1.1)" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;fontColor=#000000;" vertex="1" parent="1">

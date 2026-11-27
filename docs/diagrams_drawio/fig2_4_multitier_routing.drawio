@@ -17,7 +17,7 @@
         <mxCell id="5" value="&lt;b&gt;UAV phát hiện cháy&lt;/b&gt;&lt;br&gt;VD: Z7 (10.0.7.1)" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="35" y="214" width="145" height="68" as="geometry"/>
         </mxCell>
-        <mxCell id="6" value="&lt;b&gt;UAV Chuyển tiếp&lt;/b&gt;&lt;br&gt;Mesh &amp;lt;= 2.200 m" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="6" value="&lt;b&gt;UAV Chuyển tiếp&lt;/b&gt;&lt;br&gt;Mesh &amp;lt;= 2.800 m" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="215" y="214" width="145" height="68" as="geometry"/>
         </mxCell>
         <mxCell id="7" value="&lt;b&gt;UAV gần Trạm&lt;/b&gt;&lt;br&gt;VD: Z1 (10.0.1.1)" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=10;fontColor=#000000;" vertex="1" parent="1">

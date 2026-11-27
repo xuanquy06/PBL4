@@ -1036,7 +1036,7 @@
     </div>
 
     <script>
-        const map = L.map('map', { center: [16.115, 108.265], zoom: 13 });
+        const map = L.map('map', { center: [16.125, 108.275], zoom: 14 });
 
         L.layerGroup([
             L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
@@ -1100,6 +1100,7 @@
             const newBlur = Math.max(3, Math.round(newRadius * 0.8));
             heatmapLayer.setOptions({ radius: newRadius, blur: newBlur });
         }
+        updateHeatmapRadiusByZoom();
 
         function flushPendingHeatmap() {
             if (isMapInteracting || !pendingHeatLatLngs) return;

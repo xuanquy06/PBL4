@@ -1,0 +1,33 @@
+[UAV_CLIENT] Đang kết nối TCP tới 127.0.0.1:9000 (PID=17352)...
+[UAV_CLIENT] Kết nối thành công (Tiếp quản UAV đội hình)! ID=MÁY_BAY_UAV_09 | IP=10.0.3.1 | Zone=ZONE_03 | Pin=48.7% (50kJ) | RF=FANET_RELAY | UDP=127.0.0.1:9001 | ACK=JOIN_ACK
+
+======================================================================
+ BẢNG ĐIỀU KHIỂN UAV CLIENT | UAV_09 (TIẾP QUẢN ĐỘI HÌNH)
+ PID=17352 | IP=10.0.3.1 | Vùng=ZONE_03 | Pin=48.6% (50kJ) | RF=FANET_RELAY
+----------------------------------------------------------------------
+  [f] Giả lập cảm biến phát hiện cháy tại vị trí bay (TCP FIRE_ALERT)
+  [b] Giả lập pin yếu 18% & bay về Trạm sạc (RTB -> CHARGING)
+  [c] Giả lập nạp đầy 100% & bay về vùng (kiểm thử phục hồi pin)
+  [e] Gửi thử 1 gói UDP lỗi bit CRC32 (kiểm lỗi phía Server)
+  [r] Xem chi tiết tuyến vô tuyến SAGSINS (A2G / FANET / LEO)
+  [s] Xem trạng thái tiến trình, Socket & Pin
+  [h] Hiện lại bảng điều khiển
+  [q] Rời mạng lịch sự (trả quyền bay tự động về Server) | Ctrl+C: Rớt mạng đột ngột
+======================================================================
+
+UAV_09> r
+[RF_GATEWAY] Kênh: FANET_RELAY | Số chặng: 2 | Trễ E2E: 0.02 ms | PER: 18.66%
+Lộ trình: UAV_09 -> UAV_31 -> SƠN_TRÀ
+UAV_09> s
+--- TRẠNG THÁI UAV_09 (TIẾP QUẢN (TAKEOVER)) ---
+  Tiến trình & Mạng : PID=17352 | IP=10.0.3.1 | Vùng=ZONE_03 | Kết nối=OK
+  Bay & Năng lượng  : State=PATROLLING (40 m/s) | Pin=48.2% (50 kJ) | Pos=(16.14720, 108.25210)
+  Tuyến vô tuyến RF : FANET_RELAY (2 chặng, 0.02 ms, PER=18.66%) | UAV_09 -> UAV_31 -> SƠN_TRÀ
+  Gói tin & Đồng hồ : UDP_TX=4 | TCP_TX=1 (ACK=1) | ServerCmd_RX=0 | Clock=1.0x
+UAV_09> f
+[TCP -> FIRE_ACK] Báo cháy & khóa mục tiêu tại (16.1469, 108.2521) | Pin khứ hồi=48.1% | Kênh=FANET_RELAY | Chặng=2 | Trễ=0.02 ms
+UAV_09> e
+[UDP -> CRC32_TEST] Đã gửi 1 gói UDP lỗi bit tới Server (kiểm tra EXT_UDP_CRC_ERR trên Dashboard).
+UAV_09> 
+[SERVER -> CLIENT] Nhận lệnh PING kiểm tra kết nối từ Server.
+UAV_09> 
