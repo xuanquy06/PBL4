@@ -158,17 +158,6 @@
     <div class="action-bar">
         <button class="btn btn-primary" onclick="startAll35()">▶ Khởi chạy 35 UAV (35 PID)</button>
         <button class="btn btn-danger" onclick="stopAll(false)">■ Dừng tất cả (LEAVE)</button>
-        <button class="btn btn-amber" onclick="startCustomUav()">+ Thêm UAV ngoài</button>
-        <input id="customId" class="inp" style="width:110px" value="UAV_EXT_01" title="Mã UAV lẻ">
-        <select id="customZone" class="inp" style="width:92px">
-            <option value="ZONE_01">ZONE_01</option>
-            <option value="ZONE_02">ZONE_02</option>
-            <option value="ZONE_03" selected>ZONE_03</option>
-            <option value="ZONE_04">ZONE_04</option>
-            <option value="ZONE_05">ZONE_05</option>
-            <option value="ZONE_06">ZONE_06</option>
-            <option value="ZONE_07">ZONE_07</option>
-        </select>
     </div>
     <div class="zone-pills">
         <span style="color:var(--muted);font-size:11px;">Khởi chạy nhanh 1 phân khu:</span>
@@ -185,7 +174,7 @@
 <main class="main-grid">
     <section class="panel">
         <div class="panel-hd">
-            <span>Danh sách tiến trình UAV Client (35 slot đội hình + UAV mở rộng)</span>
+            <span>Danh sách 35 tiến trình UAV Client</span>
             <span id="mgrPidLabel" style="color:var(--muted);font-family:var(--mono);font-size:11px;">Manager PID: -</span>
         </div>
         <div class="table-wrap">
@@ -265,15 +254,6 @@ async function startAll35() {
 async function startZone(zoneId) {
     await saveConfig();
     await api('/api/fleet/start-zone', 'POST', { zone_id: zoneId });
-    refreshStatus();
-}
-
-async function startCustomUav() {
-    await saveConfig();
-    const uav_id = document.getElementById('customId').value.trim() || 'UAV_EXT_01';
-    const zone_id = document.getElementById('customZone').value;
-    selectedId = uav_id.toUpperCase();
-    await api('/api/fleet/start-one', 'POST', { uav_id: selectedId, zone_id });
     refreshStatus();
 }
 
