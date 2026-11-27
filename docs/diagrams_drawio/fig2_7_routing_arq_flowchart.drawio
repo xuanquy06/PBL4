@@ -5,103 +5,113 @@
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
-        <mxCell id="2" value="Bắt đầu gửi bản tin" style="ellipse;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontColor=#000000;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="220.0" y="10.0" width="180" height="36" as="geometry"/>
+        <mxCell id="2" value="Client gửi gói tin 26B + CRC32" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EBF1F8;strokeColor=#2C4A70;fontSize=10;fontColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="205.0" y="10.0" width="210" height="36" as="geometry"/>
         </mxCell>
-        <mxCell id="3" value="&lt;b&gt;1. Lọc cạnh &amp;amp; Định tuyến Dijkstra&lt;/b&gt;&lt;br&gt;Bỏ PER &amp;gt;= 25%; chọn W_ij nhỏ nhất&lt;br&gt;(A2G -&amp;gt; FANET Mesh -&amp;gt; Vệ tinh LEO)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
-          <mxGeometry x="185" y="68" width="250" height="50" as="geometry"/>
+        <mxCell id="3" value="&lt;b&gt;1. Xác thực Checksum CRC32&lt;/b&gt;&lt;br&gt;Kiểm tra zlib.crc32() trên 22B + Payload&lt;br&gt;Ngay khi Socket Server nhận byte" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#475569;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="185" y="68" width="250" height="48" as="geometry"/>
         </mxCell>
-        <mxCell id="4" value="2. Giảm TTL đi 1 (TTL = TTL - 1)&lt;br&gt;&amp;amp; Cập nhật Bảng định tuyến L3" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
-          <mxGeometry x="195" y="138" width="230" height="38" as="geometry"/>
+        <mxCell id="4" value="CRC32 hợp lệ?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#475569;fontSize=10;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="230.0" y="134.0" width="160" height="56" as="geometry"/>
         </mxCell>
-        <mxCell id="5" value="TTL == 0?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
-          <mxGeometry x="235.0" y="193.0" width="150" height="62" as="geometry"/>
+        <mxCell id="5" value="&lt;b&gt;Hủy gói (CRC32_ERR)&lt;/b&gt;&lt;br&gt;Tăng bộ đếm lỗi CRC32&lt;br&gt;Ghi nhận lên Packet Sniffer" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FAF0F0;strokeColor=#8B2635;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="550" y="137" width="225" height="50" as="geometry"/>
         </mxCell>
-        <mxCell id="6" value="&lt;b&gt;Hủy gói (TTL_DROP)&lt;/b&gt;&lt;br&gt;Chống lặp tuyến vô hạn&lt;br&gt;Ghi nhận vào Sniffer" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
-          <mxGeometry x="550" y="199" width="210" height="50" as="geometry"/>
+        <mxCell id="6" value="Cự ly tới Trạm&lt;br&gt;d &amp;lt;= 6.000 m?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#475569;fontSize=10;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="210.0" y="221.0" width="200" height="62" as="geometry"/>
         </mxCell>
-        <mxCell id="7" value="&lt;b&gt;3. Đóng gói 26 Bytes + CRC32&lt;/b&gt;&lt;br&gt;Chèn Seq/Ack, Src/Dst IP, CRC32" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
-          <mxGeometry x="185" y="280" width="250" height="44" as="geometry"/>
+        <mxCell id="7" value="&lt;b&gt;Chọn Kênh 1: GROUND_LINK (A2G)&lt;/b&gt;&lt;br&gt;Truyền thẳng UAV -&amp;gt; SƠN_TRÀ (1 hop)&lt;br&gt;Độ trễ ~0.01 - 0.15 ms" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EBF1F8;strokeColor=#2C4A70;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="550" y="224" width="240" height="56" as="geometry"/>
         </mxCell>
-        <mxCell id="8" value="Giao thức?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
-          <mxGeometry x="230.0" y="339.0" width="160" height="62" as="geometry"/>
+        <mxCell id="8" value="&lt;b&gt;2. Đánh giá 3 Vệ tinh LEO (A2S+S2G)&lt;/b&gt;&lt;br&gt;Tìm LEO (&amp;lt;= 2.500 km, PER &amp;lt; 0.25)&lt;br&gt;có SNR thắt cổ chai cao nhất -&amp;gt; LEO / OUT" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#475569;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+          <mxGeometry x="185" y="344" width="250" height="56" as="geometry"/>
         </mxCell>
-        <mxCell id="9" value="&lt;b&gt;4A. Nhánh TCP (:9000)&lt;/b&gt;&lt;br&gt;• Gửi khung có tiền tố 4B qua Socket TCP&lt;br&gt;• Sai CRC32 -&amp;gt; Gửi lại ARQ (tối đa 3 lần)&lt;br&gt;• Đúng CRC32 -&amp;gt; Nhận ACK (DELIVERED)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=9;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="9" value="&lt;b&gt;3A. Nhánh TCP (:9000)&lt;/b&gt;&lt;br&gt;• Gắn tiền tố 4B (!I) giữ ranh giới khung&lt;br&gt;• JOIN / FIRE_ALERT / LEAVE tin cậy&lt;br&gt;• Đẩy 2 chiều SERVER_CMD xuống Client" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#EBF1F8;strokeColor=#2C4A70;fontSize=9;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="40" y="434" width="290" height="70" as="geometry"/>
         </mxCell>
-        <mxCell id="10" value="&lt;b&gt;4B. Nhánh UDP (:9001)&lt;/b&gt;&lt;br&gt;• Gửi datagram qua Socket UDP không ACK&lt;br&gt;• Đúng CRC32 -&amp;gt; Giao tới đích&lt;br&gt;• Sai CRC32 -&amp;gt; Hủy ngay (CRC32_DROP)" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=9;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="10" value="&lt;b&gt;3B. Nhánh UDP (:9001)&lt;/b&gt;&lt;br&gt;• Datagram Telemetry 1 Hz (không ACK)&lt;br&gt;• Kiểm định qua Kênh A2G / LEO&lt;br&gt;• Nếu OUT_OF_RANGE -&amp;gt; RF Drop" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#475569;fontSize=9;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="420" y="434" width="290" height="70" as="geometry"/>
         </mxCell>
-        <mxCell id="11" value="Ghi Packet Sniffer &amp;amp; Nhật ký QoS CSV" style="ellipse;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=10;fontColor=#000000;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="230.0" y="518.0" width="290" height="36" as="geometry"/>
+        <mxCell id="11" value="Ghi Packet Sniffer, Mutex RLock &amp;amp; CSV" style="ellipse;whiteSpace=wrap;html=1;fillColor=#EBF1F8;strokeColor=#2C4A70;fontSize=10;fontColor=#000000;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="225.0" y="518.0" width="300" height="36" as="geometry"/>
         </mxCell>
-        <mxCell id="12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="12" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1E293B;fontColor=#1E293B;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="310" y="46" as="sourcePoint"/>
             <mxPoint x="310" y="68" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1E293B;fontColor=#1E293B;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
-            <mxPoint x="310" y="118" as="sourcePoint"/>
-            <mxPoint x="310" y="138" as="targetPoint"/>
+            <mxPoint x="310" y="116" as="sourcePoint"/>
+            <mxPoint x="310" y="134" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="14" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="14" value="Sai" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#8B2635;fontColor=#8B2635;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
-            <mxPoint x="310" y="176" as="sourcePoint"/>
-            <mxPoint x="310" y="193" as="targetPoint"/>
+            <mxPoint x="390" y="162" as="sourcePoint"/>
+            <mxPoint x="550" y="162" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="15" value="Có" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#b85450;fontColor=#b85450;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="15" value="Đúng" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
-            <mxPoint x="385" y="224" as="sourcePoint"/>
-            <mxPoint x="550" y="224" as="targetPoint"/>
+            <mxPoint x="310" y="190" as="sourcePoint"/>
+            <mxPoint x="310" y="221" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="16" value="Không (TTL &amp;gt; 0)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="16" value="Có (A2G)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
-            <mxPoint x="310" y="255" as="sourcePoint"/>
-            <mxPoint x="310" y="280" as="targetPoint"/>
+            <mxPoint x="410" y="252" as="sourcePoint"/>
+            <mxPoint x="550" y="252" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="17" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#000000;fontColor=#000000;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="17" value="Không (&amp;gt; 6,0 km)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#475569;fontColor=#475569;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
-            <mxPoint x="310" y="324" as="sourcePoint"/>
-            <mxPoint x="310" y="339" as="targetPoint"/>
+            <mxPoint x="310" y="283" as="sourcePoint"/>
+            <mxPoint x="310" y="344" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="18" value="TCP" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#6c8ebf;fontColor=#6c8ebf;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="18" value="TCP" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
-            <mxPoint x="230" y="370" as="sourcePoint"/>
+            <mxPoint x="310" y="400" as="sourcePoint"/>
             <mxPoint x="185" y="434" as="targetPoint"/>
             <Array as="points">
-              <mxPoint x="185" y="370"/>
+              <mxPoint x="310" y="414"/>
+              <mxPoint x="185" y="414"/>
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="19" value="UDP" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;fontColor=#9673a6;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="19" value="UDP" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#475569;fontColor=#475569;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
-            <mxPoint x="390" y="370" as="sourcePoint"/>
+            <mxPoint x="310" y="414" as="sourcePoint"/>
             <mxPoint x="565" y="434" as="targetPoint"/>
             <Array as="points">
-              <mxPoint x="565" y="370"/>
+              <mxPoint x="565" y="414"/>
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="20" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="20" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;endArrow=none;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint x="670" y="280" as="sourcePoint"/>
+            <mxPoint x="565" y="414" as="targetPoint"/>
+            <Array as="points">
+              <mxPoint x="670" y="414"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="21" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="185" y="504" as="sourcePoint"/>
-            <mxPoint x="230" y="536" as="targetPoint"/>
+            <mxPoint x="225" y="536" as="targetPoint"/>
             <Array as="points">
               <mxPoint x="185" y="536"/>
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="21" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="22" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="565" y="504" as="sourcePoint"/>
-            <mxPoint x="520" y="536" as="targetPoint"/>
+            <mxPoint x="525" y="536" as="targetPoint"/>
             <Array as="points">
               <mxPoint x="565" y="536"/>
             </Array>

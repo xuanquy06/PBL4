@@ -7,6 +7,10 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, Response
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 if sys.platform == "win32":
     for stream in (sys.stdout, sys.stderr):
         if isinstance(stream, TextIOWrapper):
@@ -14,8 +18,6 @@ if sys.platform == "win32":
 
 from environment.simulation_loop import SimulationLoop
 from api.routes import tao_bo_dinh_tuyen_api
-
-PROJECT_ROOT = Path(__file__).resolve().parent
 
 
 @asynccontextmanager

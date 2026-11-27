@@ -354,8 +354,8 @@ class ScenarioManager:
 
     @staticmethod
     def _lay_toa_do_uav_dang_hoat_dong(active_uavs: Optional[list]) -> list[tuple[float, float]]:
-        """Lấy tọa độ (lat, lon) của các UAV đang bay trên không (PATROLLING, RELAYING, CONTAINING, RESPONDING)."""
-        active_states = ("PATROLLING", "RELAYING", "CONTAINING", "RESPONDING")
+        """Lấy tọa độ (lat, lon) của các UAV đang bay trên không (PATROLLING, TRANSITING, CONTAINING, RESPONDING)."""
+        active_states = ("PATROLLING", "TRANSITING", "CONTAINING", "RESPONDING")
         coords: list[tuple[float, float]] = []
         if not active_uavs:
             return coords

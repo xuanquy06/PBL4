@@ -1,6 +1,6 @@
 """
 Bộ điều phối Giám sát Tự Phát hiện & Phản ứng Cục bộ theo Heatmap (Autonomous Swarm Response).
-Đã loại bỏ hoàn toàn cơ chế đấu thầu tập trung FIPA-CNP (CFP_FIRE_EVENT, PROPOSE, REFUSE, ACCEPT_PROPOSAL).
+Mô hình Client-Server 3 tầng SAGSINS thuần (A2G trực tiếp <= 3.5 km hoặc Vệ tinh LEO <= 2500 km).
 """
 import math
 import time
@@ -9,11 +9,11 @@ from typing import Any, Optional
 
 class GroundStationServer:
     """
-    Trung tâm Giám sát & Tiếp nhận Báo cáo Phản ứng Bầy đàn (Autonomous Swarm Response Monitor):
+    Trung tâm Giám sát & Tiếp nhận Báo cáo Sự cố:
     - Khi tạo đám cháy: Đánh dấu trạng thái "UNVERIFIED" (Trạm chưa biết / Đang âm ỉ).
-    - Khi UAV trong phân khu bay vào bán kính <= 600m: Chuyển trạng thái sang "DETECTED".
-    - Khi UAV tự khóa mục tiêu (> 25% pin khứ hồi) hoặc bàn giao P2P (<= 25% pin):
-      Chuyển trạng thái sang "CONTAINING" (Đang khoanh vùng 130m) và ghi nhận tuyến báo cáo Dijkstra E2E.
+    - Khi UAV Client bay vào bán kính <= 600m: Chuyển trạng thái sang "DETECTED".
+    - Khi UAV Client đủ pin khứ hồi (> 25%) hoặc được Server điều phối bàn giao:
+      Chuyển trạng thái sang "CONTAINING" (Đang khoanh vùng 130m) và ghi nhận kênh truyền A2G/LEO.
     """
 
     def __init__(self, broker: Any):
@@ -218,9 +218,9 @@ class GroundStationServer:
         record["pin_khu_hoi_du_kien_pct"] = round(float(pin_khu_hoi_pct), 1)
         record["diem_rui_ro_nhiet_tb"] = self._tinh_diem_rui_ro_nhiet_tb(zone_id or record.get("zone_id"))
 
-        if la_p2p or record.get("loai_phan_ung") == "P2P_HANDOVER":
-            record["loai_phan_ung"] = "P2P_HANDOVER"
-            record["co_che_phan_ung"] = "Ủy quyền P2P (P2P Handover)"
+        if la_p2p or record.get("loai_phan_ung") == "SWARM_HANDOVER":
+            record["loai_phan_ung"] = "SWARM_HANDOVER"
+            record["co_che_phan_ung"] = "Bàn giao qua Server (Task Handover)"
         else:
             record["loai_phan_ung"] = "DIRECT_LOCK"
             record["co_che_phan_ung"] = "Tự khóa mục tiêu (Direct Lock)"
@@ -240,12 +240,12 @@ class GroundStationServer:
             "WIN",
             f"[TARGET_LOCKED] [{uav_id}] (Pin khứ hồi dự kiến: {pin_khu_hoi_pct:.1f}% > 25%) "
             f"khóa mục tiêu đám cháy ({vi_do:.4f}, {kinh_do:.4f}) "
-            f"[{record['co_che_phan_ung']}] và lao vào khoanh vùng 130m."
+            f"[{record['co_che_phan_ung']}] và bay vào khoanh vùng 130m."
         )
         await self._dong_bo_su_kien_ra_web()
         return record
 
-    async def ghi_nhan_ban_giao_p2p(
+    async def ghi_nhan_ban_giao_nhiem_vu(
         self,
         vi_do: float,
         kinh_do: float,
@@ -256,8 +256,8 @@ class GroundStationServer:
         zone_id: Optional[str] = None
     ) -> dict[str, Any]:
         """
-        3b. Khi UAV phát hiện có pin khứ hồi <= 25%, phát sự kiện [P2P_HANDOVER]
-        bàn giao trực tiếp cho UAV có pin cao nhất trong cùng phân khu xử lý.
+        3b. Khi UAV phát hiện có pin khứ hồi <= 25%, Server điều phối bàn giao trực tiếp
+        cho UAV Client có pin cao nhất khả dụng trong cùng phân khu xử lý thay.
         """
         record = self.tim_su_co_gan_nhat(vi_do, kinh_do)
         if not record:
@@ -267,43 +267,45 @@ class GroundStationServer:
 
         record["uav_phat_hien_dau_tien"] = uav_phat_hien
         record["uav_nhan_nhiem_vu"] = uav_tiep_ung
-        record["loai_phan_ung"] = "P2P_HANDOVER"
-        record["co_che_phan_ung"] = "Ủy quyền P2P (P2P Handover)"
+        record["loai_phan_ung"] = "SWARM_HANDOVER"
+        record["co_che_phan_ung"] = "Bàn giao qua Server (Task Handover)"
         record["pin_khu_hoi_du_kien_pct"] = round(float(pin_tiep_ung_pct), 1)
         record["diem_rui_ro_nhiet_tb"] = self._tinh_diem_rui_ro_nhiet_tb(zone_id or record.get("zone_id"))
         self.su_co_hien_tai = record
 
         await self.broker.gui_log_ra_web(
             "WARN",
-            f"[P2P_HANDOVER] [{uav_phat_hien}] pin khứ hồi yếu ({pin_phat_hien_pct:.1f}% <= 25%) "
-            f"➔ Ủy quyền P2P trực tiếp cho [{uav_tiep_ung}] (pin cao nhất vùng {zone_id or record.get('zone_id')}: "
+            f"[SWARM_HANDOVER] [{uav_phat_hien}] pin khứ hồi yếu ({pin_phat_hien_pct:.1f}% <= 25%) "
+            f"➔ Server điều phối [{uav_tiep_ung}] (pin vùng {zone_id or record.get('zone_id')}: "
             f"khứ hồi {pin_tiep_ung_pct:.1f}%) xử lý đám cháy ({vi_do:.4f}, {kinh_do:.4f})."
         )
         await self._dong_bo_su_kien_ra_web()
         return record
 
-    async def ghi_nhan_bao_cao_dijkstra(
+    async def ghi_nhan_bao_cao_truyen_tin(
         self,
         vi_do: float,
         kinh_do: float,
         uav_id: str,
         lo_trinh_hop: list[str],
-        do_tre_ms: float = 0.0
+        do_tre_ms: float = 0.0,
+        link_type: str = "GROUND_LINK",
     ):
-        """Ghi nhận tuyến báo cáo E2E Dijkstra từ UAV khoanh vùng về Trạm Kiểm Lâm."""
+        """Ghi nhận tuyến báo cáo 2 kênh SAGSINS (A2G / LEO) từ UAV khoanh vùng về Trạm Kiểm Lâm."""
         record = self.tim_su_co_gan_nhat(vi_do, kinh_do)
         if record:
             record["tuyen_bao_cao_e2e"] = list(lo_trinh_hop)
+            record["kenh_truyen"] = link_type
             self.su_co_hien_tai = record
 
-        chuoi_tuyen = " ➔ ".join(
+        chuoi_tuyen = " -> ".join(
             n.replace("MÁY_BAY_", "").replace("TRẠM_KIỂM_LÂM_", "")
             for n in lo_trinh_hop
         )
-        so_hop = max(0, len(lo_trinh_hop) - 1)
+        kenh_label = "A2G trực tiếp" if link_type == "GROUND_LINK" else "Vệ tinh LEO (A2S+S2G)"
         await self.broker.gui_log_ra_web(
             "ROUTE",
-            f"[DIJKSTRA_REPORT] [{uav_id}] gửi báo cáo khoanh vùng đám cháy ({vi_do:.4f}, {kinh_do:.4f}) "
-            f"qua định tuyến Dijkstra E2E ({so_hop} hops: {chuoi_tuyen} | Trễ: {do_tre_ms:.1f} ms)."
+            f"[SAGSINS_REPORT] [{uav_id}] gửi báo cáo cháy ({vi_do:.4f}, {kinh_do:.4f}) "
+            f"qua kênh {kenh_label}: {chuoi_tuyen} | Trễ: {do_tre_ms:.1f} ms."
         )
         await self._dong_bo_su_kien_ra_web()

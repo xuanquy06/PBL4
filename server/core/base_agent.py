@@ -9,22 +9,19 @@ from core.os_kernel import BoundedPriorityQueue
 
 class AgentState(str, Enum):
     """Máy trạng thái hữu hạn (FSM) chuẩn hóa cho các tác nhân trong mạng SAGSINS"""
-    IDLE = "NHÀN_RỖI"                 # Sẵn sàng chờ lệnh (Trạm mặt đất / Vệ tinh)
+    IDLE = "NHÀN_RỖI"                 # Sẵn sàng chờ lệnh (Trạm mặt đất / Vệ tinh / UAV dự bị)
     PATROLLING = "ĐANG_TUẦN_TRA"      # Đang bay theo quỹ đạo quét sự cố (UAV)
     RESPONDING = "ĐANG_PHẢN_ỨNG"      # Đang phản ứng tiếp cận sự cố cháy rừng
-    RELAYING = "ĐANG_TRUYỀN_TẢI"      # Đang đóng vai trò trạm trung chuyển dữ liệu
     RETURNING = "ĐANG_QUAY_VỀ_SẠC"    # UAV quay về trạm để tránh cạn pin
     CHARGING = "ĐANG_SẠC"             # UAV nạp pin tại trạm mặt đất
     LOW_BATTERY_RTB = "PIN_YẾU_RTB"   # Pin dưới ngưỡng an toàn, quay về trạm
     LOW_BATTERY = "PIN_YẾU_RTB"       # Bí danh tương thích với trạng thái cũ
-    OFFLINE = "NGẮT_KẾT_NỐI"          # Sập nguồn hoặc hỏng hóc phần cứng
+    OFFLINE = "NGẮT_KẾT_NỐI"          # Mất kết nối TCP hoặc cạn pin
 
 
 class BaseAgent(ABC):
     """
-    Lớp trừu tượng cơ sở (Abstract Base Class) định nghĩa kiến trúc chuẩn cho mọi Node mạng.
-    Mỗi tác nhân duy trì bảng láng giềng cục bộ (Local Neighbor Belief) được cập nhật
-    qua các bản tin vô tuyến nhận được, đảm bảo tính tự trị độc lập của hệ thống MAS.
+    Lớp trừu tượng cơ sở (Abstract Base Class) định nghĩa kiến trúc chuẩn cho mọi Node mạng SAGSINS.
     """
     NEIGHBOR_TIMEOUT_SEC = 15.0
 
@@ -220,54 +217,6 @@ class BaseAgent(ABC):
         if self.trang_thai != trang_thai_moi:
             self.trang_thai = trang_thai_moi
 
-    def xuat_bang_dinh_tuyen(self) -> list[dict]:
-        """Xuất bảng định tuyến tầng Mạng (L3 Routing Table) của node hiện tại."""
-        routes: list[dict] = []
-        now = time.time()
-        tac_nhan_map = getattr(self.bo_dinh_tuyen, "danh_sach_tac_nhan", {}) or {}
-
-        if len(self.tuyen_ve_tram_cuc_bo) >= 2:
-            dest_id = self.tuyen_ve_tram_cuc_bo[-1]
-            next_id = self.tuyen_ve_tram_cuc_bo[1]
-            dest_ag = tac_nhan_map.get(dest_id)
-            next_ag = tac_nhan_map.get(next_id)
-            next_kind = getattr(next_ag, "loai_tac_nhan", "")
-            iface = (
-                "A2G_RADIO" if next_kind == "TRẠM_MẶT_ĐẤT"
-                else ("LEO_KU_BAND" if "VỆ_TINH" in next_kind else "FANET_WIFI")
-            )
-            routes.append({
-                "dest": dest_id,
-                "dest_ip": getattr(dest_ag, "ip_address", "10.0.0.1"),
-                "next_hop": next_id,
-                "next_hop_ip": getattr(next_ag, "ip_address", "10.0.0.1"),
-                "metric": round(float(self.chi_phi_ve_tram_cuc_bo), 2)
-                if self.chi_phi_ve_tram_cuc_bo != float("inf") else 9999.0,
-                "interface": iface,
-                "hops": len(self.tuyen_ve_tram_cuc_bo) - 1,
-                "ttl_remaining": 16,
-            })
-
-        for nid, info in list(self.bang_lang_gieng.items()):
-            ag = tac_nhan_map.get(nid)
-            n_kind = str(info.get("loai_tac_nhan", getattr(ag, "loai_tac_nhan", "")))
-            iface = (
-                "A2G_RADIO" if n_kind == "TRẠM_MẶT_ĐẤT"
-                else ("LEO_KU_BAND" if "VỆ_TINH" in n_kind else "FANET_WIFI")
-            )
-            ttl_rem = max(0.0, round(self.NEIGHBOR_TIMEOUT_SEC - (now - float(info.get("thoi_diem_cap_nhat", now))), 1))
-            routes.append({
-                "dest": nid,
-                "dest_ip": getattr(ag, "ip_address", "10.0.0.0"),
-                "next_hop": nid,
-                "next_hop_ip": getattr(ag, "ip_address", "10.0.0.0"),
-                "metric": round(float(info.get("do_tre_ms", 0.0)), 2),
-                "interface": iface,
-                "hops": 1,
-                "ttl_remaining": ttl_rem,
-            })
-        return routes
-
     def xuat_ho_so_trang_thai(self) -> dict:
         """
         Đóng gói thông số telemetry của node thành dữ liệu JSON cho bản đồ và bảng giám sát.
@@ -294,7 +243,6 @@ class BaseAgent(ABC):
             "queue_size": self.hang_doi_thong_diep.qsize(),
             "tai_hang_doi_pct": self.tai_hang_doi_pct,
             "cong_suat_dbm": self.radio_config["cong_suat_phat_dbm"],
-            "so_lang_gieng": len(self.bang_lang_gieng),
             "route_to_sink": list(self.tuyen_ve_tram_cuc_bo),
             "thong_ke": self.thong_ke
         }

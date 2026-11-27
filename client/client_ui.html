@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAGSINS Client Fleet Control</title>
+    <style>
+        :root {
+            --bg-main: #0f172a;
+            --bg-panel: #1e293b;
+            --bg-card: #162032;
+            --border: rgba(148, 163, 184, 0.22);
+            --text: #f1f5f9;
+            --muted: #94a3b8;
+            --cyan: #06b6d4;
+            --blue: #3b82f6;
+            --green: #10b981;
+            --amber: #f59e0b;
+            --red: #ef4444;
+            --purple: #a855f7;
+            --mono: "JetBrains Mono", "Consolas", monospace;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: var(--bg-main);
+            color: var(--text);
+            font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+            font-size: 13px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .topbar {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 10px 16px;
+            background: rgba(15, 23, 42, 0.96);
+            border-bottom: 1px solid var(--border);
+        }
+        .brand { display: flex; align-items: center; gap: 10px; }
+        .brand-badge {
+            width: 34px; height: 34px; border-radius: 9px;
+            background: linear-gradient(135deg, #06b6d4, #2563eb);
+            display: grid; place-items: center; font-weight: 800; font-size: 12px; color: #fff;
+        }
+        .brand h1 { font-size: 15px; font-weight: 700; }
+        .brand small { color: var(--muted); font-size: 11px; display: block; }
+        .cfg-bar, .kpi-bar, .action-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        label.lbl { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+        input.inp {
+            background: #0b1220; color: var(--text); border: 1px solid var(--border);
+            border-radius: 6px; padding: 5px 8px; font-family: var(--mono); font-size: 12px;
+        }
+        .kpi {
+            background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px;
+            padding: 5px 10px; display: flex; align-items: center; gap: 6px; font-size: 12px;
+        }
+        .kpi strong { font-family: var(--mono); font-size: 13px; }
+        .btn {
+            border: 1px solid var(--border); background: #263349; color: var(--text);
+            padding: 6px 11px; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer;
+            transition: filter .15s;
+        }
+        .btn:hover { filter: brightness(1.15); }
+        .btn:disabled { opacity: 0.42; cursor: not-allowed; filter: none; }
+        .btn-primary { background: linear-gradient(135deg, #059669, #10b981); border-color: #34d399; color: #fff; }
+        .btn-blue { background: linear-gradient(135deg, #2563eb, #3b82f6); border-color: #60a5fa; color: #fff; }
+        .btn-amber { background: rgba(245, 158, 11, 0.18); border-color: rgba(245, 158, 11, 0.5); color: #fcd34d; }
+        .btn-danger { background: rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.55); color: #fca5a5; }
+        .btn-sm { padding: 3px 8px; font-size: 11px; border-radius: 5px; }
+        .subbar {
+            display: flex; align-items: center; justify-content: space-between; gap: 10px;
+            padding: 8px 16px; background: var(--bg-card); border-bottom: 1px solid var(--border);
+            flex-wrap: wrap;
+        }
+        .zone-pills { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .main-grid {
+            flex: 1; display: grid; grid-template-columns: 1.55fr 1fr; gap: 12px;
+            padding: 12px 16px; overflow: hidden;
+        }
+        .panel {
+            background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
+            display: flex; flex-direction: column; overflow: hidden;
+        }
+        .panel-hd {
+            padding: 9px 12px; border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between;
+            background: rgba(15, 23, 42, 0.45); font-weight: 700; font-size: 12.5px;
+        }
+        .table-wrap { flex: 1; overflow-y: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        thead th {
+            position: sticky; top: 0; background: #141e30; color: var(--muted);
+            text-align: left; padding: 7px 8px; font-size: 11px; border-bottom: 1px solid var(--border); z-index: 1;
+        }
+        tbody tr { border-bottom: 1px solid rgba(148, 163, 184, 0.1); cursor: pointer; }
+        tbody tr:hover { background: rgba(59, 130, 246, 0.1); }
+        tbody tr.selected { background: rgba(6, 182, 212, 0.16); }
+        tbody td { padding: 6px 8px; font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+        .badge {
+            display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10.5px; font-weight: 700;
+        }
+        .b-patrol { background: rgba(6, 182, 212, 0.18); color: #67e8f9; }
+        .b-standby { background: rgba(148, 163, 184, 0.2); color: #cbd5e1; }
+        .b-fire { background: rgba(245, 158, 11, 0.24); color: #fbbf24; }
+        .b-rtb { background: rgba(234, 179, 8, 0.2); color: #fde047; }
+        .b-off { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+        .b-a2g { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
+        .b-leo { background: rgba(168, 85, 247, 0.22); color: #d8b4fe; }
+        .inspector-body { padding: 12px; display: flex; flex-direction: column; gap: 10px; flex: 1; overflow: hidden; }
+        .meta-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+        .meta-item {
+            background: #0f172a; border: 1px solid var(--border); border-radius: 6px;
+            padding: 6px 8px;
+        }
+        .meta-item span { display: block; font-size: 10.5px; color: var(--muted); }
+        .meta-item strong { font-family: var(--mono); font-size: 12px; color: var(--text); }
+        .cmd-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+        .term-box {
+            flex: 1; background: #070b14; border: 1px solid var(--border); border-radius: 7px;
+            padding: 8px; font-family: var(--mono); font-size: 11px; color: #cbd5e1;
+            overflow-y: auto; line-height: 1.45; white-space: pre-wrap;
+        }
+        @media (max-width: 1100px) {
+            .main-grid { grid-template-columns: 1fr; overflow-y: auto; }
+        }
+    </style>
+</head>
+<body>
+<header class="topbar">
+    <div class="brand">
+        <div class="brand-badge">UAV</div>
+        <div>
+            <h1>SAGSINS Client Fleet Control</h1>
+            <small>Quản lý 35 tiến trình UAV Client (TCP :9000 &amp; UDP :9001)</small>
+        </div>
+    </div>
+
+    <div class="cfg-bar">
+        <label class="lbl">Server IP <input id="cfgHost" class="inp" style="width:125px" value="127.0.0.1"></label>
+        <label class="lbl">TCP <input id="cfgTcp" class="inp" style="width:62px" value="9000"></label>
+        <label class="lbl">UDP <input id="cfgUdp" class="inp" style="width:62px" value="9001"></label>
+        <button class="btn" onclick="saveConfig()">Lưu cổng</button>
+    </div>
+
+    <div class="kpi-bar">
+        <div class="kpi">PID đang chạy <strong id="kRunning" style="color:#67e8f9">0/35</strong></div>
+        <div class="kpi">Kênh A2G / LEO <strong id="kTiers" style="color:#6ee7b7">0 / 0</strong></div>
+        <div class="kpi">Gói TCP / UDP TX <strong id="kPkts">0 / 0</strong></div>
+    </div>
+</header>
+
+<section class="subbar">
+    <div class="action-bar">
+        <button class="btn btn-primary" onclick="startAll35()">▶ Khởi chạy 35 UAV (35 PID)</button>
+        <button class="btn btn-danger" onclick="stopAll(false)">■ Dừng tất cả (LEAVE)</button>
+        <button class="btn btn-amber" onclick="startCustomUav()">+ Thêm UAV ngoài</button>
+        <input id="customId" class="inp" style="width:110px" value="UAV_EXT_01" title="Mã UAV lẻ">
+        <select id="customZone" class="inp" style="width:92px">
+            <option value="ZONE_01">ZONE_01</option>
+            <option value="ZONE_02">ZONE_02</option>
+            <option value="ZONE_03" selected>ZONE_03</option>
+            <option value="ZONE_04">ZONE_04</option>
+            <option value="ZONE_05">ZONE_05</option>
+            <option value="ZONE_06">ZONE_06</option>
+            <option value="ZONE_07">ZONE_07</option>
+        </select>
+    </div>
+    <div class="zone-pills">
+        <span style="color:var(--muted);font-size:11px;">Khởi chạy nhanh 1 phân khu:</span>
+        <button class="btn btn-sm btn-blue" onclick="startZone('ZONE_01')">Z1</button>
+        <button class="btn btn-sm btn-blue" onclick="startZone('ZONE_02')">Z2</button>
+        <button class="btn btn-sm btn-blue" onclick="startZone('ZONE_03')">Z3</button>
+        <button class="btn btn-sm btn-blue" onclick="startZone('ZONE_04')">Z4</button>
+        <button class="btn btn-sm btn-blue" onclick="startZone('ZONE_05')">Z5</button>
+        <button class="btn btn-sm btn-blue" onclick="startZone('ZONE_06')">Z6</button>
+        <button class="btn btn-sm btn-blue" onclick="startZone('ZONE_07')">Z7</button>
+    </div>
+</section>
+
+<main class="main-grid">
+    <section class="panel">
+        <div class="panel-hd">
+            <span>Danh sách tiến trình UAV Client (35 slot đội hình + UAV mở rộng)</span>
+            <span id="mgrPidLabel" style="color:var(--muted);font-family:var(--mono);font-size:11px;">Manager PID: -</span>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>UAV ID</th>
+                        <th>OS PID</th>
+                        <th>Phân khu</th>
+                        <th>Vai trò</th>
+                        <th>Trạng thái</th>
+                        <th>Pin %</th>
+                        <th>Kênh</th>
+                        <th>TCP / UDP</th>
+                        <th>Thao tác</th>
+                    </tr>
+                </thead>
+                <tbody id="fleetBody"></tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="panel">
+        <div class="panel-hd">
+            <span>Tiến trình OS &amp; Socket của <strong id="selTitle" style="color:var(--cyan)">UAV_09</strong></span>
+            <span id="selPidBadge" style="color:var(--muted);font-family:var(--mono);font-size:11px;">PID: -</span>
+        </div>
+        <div class="inspector-body">
+            <div class="meta-grid">
+                <div class="meta-item"><span>Địa chỉ IPv4 / Phân khu</span><strong id="mIpZone">-</strong></div>
+                <div class="meta-item"><span>Kênh SAGSINS / Tuyến</span><strong id="mRoute">-</strong></div>
+                <div class="meta-item"><span>Cự ly / SNR / Độ trễ</span><strong id="mLinkStat">-</strong></div>
+                <div class="meta-item"><span>Lệnh Server đẩy xuống</span><strong id="mCmdRx">0</strong></div>
+            </div>
+
+            <div class="cmd-grid">
+                <button id="btnStartRestart" class="btn btn-primary" onclick="startOrRestartSelected()">▶ Khởi chạy tiến trình</button>
+                <button id="btnLeave" class="btn" onclick="sendCmd('q')" disabled>⏹ Ngắt kết nối (LEAVE)</button>
+                <button id="btnToggleUdp" class="btn" onclick="sendCmd('u')" disabled>⏸ Tạm ngưng UDP</button>
+                <button id="btnKillSel" class="btn btn-danger" onclick="killSelected()" disabled>💀 Kill PID đột ngột</button>
+            </div>
+
+            <div style="font-size:11px;color:var(--muted);display:flex;justify-content:space-between;">
+                <span>Terminal Stdout trực tiếp của tiến trình con</span>
+                <span id="selLiveTag">Chờ chạy...</span>
+            </div>
+            <div id="termBox" class="term-box">Chọn một UAV và bấm "Khởi chạy" hoặc "▶ Khởi chạy 35 UAV"...</div>
+        </div>
+    </section>
+</main>
+
+<script>
+let selectedId = 'UAV_09';
+let cfgInitialized = false;
+let latestClients = [];
+
+async function api(url, method = 'GET', body = null) {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body !== null) opts.body = JSON.stringify(body);
+    const res = await fetch(url, opts);
+    return await res.json();
+}
+
+async function saveConfig() {
+    const server_host = document.getElementById('cfgHost').value.trim();
+    const tcp_port = parseInt(document.getElementById('cfgTcp').value, 10) || 9000;
+    const udp_port = parseInt(document.getElementById('cfgUdp').value, 10) || 9001;
+    await api('/api/fleet/config', 'POST', { server_host, tcp_port, udp_port });
+}
+
+async function startAll35() {
+    await saveConfig();
+    await api('/api/fleet/start-all', 'POST', {});
+    refreshStatus();
+}
+
+async function startZone(zoneId) {
+    await saveConfig();
+    await api('/api/fleet/start-zone', 'POST', { zone_id: zoneId });
+    refreshStatus();
+}
+
+async function startCustomUav() {
+    await saveConfig();
+    const uav_id = document.getElementById('customId').value.trim() || 'UAV_EXT_01';
+    const zone_id = document.getElementById('customZone').value;
+    selectedId = uav_id.toUpperCase();
+    await api('/api/fleet/start-one', 'POST', { uav_id: selectedId, zone_id });
+    refreshStatus();
+}
+
+async function startOne(id, ev) {
+    if (ev) ev.stopPropagation();
+    await saveConfig();
+    selectedId = id;
+    await api('/api/fleet/start-one', 'POST', { uav_id: id });
+    refreshStatus();
+}
+
+async function startOrRestartSelected() {
+    await saveConfig();
+    const cur = latestClients.find(x => x.short_id === selectedId);
+    if (cur && cur.alive) {
+        await api('/api/fleet/restart-one', 'POST', { uav_id: selectedId });
+    } else {
+        await api('/api/fleet/start-one', 'POST', { uav_id: selectedId });
+    }
+    refreshStatus();
+    refreshLogs();
+}
+
+async function killOne(id, ev) {
+    if (ev) ev.stopPropagation();
+    await api('/api/fleet/kill', 'POST', { uav_id: id });
+    refreshStatus();
+}
+
+async function stopAll(force) {
+    await api('/api/fleet/stop-all', 'POST', { force });
+    refreshStatus();
+}
+
+async function sendCmd(cmd) {
+    const res = await api('/api/fleet/command', 'POST', { uav_id: selectedId, cmd });
+    if (!res.ok) alert(res.error || 'Lỗi gửi lệnh');
+    refreshLogs();
+}
+
+async function killSelected() {
+    const res = await api('/api/fleet/kill', 'POST', { uav_id: selectedId });
+    if (!res.ok) alert(res.error || 'Tiến trình không chạy');
+    refreshStatus();
+}
+
+function selectRow(id) {
+    selectedId = id;
+    renderAll();
+    refreshLogs();
+}
+
+function stateBadge(st, alive) {
+    if (!alive) return `<span class="badge b-off">${st || 'OFFLINE'}</span>`;
+    if (st === 'CONTAINING' || st === 'RESPONDING') return `<span class="badge b-fire">${st}</span>`;
+    if (st === 'RETURNING' || st === 'CHARGING') return `<span class="badge b-rtb">${st}</span>`;
+    if (st === 'STANDBY') return `<span class="badge b-standby">STANDBY</span>`;
+    return `<span class="badge b-patrol">${st}</span>`;
+}
+
+function linkBadge(lk) {
+    if (lk === 'GROUND_LINK') return '<span class="badge b-a2g">A2G</span>';
+    if (lk === 'LEO_SATELLITE') return '<span class="badge b-leo">LEO</span>';
+    if (lk === 'OUT_OF_RANGE') return '<span class="badge b-off">OUT</span>';
+    return '<span style="color:var(--muted)">-</span>';
+}
+
+function renderAll() {
+    const tbody = document.getElementById('fleetBody');
+    tbody.innerHTML = latestClients.map(c => {
+        const sid = c.short_id;
+        const isSel = sid === selectedId;
+        const pidTxt = c.alive && c.pid ? c.pid : '-';
+        const batTxt = c.pid ? `${Number(c.battery || 0).toFixed(1)}%` : '-';
+        const actionBtn = c.alive
+            ? `<button class="btn btn-sm btn-danger" onclick="killOne('${sid}', event)">Kill PID</button>`
+            : `<button class="btn btn-sm btn-primary" onclick="startOne('${sid}', event)">Bật</button>`;
+        const udpOffBadge = (c.alive && c.udp_muted) ? '<span class="badge b-off" style="margin-left:4px">UDP OFF</span>' : '';
+        return `<tr class="${isSel ? 'selected' : ''}" onclick="selectRow('${sid}')">
+            <td><strong>${sid}</strong></td>
+            <td style="color:#67e8f9">${pidTxt}</td>
+            <td>${c.zone_id || '-'}</td>
+            <td style="color:var(--muted)">${c.role || 'PATROL'}</td>
+            <td>${stateBadge(c.state, c.alive)}</td>
+            <td>${batTxt}</td>
+            <td>${linkBadge(c.rf_link)}${udpOffBadge}</td>
+            <td>${c.tcp_tx || 0} / ${c.udp_tx || 0}</td>
+            <td>${actionBtn}</td>
+        </tr>`;
+    }).join('');
+
+    const cur = latestClients.find(x => x.short_id === selectedId);
+    const alive = !!(cur && cur.alive);
+    const muted = !!(cur && cur.udp_muted);
+
+    const btnStartRestart = document.getElementById('btnStartRestart');
+    const btnLeave = document.getElementById('btnLeave');
+    const btnToggleUdp = document.getElementById('btnToggleUdp');
+    const btnKillSel = document.getElementById('btnKillSel');
+
+    btnStartRestart.textContent = alive ? '↻ Khởi động lại PID' : '▶ Khởi chạy tiến trình';
+    btnStartRestart.className = alive ? 'btn btn-blue' : 'btn btn-primary';
+    btnLeave.disabled = !alive;
+    btnToggleUdp.disabled = !alive;
+    btnToggleUdp.textContent = (alive && muted) ? '▶ Mở lại UDP' : '⏸ Tạm ngưng UDP';
+    btnToggleUdp.className = (alive && muted) ? 'btn btn-amber' : 'btn';
+    btnKillSel.disabled = !alive;
+
+    document.getElementById('selTitle').textContent = selectedId;
+    if (cur) {
+        document.getElementById('selPidBadge').textContent = `PID: ${alive && cur.pid ? cur.pid : 'Chưa chạy'}`;
+        document.getElementById('mIpZone').textContent = `${cur.ip || '-'} · ${cur.zone_id || '-'} (${cur.role || '-'})`;
+        const hops = Array.isArray(cur.rf_hops) && cur.rf_hops.length ? cur.rf_hops.join(' -> ') : '-';
+        document.getElementById('mRoute').textContent = `${cur.rf_link || '-'} · [${hops}]`;
+        document.getElementById('mLinkStat').textContent = `${Number(cur.distance_m || 0).toFixed(0)}m · ${Number(cur.rf_snr_db || 0).toFixed(1)}dB · ${Number(cur.rf_delay_ms || 0).toFixed(2)}ms`;
+        document.getElementById('mCmdRx').textContent = `${cur.cmd_rx || 0} (Pin: ${Number(cur.battery || 0).toFixed(1)}%)`;
+        document.getElementById('selLiveTag').textContent = alive ? `LIVE PID ${cur.pid}${muted ? ' · UDP TẠM NGƯNG' : ''}` : 'Offline / Đã dừng';
+    }
+}
+
+async function refreshLogs() {
+    try {
+        const res = await api(`/api/fleet/logs/${encodeURIComponent(selectedId)}`);
+        const box = document.getElementById('termBox');
+        const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 30;
+        box.textContent = (res.logs && res.logs.length) ? res.logs.join('\n') : 'Chưa có log từ tiến trình này.';
+        if (atBottom) box.scrollTop = box.scrollHeight;
+    } catch (_) {}
+}
+
+async function refreshStatus() {
+    try {
+        const data = await api('/api/fleet/status');
+        if (!cfgInitialized) {
+            document.getElementById('cfgHost').value = data.server_host || '127.0.0.1';
+            document.getElementById('cfgTcp').value = data.tcp_port || 9000;
+            document.getElementById('cfgUdp').value = data.udp_port || 9001;
+            cfgInitialized = true;
+        }
+        document.getElementById('mgrPidLabel').textContent = `Manager PID: ${data.manager_pid || '-'}`;
+        document.getElementById('kRunning').textContent = `${data.running_count || 0}/${data.total_slots || 35}`;
+        document.getElementById('kTiers').textContent = `${data.a2g_count || 0} / ${data.leo_count || 0}`;
+        document.getElementById('kPkts').textContent = `${data.total_tcp_tx || 0} / ${data.total_udp_tx || 0}`;
+        latestClients = data.clients || [];
+        renderAll();
+    } catch (_) {}
+}
+
+setInterval(() => { refreshStatus(); refreshLogs(); }, 1000);
+refreshStatus();
+refreshLogs();
+</script>
+</body>
+</html>

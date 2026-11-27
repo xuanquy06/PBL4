@@ -11,14 +11,12 @@ EARTH_RADIUS_M = 6371000.0            # Bán kính trung bình Trái Đất (m)
 BOLTZMANN_CONST = 1.380649e-23        # Hằng số Boltzmann (J/K)
 SYSTEM_TEMP_K = 290.0                 # Nhiệt độ nhiễu hệ thống tiêu chuẩn (K)
 
-# Bán kính phủ sóng vô tuyến (Communication Range - Phương án 3, thay thế cơ chế LoS)
-MAX_A2G_COMM_RANGE_M = 3500.0         # Bán kính phủ sóng Không-Đất (A2G: UAV <-> Trạm mặt đất: 3.5 km)
-MAX_A2A_COMM_RANGE_M = 2800.0         # Bán kính phủ sóng Không-Không (A2A FANET: UAV <-> UAV: 2.8 km)
-MAX_SPACE_COMM_RANGE_M = 2500000.0    # Bán kính phủ sóng Vệ tinh LEO (A2S / S2G / ISL: 2500 km)
+# Bán kính phủ sóng vô tuyến 2 kênh SAGSINS (Không-Đất A2G và Vệ tinh LEO)
+MAX_A2G_COMM_RANGE_M = 6000.0         # Bán kính phủ sóng Không-Đất (A2G: UAV <-> Trạm mặt đất: 6.0 km)
+MAX_SPACE_COMM_RANGE_M = 2500000.0    # Bán kính phủ sóng Vệ tinh LEO (A2S / S2G: 2500 km)
 
 # Giữ bí danh hằng số tương thích ngược
 MAX_A2G_DIRECT_LOS_M = MAX_A2G_COMM_RANGE_M
-MAX_A2A_FANET_LOS_M = MAX_A2A_COMM_RANGE_M
 
 # Tọa độ tâm khu vực giám sát (Bán đảo Sơn Trà, Đà Nẵng)
 SON_TRA_REF_LAT = 16.105
@@ -148,10 +146,9 @@ class PhysicsEngine:
 
     def kiem_tra_ban_kinh_phu_song(self, pos1: dict, pos2: dict) -> tuple[bool, float, float]:
         """
-        Kiểm tra điều kiện nằm trong Bán kính phủ sóng vô tuyến (tham số thực nghiệm mô hình):
-        - Liên kết Vũ trụ (ISL / A2S / S2G): khoảng cách 3D <= MAX_SPACE_COMM_RANGE_M (2500 km).
-        - Liên kết Không-Đất (A2G): khoảng cách 3D <= MAX_A2G_COMM_RANGE_M (3.5 km).
-        - Liên kết Không-Không (A2A FANET): khoảng cách 3D <= MAX_A2A_COMM_RANGE_M (2.8 km).
+        Kiểm tra điều kiện nằm trong Bán kính phủ sóng vô tuyến (mô hình Client-Server 2 kênh SAGSINS):
+        - Liên kết Vũ trụ (A2S / S2G): khoảng cách 3D <= MAX_SPACE_COMM_RANGE_M (2500 km).
+        - Liên kết Không-Đất (A2G): khoảng cách 3D <= MAX_A2G_COMM_RANGE_M (6.0 km).
         Trả về: (trong_vung_phu, khoang_cach_m, ban_kinh_toi_da_m).
         """
         alt1 = float(pos1["do_cao"])
@@ -162,12 +159,12 @@ class PhysicsEngine:
 
         if high_alt > 80000.0:
             ban_kinh_max_m = MAX_SPACE_COMM_RANGE_M
-        elif low_alt < 100.0:
+            return (khoang_cach_m <= ban_kinh_max_m), khoang_cach_m, ban_kinh_max_m
+        if low_alt < 100.0:
             ban_kinh_max_m = MAX_A2G_COMM_RANGE_M
-        else:
-            ban_kinh_max_m = MAX_A2A_COMM_RANGE_M
-
-        return (khoang_cach_m <= ban_kinh_max_m), khoang_cach_m, ban_kinh_max_m
+            return (khoang_cach_m <= ban_kinh_max_m), khoang_cach_m, ban_kinh_max_m
+        # Không sử dụng kênh A2A trực tiếp giữa hai UAV (loại bỏ FANET)
+        return False, khoang_cach_m, 0.0
 
     def kiem_tra_tam_nhin_thang(self, pos1: dict, pos2: dict, goc_ngang_toi_thieu_deg: float = 5.0) -> tuple[bool, float]:
         """Hàm tương thích ngược: chuyển sang kiểm tra theo Bán kính phủ sóng (Communication Range)."""

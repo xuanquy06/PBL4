@@ -5,76 +5,76 @@
       <root>
         <mxCell id="0"/>
         <mxCell id="1" parent="0"/>
-        <mxCell id="2" value="A. Bản đồ Lưới nhiệt &amp;amp; Điều hướng Trường lực UAV" style="swimlane;whiteSpace=wrap;html=1;startSize=28;fillColor=#d5e8d4;strokeColor=#82b366;swimlaneFillColor=#ffffff;fontSize=12;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="2" value="A. Bản đồ Lưới nhiệt &amp;amp; Điều hướng Trường lực UAV" style="swimlane;whiteSpace=wrap;html=1;startSize=28;fillColor=#EBF1F8;strokeColor=#2C4A70;swimlaneFillColor=#FFFFFF;fontSize=12;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="15" y="10" width="445" height="470" as="geometry"/>
         </mxCell>
-        <mxCell id="3" value="Biên đa giác phân khu (Ray-Casting)" style="text;html=1;align=center;verticalAlign=center;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="3" value="Biên đa giác phân khu (Ray-Casting)" style="text;html=1;align=center;verticalAlign=center;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=9;fontColor=#1E293B;" vertex="1" parent="1">
           <mxGeometry x="195" y="82" width="80" height="20" as="geometry"/>
         </mxCell>
-        <mxCell id="4" value="&lt;b&gt;UAV 1&lt;/b&gt;&lt;br&gt;40 m/s" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=8;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="4" value="&lt;b&gt;UAV 1&lt;/b&gt;&lt;br&gt;40 m/s" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EBF1F8;strokeColor=#2C4A70;fontSize=8;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="122" y="212" width="76" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="5" value="Làm mát R = 600 m&lt;br&gt;(0.35/s -&amp;gt; 0.05)" style="text;html=1;align=center;verticalAlign=center;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=8;fontColor=#1a1a1a;" vertex="1" parent="1">
+        <mxCell id="5" value="Làm mát R = 600 m&lt;br&gt;(0.35/s -&amp;gt; 0.05)" style="text;html=1;align=center;verticalAlign=center;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=8;fontColor=#1E293B;" vertex="1" parent="1">
           <mxGeometry x="118" y="142" width="80" height="20" as="geometry"/>
         </mxCell>
-        <mxCell id="6" value="HeatNode chưa quét&lt;br&gt;(+0.025/s, trần 0.68)" style="text;html=1;align=center;verticalAlign=center;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=8;fontColor=#b85450;" vertex="1" parent="1">
+        <mxCell id="6" value="HeatNode chưa quét&lt;br&gt;(+0.025/s, trần 0.68)" style="text;html=1;align=center;verticalAlign=center;resizable=0;points=[];autosize=1;strokeColor=none;fillColor=none;fontSize=8;fontColor=#8B2635;" vertex="1" parent="1">
           <mxGeometry x="300" y="124" width="80" height="20" as="geometry"/>
         </mxCell>
-        <mxCell id="7" value="Lực hút w_k" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="7" value="Lực hút w_k" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="198" y="222" as="sourcePoint"/>
             <mxPoint x="305" y="182" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="8" value="&lt;b&gt;UAV 2&lt;/b&gt;&lt;br&gt;cùng vùng" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=8;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="8" value="&lt;b&gt;UAV 2&lt;/b&gt;&lt;br&gt;cùng vùng" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#475569;fontSize=8;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="238" y="308" width="92" height="40" as="geometry"/>
         </mxCell>
-        <mxCell id="9" value="Đẩy &amp;lt; 1.200 m&lt;br&gt;+ trượt 0.32" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d79b00;fontColor=#d79b00;fontSize=9;dashed=1;endArrow=block;endFill=1;startArrow=block;startFill=1;" edge="1" parent="1">
+        <mxCell id="9" value="Đẩy &amp;lt; 1.200 m&lt;br&gt;+ trượt 0.32" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#475569;fontColor=#475569;fontSize=9;dashed=1;endArrow=block;endFill=1;startArrow=block;startFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="246" y="308" as="sourcePoint"/>
             <mxPoint x="195" y="252" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="10" value="Giảm hút c_k = 0.2&lt;br&gt;nếu đồng đội gần hơn" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=8;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="10" value="Giảm hút c_k = 0.2&lt;br&gt;nếu đồng đội gần hơn" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#475569;fontSize=8;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="288" y="234" width="148" height="36" as="geometry"/>
         </mxCell>
-        <mxCell id="11" value="&lt;b&gt;Tổng hợp điều hướng: 2.4 × hướng đỉnh + 0.8 × trường lực toàn vùng&lt;/b&gt;&lt;br&gt;Quán tính mượt (30% hướng cũ + 70% hướng mới); trượt dọc biên đa giác" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=9;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="11" value="&lt;b&gt;Tổng hợp điều hướng: 2.4 × hướng đỉnh + 0.8 × trường lực toàn vùng&lt;/b&gt;&lt;br&gt;Quán tính mượt (30% hướng cũ + 70% hướng mới); trượt dọc biên đa giác" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2C4A70;fontSize=9;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="35" y="396" width="405" height="66" as="geometry"/>
         </mxCell>
-        <mxCell id="12" value="B. Chu trình Phản xạ Tự trị MAS &amp;amp; Bàn giao P2P" style="swimlane;whiteSpace=wrap;html=1;startSize=28;fillColor=#ffe6cc;strokeColor=#d79b00;swimlaneFillColor=#ffffff;fontSize=12;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="12" value="B. Chu trình Phản xạ Cháy &amp;amp; Điều phối Bàn giao MAS" style="swimlane;whiteSpace=wrap;html=1;startSize=28;fillColor=#F4F6F8;strokeColor=#475569;swimlaneFillColor=#FFFFFF;fontSize=12;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="480" y="10" width="445" height="470" as="geometry"/>
         </mxCell>
-        <mxCell id="13" value="&lt;b&gt;1. Điểm cháy mới (UNVERIFIED, risk = 1.0)&lt;/b&gt;&lt;br&gt;Tỏa Gaussian R = 800 m; không bị tự làm mát" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="13" value="&lt;b&gt;1. Điểm cháy mới (UNVERIFIED, risk = 1.0)&lt;/b&gt;&lt;br&gt;Tỏa Gaussian R = 800 m; giữ nguyên điểm nóng" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#FAF0F0;strokeColor=#8B2635;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="525" y="56" width="355" height="52" as="geometry"/>
         </mxCell>
-        <mxCell id="14" value="&lt;b&gt;2. UAV bay vào bán kính &amp;lt;= 600 m (DETECTED)&lt;/b&gt;&lt;br&gt;Ước lượng lượng pin khứ hồi về Trạm" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="14" value="&lt;b&gt;2. UAV Client bay &amp;lt;= 600 m (DETECTED)&lt;/b&gt;&lt;br&gt;Server tính phần trăm pin dự kiến khứ hồi" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#475569;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="525" y="134" width="355" height="52" as="geometry"/>
         </mxCell>
-        <mxCell id="15" value="3. Pin khứ hồi&lt;br&gt;&amp;gt; 25%?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#000000;fontSize=10;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="15" value="3. Pin khứ hồi&lt;br&gt;&amp;gt; 25%?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#1E293B;fontSize=10;fontStyle=1;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="614.5" y="209.0" width="175" height="58" as="geometry"/>
         </mxCell>
-        <mxCell id="16" value="&lt;b&gt;Đủ pin (&amp;gt; 25%)&lt;/b&gt;&lt;br&gt;• Khóa mục tiêu (850 m)&lt;br&gt;• Khoanh vùng 130 m&lt;br&gt;• Gửi báo cháy TCP P0&lt;br&gt;  qua Dijkstra về Trạm" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=8;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="16" value="&lt;b&gt;Đủ pin (&amp;gt; 25%)&lt;/b&gt;&lt;br&gt;• Khóa mục tiêu (850 m)&lt;br&gt;• Đẩy TCP DISPATCH_FIRE&lt;br&gt;• Khoanh vùng 130 m&lt;br&gt;• Báo cháy A2G / LEO" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EBF1F8;strokeColor=#2C4A70;fontSize=8;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="498" y="304" width="192" height="92" as="geometry"/>
         </mxCell>
-        <mxCell id="17" value="&lt;b&gt;Pin yếu (&amp;lt;= 25%)&lt;/b&gt;&lt;br&gt;• Phát TCP P0 ngang hàng&lt;br&gt;  YEU_CAU_HO_TRO_CHAY_P2P&lt;br&gt;• Đồng đội tiếp quản cháy&lt;br&gt;• Gọi STANDBY &amp;amp; Về sạc" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=8;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="17" value="&lt;b&gt;Pin yếu (&amp;lt;= 25%)&lt;/b&gt;&lt;br&gt;• Chọn UAV khỏe nhất cùng vùng&lt;br&gt;• Đẩy DISPATCH_FIRE thay thế&lt;br&gt;• Gọi STANDBY cất cánh&lt;br&gt;• Đẩy RTB về Trạm sạc" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#F4F6F8;strokeColor=#475569;fontSize=8;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="714" y="304" width="192" height="92" as="geometry"/>
         </mxCell>
-        <mxCell id="18" value="&lt;b&gt;4. Trạm Kiểm Lâm cập nhật Tuyến E2E &amp;amp; Dashboard&lt;/b&gt;&lt;br&gt;Hiển thị trạng thái khoanh vùng &amp;amp; luồng gói trên Web" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
+        <mxCell id="18" value="&lt;b&gt;4. Trạm Kiểm Lâm cập nhật Kênh A2G/LEO &amp;amp; Dashboard&lt;/b&gt;&lt;br&gt;Đồng bộ WebSocket lên Bản đồ &amp;amp; Dashboard (:8000)" style="rounded=1;arcSize=10;whiteSpace=wrap;html=1;fillColor=#EBF1F8;strokeColor=#2C4A70;fontSize=10;fontColor=#000000;" vertex="1" parent="1">
           <mxGeometry x="525" y="416" width="355" height="48" as="geometry"/>
         </mxCell>
-        <mxCell id="19" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#b85450;fontColor=#b85450;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="19" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#8B2635;fontColor=#8B2635;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="702" y="108" as="sourcePoint"/>
             <mxPoint x="702" y="134" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="20" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#d79b00;fontColor=#d79b00;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="20" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#475569;fontColor=#475569;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="702" y="186" as="sourcePoint"/>
             <mxPoint x="702" y="209" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="21" value="Có" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="21" value="Có" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="614" y="238" as="sourcePoint"/>
             <mxPoint x="594" y="304" as="targetPoint"/>
@@ -83,7 +83,7 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="22" value="Không" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;fontColor=#9673a6;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="22" value="Không" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#475569;fontColor=#475569;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="790" y="238" as="sourcePoint"/>
             <mxPoint x="810" y="304" as="targetPoint"/>
@@ -92,13 +92,13 @@
             </Array>
           </mxGeometry>
         </mxCell>
-        <mxCell id="23" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#82b366;fontColor=#82b366;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="23" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1B365D;fontColor=#1B365D;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="594" y="396" as="sourcePoint"/>
             <mxPoint x="594" y="416" as="targetPoint"/>
           </mxGeometry>
         </mxCell>
-        <mxCell id="24" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#9673a6;fontColor=#9673a6;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
+        <mxCell id="24" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#475569;fontColor=#475569;fontSize=9;endArrow=block;endFill=1;" edge="1" parent="1">
           <mxGeometry relative="1" as="geometry">
             <mxPoint x="810" y="396" as="sourcePoint"/>
             <mxPoint x="810" y="416" as="targetPoint"/>

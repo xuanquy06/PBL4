@@ -865,11 +865,15 @@
         <div class="kpi-strip" role="region" aria-label="Chỉ số vận hành chính">
             <div class="kpi-pill">
                 <span>UAV kết nối</span>
-                <strong id="kpiUav">35/35</strong>
+                <strong id="kpiUav">0/35</strong>
+            </div>
+            <div class="kpi-pill">
+                <span>Kênh A2G / LEO</span>
+                <strong id="kpiTiers" style="color:var(--accent-green)">0 / 0</strong>
             </div>
             <div class="kpi-pill">
                 <span>7 Phân khu</span>
-                <strong id="kpiZones" style="color:var(--accent-green)">7/7</strong>
+                <strong id="kpiZones" style="color:var(--accent-green)">0/7</strong>
             </div>
             <div class="kpi-pill">
                 <span>PDR</span>
@@ -878,10 +882,6 @@
             <div class="kpi-pill">
                 <span>Trễ TB</span>
                 <strong id="kpiDelay">0 ms</strong>
-            </div>
-            <div class="kpi-pill" title="Số tiến trình UAV Client độc lập đang kết nối qua TCP :9000 / UDP :9001">
-                <span>Clients ngoài</span>
-                <strong id="kpiExtClients" style="color:var(--accent-green)">0</strong>
             </div>
         </div>
 
@@ -914,7 +914,7 @@
                 </button>
             </div>
 
-            <!-- Top-right: Layer toggles (A2G, LEO disabled by default; FANET enabled) -->
+            <!-- Top-right: Layer toggles (2-channel A2G & LEO) -->
             <div class="map-float layer-panel">
                 <div class="layer-panel-header">
                     <span class="panel-title-sm">
@@ -927,11 +927,10 @@
                     <label class="chk-label"><input type="checkbox" id="chkHeatmap" checked onchange="toggleLayers()"><i class="legend-dot" style="background:linear-gradient(90deg,#22c55e,#f59e0b,#ef4444)"></i>Heatmap</label>
                     <label class="chk-label"><input type="checkbox" id="chkScanRadius" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#38bdf8;border:1px dashed #e2e8f0"></i>Quét 600m</label>
                     <label class="chk-label"><input type="checkbox" id="chkRfPackets" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#10b981"></i>Tia Gói tin (RF)</label>
-                    <label class="chk-label"><input type="checkbox" id="chkE2E" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#38bdf8"></i>Tuyến E2E</label>
+                    <label class="chk-label"><input type="checkbox" id="chkE2E" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#38bdf8"></i>Tuyến báo cháy</label>
                     <label class="chk-label"><input type="checkbox" id="chkLabels" checked onchange="toggleLabels()"><i class="legend-dot" style="background:#e2e8f0"></i>Nhãn tên</label>
-                    <label class="chk-label"><input type="checkbox" id="chkFanet" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#f59e0b"></i>Tia FANET</label>
-                    <label class="chk-label"><input type="checkbox" id="chkA2G" onchange="toggleLayers()"><i class="legend-dot" style="background:#22c55e"></i>Tia A2G</label>
-                    <label class="chk-label"><input type="checkbox" id="chkLeo" onchange="toggleLayers()"><i class="legend-dot" style="background:#a855f7"></i>Tia Vệ tinh</label>
+                    <label class="chk-label"><input type="checkbox" id="chkA2G" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#22c55e"></i>Tia A2G (≤6km)</label>
+                    <label class="chk-label"><input type="checkbox" id="chkLeo" checked onchange="toggleLayers()"><i class="legend-dot" style="background:#a855f7"></i>Tia Vệ tinh LEO</label>
                 </div>
                 <div style="display:flex;gap:5px;padding-top:2px;">
                     <button class="btn" style="flex:1;padding:3px 6px;font-size:10px;" onclick="setAllLinkLayers(true)">Bật hết tia</button>
@@ -952,77 +951,47 @@
 
         <!-- COMPACT RIGHT SIDEBAR -->
         <aside class="sidebar">
-            <!-- Top Sidebar Switch: Tổng quan / Mạng & HĐH -->
+            <!-- Top Sidebar Summary + Dashboard Link -->
             <div class="side-block" style="padding-bottom:8px;">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-                    <div class="side-tabs" role="tablist">
-                        <button id="btnSideTabOverview" class="side-tab-btn active" onclick="switchSideTab('OVERVIEW')">Tổng quan</button>
-                        <button id="btnSideTabSys" class="side-tab-btn" onclick="switchSideTab('SYS')">Mạng &amp; HĐH</button>
-                    </div>
+                <div class="block-head" style="margin-bottom:8px;">
+                    <span>Tổng quan sự cố</span>
                     <a href="/dashboard" class="block-link" style="flex-shrink:0;">Dashboard ➔</a>
                 </div>
 
-                <div id="sideTabOverview">
-                    <div id="swarmMiniBox" class="mini-card" style="font-size:11px;line-height:1.5;margin-bottom:8px;">
-                        <div style="display:flex;justify-content:space-between;">
-                            <span style="color:var(--text-muted)">Trạng thái cháy:</span>
-                            <b id="swFireStatus" style="color:var(--accent-green);font-family:var(--font-mono);">Chưa có đám cháy</b>
-                        </div>
-                        <div style="display:flex;justify-content:space-between;">
-                            <span style="color:var(--text-muted)">UAV phát hiện:</span>
-                            <b id="swFirstUav" style="font-family:var(--font-mono);">—</b>
-                        </div>
-                        <div style="display:flex;justify-content:space-between;">
-                            <span style="color:var(--text-muted)">UAV xử lý:</span>
-                            <b id="swAssignedUav" style="font-family:var(--font-mono);color:var(--accent-blue);">—</b>
-                        </div>
-                        <div style="display:flex;justify-content:space-between;">
-                            <span style="color:var(--text-muted)">Pin khứ hồi / Nhiệt TB:</span>
-                            <span style="font-family:var(--font-mono);">
-                                <b id="swReturnBat">—</b> · <b id="swAvgRisk" style="color:var(--accent-amber);">0.15</b>
-                            </span>
-                        </div>
+                <div id="swarmMiniBox" class="mini-card" style="font-size:11px;line-height:1.5;margin-bottom:8px;">
+                    <div style="display:flex;justify-content:space-between;">
+                        <span style="color:var(--text-muted)">Trạng thái cháy:</span>
+                        <b id="swFireStatus" style="color:var(--accent-green);font-family:var(--font-mono);">Chưa có đám cháy</b>
                     </div>
-
-                    <div class="block-head" style="margin-bottom:5px;">
-                        <span>Tuyến E2E mới nhất</span>
-                        <span id="e2eMeta" style="font-family:var(--font-mono);color:var(--accent-blue);font-size:10px;"></span>
+                    <div style="display:flex;justify-content:space-between;">
+                        <span style="color:var(--text-muted)">UAV phát hiện:</span>
+                        <b id="swFirstUav" style="font-family:var(--font-mono);">—</b>
                     </div>
-                    <div id="e2eMiniBox" class="mini-card" style="color:var(--text-muted);padding:7px 9px;">
-                        Đang chờ gói dữ liệu đa chặng...
+                    <div style="display:flex;justify-content:space-between;">
+                        <span style="color:var(--text-muted)">UAV xử lý:</span>
+                        <b id="swAssignedUav" style="font-family:var(--font-mono);color:var(--accent-blue);">—</b>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;">
+                        <span style="color:var(--text-muted)">Pin khứ hồi / Nhiệt TB:</span>
+                        <span style="font-family:var(--font-mono);">
+                            <b id="swReturnBat">—</b> · <b id="swAvgRisk" style="color:var(--accent-amber);">0.15</b>
+                        </span>
                     </div>
                 </div>
 
-                <div id="sideTabSys" style="display:none;">
-                    <div id="sysMiniBox" class="mini-card" style="font-size:10.5px;line-height:1.5;margin-bottom:8px;">
-                        <div style="display:flex;justify-content:space-between;">
-                            <span style="color:var(--text-muted)">Tiến trình &amp; Luồng:</span>
-                            <b id="sysOsThreads" style="font-family:var(--font-mono);color:var(--accent-green);">—</b>
-                        </div>
-                        <div style="display:flex;justify-content:space-between;">
-                            <span style="color:var(--text-muted)">Mutex &amp; Bộ đệm QoS:</span>
-                            <b id="sysMutexBuf" style="font-family:var(--font-mono);color:var(--text-secondary);">RLock: 0 · Drop: 0</b>
-                        </div>
-                        <div style="display:flex;justify-content:space-between;border-top:1px solid rgba(255,255,255,0.06);margin-top:3px;padding-top:3px;">
-                            <span style="color:var(--text-muted)">Socket HĐH:</span>
-                            <b id="sysSocketPorts" style="font-family:var(--font-mono);color:var(--accent-blue);">TCP/UDP Đang bật</b>
-                        </div>
-                    </div>
-
-                    <div class="block-head" style="margin-bottom:4px;">
-                        <span>Bảng định tuyến (<span id="rtNodeTitle" style="color:var(--accent-blue);font-family:var(--font-mono);">UAV_01</span>)</span>
-                        <span id="rtNodeIp" style="font-family:var(--font-mono);color:var(--text-secondary);font-size:10px;">10.0.1.1</span>
-                    </div>
-                    <div id="rtMiniBox" class="mini-card" style="padding:6px 8px;max-height:125px;overflow-y:auto;">
-                        <span style="color:var(--text-muted)">Chọn 1 UAV để xem bảng định tuyến...</span>
-                    </div>
+                <div class="block-head" style="margin-bottom:5px;">
+                    <span>Kênh báo cháy mới nhất</span>
+                    <span id="e2eMeta" style="font-family:var(--font-mono);color:var(--accent-blue);font-size:10px;"></span>
+                </div>
+                <div id="e2eMiniBox" class="mini-card" style="color:var(--text-muted);padding:7px 9px;">
+                    Đang chờ báo cháy (A2G / LEO)...
                 </div>
             </div>
 
-            <!-- Fleet List (35 UAVs + 3 LEO + 1 Station = 39 Nodes) -->
+            <!-- Fleet List (Connected Client UAVs + 3 LEO + 1 Station) -->
             <div class="block-head" style="padding:11px 14px 0;margin:0;">
-                <span>Đội hình mạng (<span id="nodeCount" style="font-family:var(--font-mono);color:var(--text-main);">39</span>)</span>
-                <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--accent-green);">35 UAV</span>
+                <span>Đội hình mạng (<span id="nodeCount" style="font-family:var(--font-mono);color:var(--text-main);">4</span>)</span>
+                <span id="connectedUavHeader" style="font-family:var(--font-mono);font-size:9.5px;color:var(--accent-green);">0/35 UAV Client</span>
             </div>
             <div class="filter-bar">
                 <button class="f-btn active" onclick="setNodeFilter('ALL', this)">Tất cả</button>
@@ -1052,8 +1021,7 @@
         window.addEventListener('resize', () => map.invalidateSize());
         setTimeout(() => map.invalidateSize(), 150);
 
-        // Mặc định bật: 7 Vùng, Heatmap, Vòng quét 600m, Tuyến E2E, Tia Gói tin RF, Tia FANET.
-        // Các lớp A2G, Vệ tinh LEO được tắt mặc định để giao diện gọn mượt.
+        // Mặc định bật: 7 Vùng, Heatmap, Vòng quét 600m, Tuyến báo cháy, Tia Gói tin RF, Tia A2G và Tia Vệ tinh LEO.
         const zoneLayer = L.layerGroup().addTo(map);
         const heatmapLayer = L.heatLayer([], {
             radius: 22,
@@ -1064,9 +1032,8 @@
             gradient: { 0.20: '#22c55e', 0.42: '#eab308', 0.75: '#f97316', 0.95: '#ef4444' }
         }).addTo(map);
         const scanRadiusLayer = L.layerGroup().addTo(map);
-        const a2gLinkLayer = L.layerGroup();
-        const fanetLinkLayer = L.layerGroup().addTo(map);
-        const leoLinkLayer = L.layerGroup();
+        const a2gLinkLayer = L.layerGroup().addTo(map);
+        const leoLinkLayer = L.layerGroup().addTo(map);
         const e2eLayer = L.layerGroup().addTo(map);
         const rfPacketLayer = L.layerGroup().addTo(map);
         const focusLayer = L.layerGroup().addTo(map);
@@ -1147,7 +1114,6 @@
             syncLayer('chkScanRadius', scanRadiusLayer);
             syncLayer('chkRfPackets', rfPacketLayer);
             syncLayer('chkA2G', a2gLinkLayer);
-            syncLayer('chkFanet', fanetLinkLayer);
             syncLayer('chkLeo', leoLinkLayer);
             syncLayer('chkE2E', e2eLayer);
         }
@@ -1210,15 +1176,13 @@
 
         function setAllLinkLayers(enable) {
             if (enable) {
-                ['chkRfPackets', 'chkA2G', 'chkFanet', 'chkLeo', 'chkE2E'].forEach(id => {
+                ['chkRfPackets', 'chkA2G', 'chkLeo', 'chkE2E'].forEach(id => {
                     const el = document.getElementById(id);
                     if (el) el.checked = true;
                 });
             } else {
-                // Chế độ mặc định gọn: bật RF + E2E + FANET, tắt A2G/LEO
                 document.getElementById('chkRfPackets').checked = true;
                 document.getElementById('chkE2E').checked = true;
-                document.getElementById('chkFanet').checked = true;
                 ['chkA2G', 'chkLeo'].forEach(id => {
                     const el = document.getElementById(id);
                     if (el) el.checked = false;
@@ -1233,52 +1197,6 @@
                 if (show) m.openTooltip();
                 else m.closeTooltip();
             });
-        }
-
-        let activeSideTab = 'OVERVIEW';
-
-        function switchSideTab(tab) {
-            activeSideTab = tab;
-            const isOverview = (tab === 'OVERVIEW');
-            document.getElementById('sideTabOverview').style.display = isOverview ? 'block' : 'none';
-            document.getElementById('sideTabSys').style.display = isOverview ? 'none' : 'block';
-            document.getElementById('btnSideTabOverview').classList.toggle('active', isOverview);
-            document.getElementById('btnSideTabSys').classList.toggle('active', !isOverview);
-            if (!isOverview) {
-                fetchRoutingTable(selectedNodeId || 'MÁY_BAY_UAV_01');
-            }
-        }
-
-        async function fetchRoutingTable(nodeId) {
-            const targetId = nodeId || 'MÁY_BAY_UAV_01';
-            const titleEl = document.getElementById('rtNodeTitle');
-            const ipEl = document.getElementById('rtNodeIp');
-            const box = document.getElementById('rtMiniBox');
-            if (!box) return;
-            try {
-                const res = await fetch(`/api/routing-table/${encodeURIComponent(targetId)}`);
-                if (!res.ok) return;
-                const d = await res.json();
-                titleEl.textContent = d.id.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '').replace('VỆ_TINH_', '');
-                ipEl.textContent = d.ip || '10.0.0.0';
-                const routes = Array.isArray(d.routes) ? d.routes : [];
-                if (!routes.length) {
-                    box.innerHTML = '<span style="color:var(--text-muted)">Chưa có mục định tuyến láng giềng.</span>';
-                    return;
-                }
-                const rowsHtml = routes.slice(0, 7).map(r => {
-                    const dstShort = r.dest.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '').replace('VỆ_TINH_', '');
-                    const hopShort = r.next_hop.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '').replace('VỆ_TINH_', '');
-                    const ifaceShort = r.interface.replace('_RADIO', '').replace('_WIFI', '').replace('_KU_BAND', '');
-                    return `<tr>
-                        <td><b>${dstShort}</b></td>
-                        <td style="color:var(--accent-blue)">${hopShort}</td>
-                        <td>${ifaceShort}</td>
-                        <td>${r.metric} (${r.ttl_remaining}s)</td>
-                    </tr>`;
-                }).join('');
-                box.innerHTML = `<table class="rt-tbl"><thead><tr><th>Đích</th><th>Next Hop</th><th>Kênh</th><th>Metric/TTL</th></tr></thead><tbody>${rowsHtml}</tbody></table>`;
-            } catch (_) {}
         }
 
         function selectNode(nodeId, pan = false) {
@@ -1296,19 +1214,16 @@
                     } else if (n.state === 'CHARGING') {
                         routeDesc = 'Đang sạc pin tại Trạm (+15%/s)';
                     } else if (n.current_link === 'GROUND_LINK') {
-                        routeDesc = `Trực tiếp A2G ➔ TRẠM (${(n.in_comm_range ?? n.direct_los) ? 'Trong vùng phủ ≤ 3.5km' : 'Trong vùng phủ'})`;
-                    } else if (n.current_link === 'FANET_RELAY') {
-                        const rlName = (n.relay_target_id || '').replace('MÁY_BAY_', '');
-                        routeDesc = `Chuyển tiếp FANET: ${shortId} ➔ ${rlName} ➔ TRẠM`;
+                        routeDesc = `Trực tiếp A2G ➔ TRẠM (${Math.round(n.distance_to_station_m || 0)}m ≤ 6km)`;
                     } else if (n.current_link === 'LEO_SATELLITE') {
-                        routeDesc = `Qua Vệ tinh LEO ➔ TRẠM`;
+                        const satName = (n.relay_target_id || 'LEO').replace('VỆ_TINH_', '');
+                        routeDesc = `Qua Vệ tinh ${satName} ➔ TRẠM (${Number(n.delay_ms || 0).toFixed(1)} ms)`;
                     }
                     txt.innerHTML = `<strong style="color:var(--accent-blue);font-family:var(--font-mono);">${shortId}</strong> <span style="color:var(--text-muted)">(${n.ip || ''}${n.zone_id ? ' · ' + n.zone_id : ''})</span> · ${routeDesc}`;
                     if (pan) map.flyTo([n.vi_do, n.kinh_do], 14);
                 } else {
                     txt.textContent = `Đang chọn: ${shortId}`;
                 }
-                if (activeSideTab === 'SYS') fetchRoutingTable(selectedNodeId);
                 if (pan) {
                     const mk = markersById.get(selectedNodeId);
                     if (mk && typeof mk.openPopup === 'function') {
@@ -1321,7 +1236,6 @@
                 }
             } else {
                 bar.style.display = 'none';
-                if (activeSideTab === 'SYS') fetchRoutingTable('MÁY_BAY_UAV_01');
             }
             updateNodesAndLinks(nodesCache);
         }
@@ -1349,8 +1263,8 @@
             if (node.is_reserve) color = '#0284c7';
             else if (node.state === 'OFFLINE') color = '#ef4444';
             else if (node.state === 'CONTAINING' || node.state === 'RESPONDING') color = '#f97316';
-            else if (node.state === 'RELAYING') color = '#f59e0b';
             else if (node.state === 'RETURNING' || node.state === 'CHARGING') color = '#eab308';
+            else if (node.current_link === 'LEO_SATELLITE') color = '#a855f7';
             else if (node.is_external_client) color = '#10b981';
             const isSelected = selectedNodeId === node.id;
             const ring = isSelected ? `0 0 0 3px rgba(56,189,248,0.5), 0 0 12px ${color}` : (node.is_reserve ? `0 0 5px #0284c7` : `0 0 7px ${color}`);
@@ -1441,8 +1355,11 @@
             const pin = Number(n.pin_pct ?? 0);
             const batColor = pin < 25 ? '#ef4444' : (pin < 50 ? '#f59e0b' : '#22c55e');
             const linkLabel = n.current_link === 'GROUND_LINK'
-                ? 'A2G'
-                : (n.current_link === 'FANET_RELAY' ? 'FANET' : (n.current_link === 'LEO_SATELLITE' ? 'LEO' : 'OFFLINE'));
+                ? '<b style="color:#22c55e">A2G trực tiếp</b>'
+                : (n.current_link === 'LEO_SATELLITE' ? '<b style="color:#a855f7">Vệ tinh LEO</b>' : '<b style="color:#ef4444">OUT_OF_RANGE</b>');
+            const hopsStr = Array.isArray(n.tuyen_ve_tram) && n.tuyen_ve_tram.length
+                ? n.tuyen_ve_tram.map(h => h.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '').replace('VỆ_TINH_', '')).join(' ➔ ')
+                : 'Ngoại tuyến';
             const stateTxt = (n.is_reserve || n.state === 'STANDBY') ? 'STANDBY' : (n.state || n.trang_thai || '—');
             const roleTag = n.is_external_client ? ' [CLIENT]' : (n.is_reserve ? ' [DỰ BỊ]' : '');
             const extActions = n.is_external_client
@@ -1463,7 +1380,11 @@
                         <span>IP: <b style="color:var(--text-main)">${n.ip || '—'}</b></span>
                         <span>Vùng: <b style="color:var(--text-main)">${n.zone_id || '—'}</b></span>
                         <span>Pin: <b style="color:${batColor}">${pin}%</b></span>
-                        <span>Kênh: <b style="color:var(--text-main)">${linkLabel}</b></span>
+                        <span>Kênh: ${linkLabel}</span>
+                        <span style="grid-column:span 2;">Tuyến: <b style="color:var(--accent-blue)">${hopsStr}</b></span>
+                        <span>Cự ly / Trễ: <b style="color:var(--text-main)">${Math.round(n.distance_to_station_m || 0)} m · ${Number(n.delay_ms || 0).toFixed(2)} ms</b></span>
+                        <span>SNR / PER: <b style="color:var(--text-main)">${Number(n.snr_db || 0).toFixed(1)} dB · ${Number(n.per || 0).toFixed(4)}</b></span>
+                        <span style="grid-column:span 2;">Client PID: <b style="color:var(--accent-green)">${n.client_pid || '—'}</b></span>
                     </div>
                     <div class="uav-popup-actions">
                         <button class="btn btn-danger" onclick="injectBattery(0, '${safeId}')" title="Sập nguồn 0%">Sập 0%</button>
@@ -1481,6 +1402,20 @@
             const stations = nodesCache.filter(n => n.loai === 'TRẠM_MẶT_ĐẤT');
             const sats = nodesCache.filter(n => n.loai && n.loai.includes('VỆ_TINH'));
             const showLabels = document.getElementById('chkLabels').checked;
+
+            // Xoá marker / vòng quét của các Client đã LEAVE khỏi hệ thống
+            for (const [mid, mkr] of markersById.entries()) {
+                if (!byId.has(mid)) {
+                    nodeLayer.removeLayer(mkr);
+                    markersById.delete(mid);
+                }
+            }
+            for (const [sid, sc] of scanCirclesById.entries()) {
+                if (!byId.has(sid)) {
+                    scanRadiusLayer.removeLayer(sc);
+                    scanCirclesById.delete(sid);
+                }
+            }
 
             nodesCache.forEach(n => {
                 let m = markersById.get(n.id);
@@ -1557,7 +1492,6 @@
             });
 
             a2gLinkLayer.clearLayers();
-            fanetLinkLayer.clearLayers();
             leoLinkLayer.clearLayers();
             focusLayer.clearLayers();
 
@@ -1574,31 +1508,6 @@
                 }
             }
 
-            const stRef = stations[0];
-            const airborneFanetUavs = nodesCache.filter(n => {
-                if (n.loai !== 'MÁY_BAY') return false;
-                if (n.is_reserve || n.state === 'STANDBY' || n.state === 'CHARGING' || n.state === 'OFFLINE') return false;
-                const nearSt = Boolean(stRef && distMeters(Number(n.vi_do), Number(n.kinh_do), Number(stRef.vi_do), Number(stRef.kinh_do)) <= 100);
-                return !nearSt;
-            });
-
-            const drawnFanetPairs = new Set();
-            const fanetLinkStyle = { color: '#f59e0b', weight: 1.25, dashArray: '4,5', opacity: 0.45 };
-            const getFanetPairKey = (idA, idB) => (idA < idB ? `${idA}|${idB}` : `${idB}|${idA}`);
-
-            for (let i = 0; i < airborneFanetUavs.length; i++) {
-                const u1 = airborneFanetUavs[i];
-                for (let j = i + 1; j < airborneFanetUavs.length; j++) {
-                    const u2 = airborneFanetUavs[j];
-                    if (selectedNodeId && u1.id !== selectedNodeId && u2.id !== selectedNodeId) continue;
-                    const d = distMeters(Number(u1.vi_do), Number(u1.kinh_do), Number(u2.vi_do), Number(u2.kinh_do));
-                    if (d <= 2200) {
-                        drawnFanetPairs.add(getFanetPairKey(u1.id, u2.id));
-                        L.polyline([[u1.vi_do, u1.kinh_do], [u2.vi_do, u2.kinh_do]], fanetLinkStyle).addTo(fanetLinkLayer);
-                    }
-                }
-            }
-
             nodesCache.forEach(n => {
                 if (n.state === 'OFFLINE') return;
                 if (selectedNodeId && n.id !== selectedNodeId && n.relay_target_id !== selectedNodeId) return;
@@ -1611,27 +1520,17 @@
                     }
 
                     if (n.current_link === 'GROUND_LINK') {
-                        const targetStation = byId.get(n.relay_target_id) || st;
+                        const targetStation = st;
                         if (targetStation) {
                             L.polyline([[n.vi_do, n.kinh_do], [targetStation.vi_do, targetStation.kinh_do]], {
-                                color: '#22c55e', weight: 1.4, opacity: 0.65
+                                color: '#22c55e', weight: 1.5, opacity: 0.65
                             }).addTo(a2gLinkLayer);
-                        }
-                    } else if (n.current_link === 'FANET_RELAY' && n.relay_target_id) {
-                        const rl = byId.get(n.relay_target_id);
-                        const rlNearStation = Boolean(rl && st && distMeters(Number(rl.vi_do), Number(rl.kinh_do), Number(st.vi_do), Number(st.kinh_do)) <= 100);
-                        if (rl && !rl.is_reserve && rl.state !== 'STANDBY' && rl.state !== 'CHARGING' && !rlNearStation) {
-                            const pairKey = getFanetPairKey(n.id, rl.id);
-                            if (!drawnFanetPairs.has(pairKey)) {
-                                drawnFanetPairs.add(pairKey);
-                                L.polyline([[n.vi_do, n.kinh_do], [rl.vi_do, rl.kinh_do]], fanetLinkStyle).addTo(fanetLinkLayer);
-                            }
                         }
                     } else if (n.current_link === 'LEO_SATELLITE') {
                         const sat = byId.get(n.relay_target_id) || sats[0];
                         if (sat) {
                             L.polyline([[n.vi_do, n.kinh_do], [sat.vi_do, sat.kinh_do]], {
-                                color: '#a855f7', weight: 1.6, dashArray: '3,6', opacity: 0.8
+                                color: '#a855f7', weight: 1.6, dashArray: '3,6', opacity: 0.78
                             }).addTo(leoLinkLayer);
                         }
                     }
@@ -1658,6 +1557,9 @@
         function renderNodeList() {
             const box = document.getElementById('nodeList');
             document.getElementById('nodeCount').textContent = nodesCache.length;
+            const totalUavCount = nodesCache.filter(n => n.loai === 'MÁY_BAY').length;
+            const hdrUav = document.getElementById('connectedUavHeader');
+            if (hdrUav) hdrUav.textContent = `${totalUavCount}/35 UAV Client`;
             const standbyReady = nodesCache.filter(n => n.loai === 'MÁY_BAY' && (n.state === 'STANDBY' || n.is_reserve)).length;
             const patrolActive = nodesCache.filter(n => n.loai === 'MÁY_BAY' && !n.is_reserve && n.state !== 'STANDBY' && n.state !== 'CHARGING' && n.state !== 'OFFLINE').length;
             const btnPatrol = document.getElementById('btnFilterPatrol');
@@ -1669,11 +1571,18 @@
                 if (currentFilter === 'PATROL') return n.loai === 'MÁY_BAY' && !n.is_reserve && n.state !== 'STANDBY' && n.state !== 'CHARGING';
                 if (currentFilter === 'RESERVE') return n.loai === 'MÁY_BAY' && (n.is_reserve || n.state === 'STANDBY' || n.state === 'CHARGING');
                 if (currentFilter === 'SPACE') return n.loai !== 'MÁY_BAY';
-                if (currentFilter === 'WARN') return n.state === 'OFFLINE' || n.state === 'RELAYING' || n.state === 'RETURNING' || n.pin_pct < 30;
+                if (currentFilter === 'WARN') return n.state === 'OFFLINE' || n.state === 'RETURNING' || n.current_link === 'OUT_OF_RANGE' || n.pin_pct < 30;
                 return true;
             });
 
-            box.innerHTML = filtered.map(n => {
+            const emptyBanner = (totalUavCount === 0 && (currentFilter === 'ALL' || currentFilter === 'PATROL'))
+                ? `<div class="mini-card" style="margin-bottom:8px;border-color:rgba(6,182,212,0.4);color:var(--text-secondary);line-height:1.45;">
+                        <b style="color:var(--accent-blue)">Đang chờ UAV Client (0/35)</b><br>
+                        Mở Client Fleet UI (<b>:8080</b>) hoặc chạy <code style="color:#6ee7b7">python client/uav_client.py</code> để kết nối qua TCP :9000 / UDP :9001.
+                   </div>`
+                : '';
+
+            box.innerHTML = emptyBanner + filtered.map(n => {
                 const batColor = n.pin_pct < 25 ? '#ef4444' : (n.pin_pct < 50 ? '#f59e0b' : '#22c55e');
                 const isCharging = n.state === 'CHARGING';
                 const linkTxt = (n.is_reserve || n.state === 'STANDBY')
@@ -1753,9 +1662,9 @@
 
             if (cur.uav_nhan_nhiem_vu) {
                 const uShort = cur.uav_nhan_nhiem_vu.replace('MÁY_BAY_', '');
-                const modeLabel = cur.loai_phan_ung === 'P2P_HANDOVER' ? 'P2P Handover' : 'Direct Lock';
+                const modeLabel = (cur.loai_phan_ung === 'SWARM_HANDOVER' || cur.loai_phan_ung === 'P2P_HANDOVER') ? 'Bàn giao Server' : 'Direct Lock';
                 assignEl.textContent = `${uShort} (${modeLabel})`;
-                assignEl.style.color = cur.loai_phan_ung === 'P2P_HANDOVER' ? 'var(--accent-amber)' : 'var(--accent-green)';
+                assignEl.style.color = (cur.loai_phan_ung === 'SWARM_HANDOVER' || cur.loai_phan_ung === 'P2P_HANDOVER') ? 'var(--accent-amber)' : 'var(--accent-green)';
             } else {
                 assignEl.textContent = 'Đang hút về tâm nhiệt...';
                 assignEl.style.color = 'var(--text-muted)';
@@ -1815,42 +1724,18 @@
 
         function updateKpis(net, conn, osMetrics, transportMetrics) {
             if (conn) {
-                document.getElementById('kpiUav').textContent = `${conn.uav_ket_noi || 0}/${conn.tong_uav || 35}`;
+                document.getElementById('kpiUav').textContent = `${conn.uav_ket_noi || 0}/${conn.tong_uav_thiet_ke || 35}`;
+                const tEl = document.getElementById('kpiTiers');
+                if (tEl) {
+                    tEl.textContent = `${conn.uav_ground_link || 0} / ${conn.uav_leo_satellite || 0}`;
+                }
             }
             if (net) {
                 const sent = net.tong_goi_tin_phat || 0;
                 const ok = net.tong_goi_tin_thanh_cong || 0;
                 const pdr = sent > 0 ? ((ok / sent) * 100).toFixed(1) : '100.0';
                 document.getElementById('kpiPdr').textContent = `${pdr}%`;
-                document.getElementById('kpiDelay').textContent = `${net.do_tre_trung_binh_ms || 0} ms`;
-            }
-            if (osMetrics) {
-                const osEl = document.getElementById('sysOsThreads');
-                if (osEl) {
-                    osEl.textContent = `PID ${osMetrics.pid || '—'} · ${osMetrics.active_threads_count || 0} Threads`;
-                }
-                const mutEl = document.getElementById('sysMutexBuf');
-                if (mutEl) {
-                    const mAcq = (osMetrics.mutex && osMetrics.mutex.acquisitions) || 0;
-                    const drops = (osMetrics.scheduler && osMetrics.scheduler.buffer_drops) || 0;
-                    mutEl.textContent = `RLock: ${mAcq} · Drop: ${drops}`;
-                }
-            }
-            if (transportMetrics) {
-                const kExtEl = document.getElementById('kpiExtClients');
-                if (kExtEl) {
-                    const extCnt = transportMetrics.external_clients_count || 0;
-                    kExtEl.textContent = String(extCnt);
-                    kExtEl.style.color = extCnt > 0 ? '#10b981' : 'var(--accent-green)';
-                }
-                const sockEl = document.getElementById('sysSocketPorts');
-                if (sockEl) {
-                    const extCnt = transportMetrics.external_clients_count || 0;
-                    const modeTxt = transportMetrics.tcp_port > 0
-                        ? `TCP:${transportMetrics.tcp_port} · UDP:${transportMetrics.udp_port} · Ext:${extCnt}`
-                        : (transportMetrics.socket_mode || 'IN_PROCESS_WIRE');
-                    sockEl.textContent = modeTxt;
-                }
+                document.getElementById('kpiDelay').textContent = `${(conn && conn.avg_latency_ms) ? conn.avg_latency_ms : (net.do_tre_trung_binh_ms || 0)} ms`;
             }
         }
 
@@ -1894,7 +1779,7 @@
             e2eLayer.clearLayers();
             document.getElementById('btnClearFire').style.display = 'none';
             document.getElementById('e2eMeta').textContent = '';
-            document.getElementById('e2eMiniBox').innerHTML = 'Đang chờ gói dữ liệu đa chặng...';
+            document.getElementById('e2eMiniBox').innerHTML = 'Đang chờ báo cháy (A2G / LEO)...';
             renderSwarmMini(null);
         }
 
@@ -1910,18 +1795,12 @@
             const p2 = [data.toa_do_cuoi.vi_do, data.toa_do_cuoi.kinh_do];
 
             let color = '#38bdf8';
-            if (kind.includes('GIAO_NHIEM_VU_DU_LIEU') || kind.includes('FIRE') || kind.includes('CHAY')) color = '#10b981';
-            else if (kind.includes('P2P')) color = '#f59e0b';
-            else if (kind.includes('RETURN') || kind.includes('BAN_GIAO')) color = '#eab308';
+            if (data.channel === 'LEO_SATELLITE') color = '#a855f7';
+            else if (kind.includes('FIRE')) color = '#10b981';
 
             const shortKind = kind
-                .replace('GIAO_NHIEM_VU_DU_LIEU', 'DIJKSTRA')
-                .replace('YEU_CAU_HO_TRO_CHAY_P2P', 'P2P_SOS')
-                .replace('TELEMETRY_REPORT', 'TELEM')
-                .replace('YEU_CAU_BAN_GIAO_VUNG', 'HANDOVER')
-                .replace('THONG_BAO_KHOI_PHUC_VUNG', 'RESTORE')
-                .replace('XAC_NHAN_ACK', 'ACK')
-                .replace('EMERGENCY_RETURN', 'RTB');
+                .replace('FIRE_DETECTION_REPORT', data.channel === 'LEO_SATELLITE' ? 'FIRE_LEO' : 'FIRE_A2G')
+                .replace('TELEMETRY_REPORT', 'TELEM');
 
             const line = L.polyline([p1, p2], {
                 color: color,
@@ -2051,9 +1930,6 @@
                     }
                     updateZoneStrip(msg.data.zone_coverage);
                     updateKpis(msg.data.network_metrics, msg.data.connectivity_metrics, msg.data.os_metrics, msg.data.transport_metrics);
-                    if (activeSideTab === 'SYS' && (Math.floor(performance.now() / 1000) % 3 === 0)) {
-                        fetchRoutingTable(selectedNodeId || 'MÁY_BAY_UAV_01');
-                    }
                     renderSwarmMini(msg.data.swarm_response || msg.data.last_auction);
                     const fireRoutes = Array.isArray(msg.data.fire_e2e_routes) ? msg.data.fire_e2e_routes : activeFireRoutesCache;
                     if (fireRoutes.length > 0 || msg.data.last_e2e_route) {

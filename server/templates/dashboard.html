@@ -191,10 +191,10 @@
             min-height: 0;
         }
 
-        /* ROW 1: 6 KPI CARDS */
+        /* ROW 1: 5 KPI CARDS */
         .kpi-row {
             display: grid;
-            grid-template-columns: repeat(6, 1fr);
+            grid-template-columns: repeat(5, minmax(0, 1fr));
             gap: 12px;
             flex-shrink: 0;
         }
@@ -672,36 +672,30 @@
         <!-- ROW 1: 6 KPI CARDS -->
         <section class="kpi-row" aria-label="Chỉ số hiệu năng toàn mạng và Hệ điều hành">
             <div class="kpi-card" style="--card-accent: var(--accent-green);">
-                <div class="k-label">UAV Kết nối</div>
-                <div id="kUav" class="k-val" style="color:var(--accent-green)">35 / 35</div>
+                <div class="k-label">UAV Client Kết nối</div>
+                <div id="kUav" class="k-val" style="color:var(--accent-green)">0 / 35</div>
                 <div id="kAvail" class="k-sub">Khả dụng: 100%</div>
             </div>
             <div class="kpi-card" style="--card-accent: var(--accent-blue);">
-                <div class="k-label">Liên kết 3 tầng (A2G / FANET / LEO)</div>
-                <div id="kTiers" class="k-val" style="color:var(--accent-blue)">0 / 0 / 0</div>
-                <div class="tier-bar" title="Tỷ lệ phân bổ liên kết: Xanh lá (A2G) · Vàng cam (FANET) · Tím (LEO)">
-                    <div id="barA2G" style="width:100%;background:var(--accent-emerald)"></div>
-                    <div id="barFanet" style="width:0%;background:var(--accent-amber)"></div>
+                <div class="k-label">Kênh truyền SAGSINS (A2G / LEO)</div>
+                <div id="kTiers" class="k-val" style="color:var(--accent-blue)">0 / 0</div>
+                <div class="tier-bar" title="Tỷ lệ phân bổ kênh truyền: Xanh lá (A2G ≤ 6.0 km) · Tím (Vệ tinh LEO)">
+                    <div id="barA2G" style="width:0%;background:var(--accent-emerald)"></div>
                     <div id="barLeo" style="width:0%;background:var(--accent-purple)"></div>
                 </div>
             </div>
             <div class="kpi-card" style="--card-accent: var(--accent-cyan);">
                 <div class="k-label">Giao vận TCP/UDP &amp; PDR</div>
                 <div id="kPdr" class="k-val" style="color:var(--accent-cyan)">100.0%</div>
-                <div id="kPackets" class="k-sub">TCP ACK: 0 (Retrans: 0) · UDP: 0</div>
+                <div id="kPackets" class="k-sub">TCP RX/TX: 0/0 · UDP RX: 0</div>
             </div>
             <div class="kpi-card" style="--card-accent: var(--text-secondary);">
                 <div class="k-label">Độ trễ TB &amp; CRC32</div>
                 <div id="kDelay" class="k-val">0.0 ms</div>
-                <div id="kDrops" class="k-sub">CRC Err: 0 · TTL Drop: 0 · PER: 0</div>
-            </div>
-            <div class="kpi-card" style="--card-accent: var(--accent-amber);">
-                <div class="k-label">Mutex &amp; Bộ đệm QoS</div>
-                <div id="kMutex" class="k-val" style="color:var(--accent-green)">RLock: 0</div>
-                <div id="kMutexSub" class="k-sub">Clients ngoài: 0 · Buffer Drop: 0</div>
+                <div id="kDrops" class="k-sub">CRC32 Err: 0 · RF Drop: 0</div>
             </div>
             <div class="kpi-card" style="--card-accent: var(--accent-purple);">
-                <div class="k-label">Tiến trình &amp; Luồng HĐH</div>
+                <div class="k-label">Tiến trình &amp; Luồng Server</div>
                 <div id="kOs" class="k-val" style="color:var(--accent-purple)">— Threads</div>
                 <div id="kOsSub" class="k-sub">RAM: 0 MB · CPU: 0% · PID: —</div>
             </div>
@@ -730,55 +724,50 @@
                             <span class="sock-pill">Chờ khởi tạo Socket...</span>
                         </div>
                         <div id="snifferTableWrap" style="margin-bottom:14px;overflow-x:auto;color:var(--text-muted);">
-                            Đang chờ bắt gói tin TCP/UDP thật...
+                            Đang chờ bắt gói tin TCP/UDP...
                         </div>
                     </div>
 
                     <div id="col1Fire" style="display:none;">
-                        <div class="section-subhead">Nhật ký Phản ứng Bầy đàn &amp; Bàn giao P2P</div>
+                        <div class="section-subhead">Nhật ký Phản ứng Bầy đàn &amp; Bàn giao Server</div>
                         <div id="cnpDetail" style="margin-top:6px;margin-bottom:14px;color:var(--text-muted);overflow-x:auto;">
-                            Chưa có sự kiện cháy. Hãy bấm <b>Báo cháy</b> trên trang Bản đồ để khởi tạo điểm nóng Heatmap.
+                            Chưa có sự kiện cháy. Hãy bấm <b>Báo cháy</b> trên trang Bản đồ hoặc từ Client.
                         </div>
                     </div>
 
                     <div class="section-subhead" style="border-top:1px solid var(--border-color);padding-top:10px;">
-                        Chuỗi định tuyến đa chặng E2E mới nhất
+                        Tuyến truyền báo cháy SAGSINS (A2G / LEO) mới nhất
                     </div>
                     <div id="e2eDetail" style="margin-top:6px;color:var(--text-muted);">
-                        Đang chờ gói dữ liệu định tuyến về Trạm mặt đất...
+                        Đang chờ gói báo cháy từ Client UAV về Trạm mặt đất...
                     </div>
                 </div>
             </div>
 
-            <!-- COLUMN 2: OS KERNEL & SYNC / 7-ZONE MATRIX -->
+            <!-- COLUMN 2: 7-ZONE MATRIX & SERVER THREADS -->
             <div class="panel">
                 <div class="panel-head">
                     <span class="panel-head-title">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-                        <span>2. Hệ Điều Hành &amp; 7 Vùng</span>
+                        <span>2. 7 Phân khu &amp; Luồng Server</span>
                     </span>
                     <div style="display:flex;align-items:center;gap:6px;">
                         <div class="panel-tabs">
-                            <button id="btnC2Os" class="p-tab active" onclick="switchCol2('OS')">OS Kernel &amp; Sync</button>
-                            <button id="btnC2Zones" class="p-tab" onclick="switchCol2('ZONES')">Ma trận 7 Vùng</button>
+                            <button id="btnC2Zones" class="p-tab active" onclick="switchCol2('ZONES')">Ma trận 7 Vùng</button>
+                            <button id="btnC2Os" class="p-tab" onclick="switchCol2('OS')">Luồng Server</button>
                         </div>
                         <span id="zoneSummary" style="font-family:var(--font-mono);color:var(--accent-green);font-size:10px;">7/7</span>
                     </div>
                 </div>
                 <div class="panel-body">
-                    <div id="col2Os">
-                        <div class="section-subhead">Đồng bộ Mutex (net_state_lock) &amp; Clients ngoài</div>
-                        <div id="mutexSyncStrip" class="wait-strip empty">Mutex RLock (net_state_lock): 0 lần · Clients ngoài: 0</div>
-
-                        <div class="section-subhead">Lập lịch Hàng đợi Ưu tiên (Priority Queue QoS)</div>
-                        <div id="schedTableWrap" style="margin-bottom:14px;overflow-x:auto;"></div>
-
-                        <div class="section-subhead">Danh sách Luồng HĐH (OS Threads)</div>
-                        <div id="threadsTableWrap" style="overflow-x:auto;"></div>
+                    <div id="col2Zones">
+                        <div id="zoneMatrix" class="zone-matrix"></div>
                     </div>
 
-                    <div id="col2Zones" style="display:none;">
-                        <div id="zoneMatrix" class="zone-matrix"></div>
+                    <div id="col2Os" style="display:none;">
+                        <div id="osProcSummary" class="wait-strip empty">Server PID: — · Clients kết nối: 0/35</div>
+                        <div class="section-subhead">Danh sách Luồng Server (OS Threads)</div>
+                        <div id="threadsTableWrap" style="overflow-x:auto;"></div>
                     </div>
                 </div>
             </div>
@@ -788,13 +777,12 @@
                 <div class="panel-head">
                     <span class="panel-head-title">
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-                        <span>3. Nhật ký Giao thức</span>
+                        <span>3. Nhật ký Sự kiện</span>
                     </span>
                     <div style="display:flex;align-items:center;gap:5px;">
                         <div class="panel-tabs">
                             <button class="p-tab log-f-btn active" onclick="setLogFilter('ALL', this)">Tất cả</button>
                             <button class="p-tab log-f-btn" onclick="setLogFilter('NET', this)">Mạng</button>
-                            <button class="p-tab log-f-btn" onclick="setLogFilter('OS', this)">HĐH</button>
                             <button class="p-tab log-f-btn" onclick="setLogFilter('SWARM', this)">Bầy đàn</button>
                         </div>
                         <button class="btn" style="padding:2px 7px;font-size:10px;" onclick="clearLogs()">Xoá</button>
@@ -829,45 +817,34 @@
 
         function updateKpis(net, conn, osMetrics, transportMetrics) {
             if (conn) {
-                const total = conn.tong_uav || 35;
+                const total = conn.tong_uav_thiet_ke || 35;
+                const activeTotal = Math.max(1, (conn.uav_ground_link || 0) + (conn.uav_leo_satellite || 0));
                 const a2g = conn.uav_ground_link || 0;
-                const fanet = conn.uav_fanet_relay || 0;
                 const leo = conn.uav_leo_satellite || 0;
                 document.getElementById('kUav').textContent = `${conn.uav_ket_noi || 0} / ${total}`;
-                document.getElementById('kAvail').textContent = `Khả dụng: ${conn.do_kha_dung_pct ?? 100}%`;
-                document.getElementById('kTiers').textContent = `${a2g} / ${fanet} / ${leo}`;
-                document.getElementById('barA2G').style.width = `${(a2g / total) * 100}%`;
-                document.getElementById('barFanet').style.width = `${(fanet / total) * 100}%`;
-                document.getElementById('barLeo').style.width = `${(leo / total) * 100}%`;
+                document.getElementById('kAvail').textContent = `Khả dụng: ${conn.do_kha_dung_pct ?? 100}% · LEO S2G: ${conn.leo_s2g_active || 0}/3`;
+                document.getElementById('kTiers').textContent = `${a2g} / ${leo}`;
+                document.getElementById('barA2G').style.width = `${(a2g / activeTotal) * 100}%`;
+                document.getElementById('barLeo').style.width = `${(leo / activeTotal) * 100}%`;
             }
             if (net) {
                 const sent = net.tong_goi_tin_phat || 0;
                 const ok = net.tong_goi_tin_thanh_cong || 0;
                 const pdr = sent > 0 ? ((ok / sent) * 100).toFixed(1) : '100.0';
                 document.getElementById('kPdr').textContent = `${pdr}%`;
-                document.getElementById('kDelay').textContent = `${net.do_tre_trung_binh_ms || 0} ms`;
+                const avgMs = (conn && conn.avg_latency_ms) ? conn.avg_latency_ms : (net.do_tre_trung_binh_ms || 0);
+                document.getElementById('kDelay').textContent = `${avgMs} ms`;
                 if (transportMetrics) {
-                    const realTcp = (transportMetrics.real_tcp_rx || 0) + (transportMetrics.real_tcp_tx || 0);
+                    const tcpRx = transportMetrics.real_tcp_rx || 0;
+                    const tcpTx = transportMetrics.real_tcp_tx || 0;
                     const realUdp = transportMetrics.real_udp_rx || 0;
-                    const simWire = transportMetrics.sim_wireless_sent || 0;
                     document.getElementById('kPackets').textContent =
-                        `Real Sock TCP:${realTcp} UDP:${realUdp} · Sim Wire:${simWire}`;
+                        `TCP RX/TX:${tcpRx}/${tcpTx} · UDP RX:${realUdp}`;
                     document.getElementById('kDrops').textContent =
-                        `CRC Err: ${transportMetrics.crc_errors || 0} (UDP:${transportMetrics.real_udp_crc_errors || 0}) · TTL: ${transportMetrics.ttl_drops || 0}`;
-                } else {
-                    const outOfRange = net.tong_goi_tin_ngoai_vung_phu ?? net.tong_goi_tin_mat_los ?? 0;
-                    document.getElementById('kPackets').textContent = `${ok} / ${sent} gói thành công`;
-                    document.getElementById('kDrops').textContent = `Rớt PER: ${net.tong_goi_tin_rot_per || 0} · Ngoài vùng phủ: ${outOfRange}`;
+                        `CRC32 Err: ${transportMetrics.crc_errors || 0} · RF Drop: ${transportMetrics.rf_gateway_drops || 0}`;
                 }
             }
             if (osMetrics) {
-                const mutex = osMetrics.mutex || {};
-                const sched = osMetrics.scheduler || {};
-                const extCnt = transportMetrics ? (transportMetrics.external_clients_count || 0) : 0;
-                const kMut = document.getElementById('kMutex');
-                if (kMut) kMut.textContent = `RLock: ${mutex.acquisitions || 0}`;
-                const kMutSub = document.getElementById('kMutexSub');
-                if (kMutSub) kMutSub.textContent = `Clients ngoài: ${extCnt} · Buffer Drop: ${sched.buffer_drops || 0}`;
                 document.getElementById('kOs').textContent = `${osMetrics.active_threads_count || 0} Threads`;
                 document.getElementById('kOsSub').textContent =
                     `RAM: ${osMetrics.memory_rss_mb || 0} MB · CPU: ${osMetrics.cpu_percent || 0}% · PID: ${osMetrics.pid || '—'}`;
@@ -877,37 +854,37 @@
         function renderTransportSniffer(tm) {
             if (!tm) return;
             const bar = document.getElementById('socketStatusBar');
-            const tcpTxt = tm.tcp_port > 0 ? `TCP 0.0.0.0:${tm.tcp_port}` : 'TCP Wire';
-            const udpTxt = tm.udp_port > 0 ? `UDP 0.0.0.0:${tm.udp_port}` : 'UDP Wire';
+            const tcpTxt = tm.tcp_port > 0 ? `TCP 0.0.0.0:${tm.tcp_port}` : 'TCP Server';
+            const udpTxt = tm.udp_port > 0 ? `UDP 0.0.0.0:${tm.udp_port}` : 'UDP Server';
             const totalKb = (((tm.tcp_bytes || 0) + (tm.udp_bytes || 0)) / 1024).toFixed(1);
             const extCount = tm.external_clients_count || 0;
-            const simWire = tm.sim_wireless_sent || 0;
             bar.innerHTML = `
-                <span class="sock-pill" style="border-color:rgba(59,130,246,0.45);color:#93c5fd;">${tcpTxt} (Real RX:${tm.real_tcp_rx || 0} TX:${tm.real_tcp_tx || 0})</span>
-                <span class="sock-pill" style="border-color:rgba(168,85,247,0.45);color:#c4b5fd;">${udpTxt} (Real RX:${tm.real_udp_rx || 0})</span>
-                <span class="sock-pill" style="border-color:rgba(16,185,129,0.45);color:#6ee7b7;">Clients ngoài: ${extCount} · SimWire: ${simWire} · RF Drop: ${tm.rf_gateway_drops || 0}</span>
+                <span class="sock-pill" style="border-color:rgba(59,130,246,0.45);color:#93c5fd;">${tcpTxt} (RX:${tm.real_tcp_rx || 0} TX:${tm.real_tcp_tx || 0})</span>
+                <span class="sock-pill" style="border-color:rgba(168,85,247,0.45);color:#c4b5fd;">${udpTxt} (RX:${tm.real_udp_rx || 0})</span>
+                <span class="sock-pill" style="border-color:rgba(16,185,129,0.45);color:#6ee7b7;">Clients: ${extCount}/35 · RF Drop: ${tm.rf_gateway_drops || 0}</span>
                 <span class="sock-pill" style="color:var(--accent-green);">${tm.socket_mode || 'REAL_OS_SOCKET'} · ${totalKb} KB</span>
             `;
 
             const wrap = document.getElementById('snifferTableWrap');
             const list = Array.isArray(tm.sniffer) ? tm.sniffer.slice(0, 14) : [];
             if (!list.length) {
-                wrap.innerHTML = 'Đang chờ bắt gói tin TCP/UDP thật...';
+                wrap.innerHTML = 'Đang chờ bắt gói tin TCP/UDP từ Client UAV...';
                 return;
             }
             const rows = list.map(p => {
                 const pCls = (p.proto === 'TCP') ? 'tcp' : 'udp';
                 let stCls = 'win';
                 if ((p.status || '').includes('ERR') || (p.status || '').includes('DROP')) stCls = 'refuse';
-                else if ((p.status || '').includes('RETRANS')) stCls = 'lose';
+                else if ((p.status || '').includes('PUSH')) stCls = 'lose';
                 const stColor = stCls === 'win' ? '#86efac' : (stCls === 'refuse' ? '#fca5a5' : '#fcd34d');
+                const chTxt = p.channel || p.proto;
+                const chColor = chTxt === 'LEO' ? '#d8b4fe' : (chTxt === 'A2G' ? '#6ee7b7' : (chTxt === 'ERR' || chTxt === 'OUT' ? '#fca5a5' : '#93c5fd'));
                 return `
                     <tr>
                         <td>#${p.seq}</td>
                         <td><span class="pkt-proto ${pCls}">${p.proto}</span></td>
-                        <td>${p.priority}</td>
+                        <td><b style="color:${chColor}">${chTxt}</b></td>
                         <td>${p.src} ➔ ${p.dst}<div style="font-size:9px;color:var(--text-muted)">${p.src_ip} ➔ ${p.dst_ip}</div></td>
-                        <td>${p.ttl}</td>
                         <td style="color:var(--text-secondary)">${p.crc32}</td>
                         <td style="color:${stColor};font-weight:700;">${p.status}</td>
                     </tr>
@@ -920,9 +897,8 @@
                         <tr>
                             <th>Seq</th>
                             <th>Proto</th>
-                            <th>Prio</th>
+                            <th>Kênh</th>
                             <th>Nguồn ➔ Đích (IP)</th>
-                            <th>TTL</th>
                             <th>CRC32</th>
                             <th>Trạng thái</th>
                         </tr>
@@ -934,36 +910,15 @@
 
         function renderOsKernel(osData, tm) {
             if (!osData) return;
-            const sched = osData.scheduler || {};
-            const mutex = osData.mutex || {};
             const extClients = tm && Array.isArray(tm.external_clients) ? tm.external_clients : [];
-            const mutEl = document.getElementById('mutexSyncStrip');
-            if (mutEl) {
-                const extTxt = extClients.length > 0
-                    ? extClients.map(c => `${(c.uav_id || '').replace('MÁY_BAY_', '')} (${c.thread_name || ''})`).join(', ')
-                    : 'Không có Client ngoài';
-                mutEl.className = extClients.length > 0 ? 'wait-strip' : 'wait-strip empty';
-                mutEl.textContent = `Mutex net_state_lock: ${mutex.acquisitions || 0} lần · Clients (${extClients.length}): ${extTxt}`;
+            const sumEl = document.getElementById('osProcSummary');
+            if (sumEl) {
+                sumEl.className = extClients.length > 0 ? 'wait-strip' : 'wait-strip empty';
+                sumEl.textContent = `Server PID ${osData.pid || '—'} · RAM ${osData.memory_rss_mb || 0} MB · CPU ${osData.cpu_percent || 0}% · Clients (${extClients.length}/35)`;
             }
 
-            document.getElementById('schedTableWrap').innerHTML = `
-                <table class="tbl">
-                    <thead>
-                        <tr><th>Mức ưu tiên</th><th>Loại gói tin</th><th>Đã xử lý</th><th>Chờ TB</th></tr>
-                    </thead>
-                    <tbody>
-                        <tr class="win"><td><b>P0 (Cao nhất)</b></td><td>Báo cháy / Khoanh vùng / P2P</td><td>${sched.p0_count || 0}</td><td>${sched.p0_avg_wait_ms || 0} ms</td></tr>
-                        <tr><td><b>P1 (Trung bình)</b></td><td>Telemetry / Bàn giao vùng</td><td>${sched.p1_count || 0}</td><td>${sched.p1_avg_wait_ms || 0} ms</td></tr>
-                        <tr><td><b>P2 (Thấp)</b></td><td>HELLO_BEACON láng giềng</td><td>${sched.p2_count || 0}</td><td>${sched.p2_avg_wait_ms || 0} ms</td></tr>
-                    </tbody>
-                </table>
-                <div style="font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-top:6px;">
-                    Buffer Overflow Drop (Maxsize=100): <b style="color:var(--text-main)">${sched.buffer_drops || 0}</b> · Mutex net_state_lock: <b style="color:var(--accent-cyan)">${mutex.acquisitions || 0}</b>
-                </div>
-            `;
-
             const threads = Array.isArray(osData.threads) ? osData.threads : [];
-            const thRows = threads.slice(0, 10).map(t => `
+            const thRows = threads.map(t => `
                 <tr>
                     <td>${t.tid || '—'}</td>
                     <td><b>${t.name}</b></td>
@@ -973,7 +928,7 @@
             `).join('');
             document.getElementById('threadsTableWrap').innerHTML = `
                 <table class="tbl">
-                    <thead><tr><th>TID</th><th>Tên Thread OS</th><th>Loại</th><th>Trạng thái</th></tr></thead>
+                    <thead><tr><th>TID</th><th>Tên Thread OS (Tổng ${threads.length})</th><th>Loại</th><th>Trạng thái</th></tr></thead>
                     <tbody>${thRows}</tbody>
                 </table>
             `;
@@ -1006,8 +961,8 @@
                 let mechHtml = '<span class="status-pill lose">UNVERIFIED</span>';
                 if (item.loai_phan_ung === 'DIRECT_LOCK') {
                     mechHtml = `<span class="status-pill win">Tự khóa mục tiêu</span> <span style="font-size:10px;color:var(--text-secondary)">(${assignUav})</span>`;
-                } else if (item.loai_phan_ung === 'P2P_HANDOVER') {
-                    mechHtml = `<span class="status-pill refuse" style="background:rgba(245,158,11,0.16);color:#fcd34d;border-color:rgba(245,158,11,0.4);">Ủy quyền P2P</span> <span style="font-size:10px;color:var(--text-secondary)">(➔ ${assignUav})</span>`;
+                } else if (item.loai_phan_ung === 'SWARM_HANDOVER' || item.loai_phan_ung === 'P2P_HANDOVER') {
+                    mechHtml = `<span class="status-pill refuse" style="background:rgba(245,158,11,0.16);color:#fcd34d;border-color:rgba(245,158,11,0.4);">Bàn giao Server</span> <span style="font-size:10px;color:var(--text-secondary)">(➔ ${assignUav})</span>`;
                 } else if (item.trang_thai_chay === 'DETECTED') {
                     mechHtml = `<span class="status-pill lose">Đã phát hiện (&lt;=600m)</span>`;
                 }
@@ -1017,7 +972,7 @@
                     : '—';
                 const routeArr = Array.isArray(item.tuyen_bao_cao_e2e) && item.tuyen_bao_cao_e2e.length
                     ? item.tuyen_bao_cao_e2e.map(n => n.replace('MÁY_BAY_', '').replace('TRẠM_KIỂM_LÂM_', '')).join(' ➔ ')
-                    : 'Đang định tuyến...';
+                    : 'Đang đánh giá kênh...';
 
                 return `
                     <tr class="${idx === 0 ? 'win' : ''}">
@@ -1122,29 +1077,22 @@
             '[GRADIENT_PULL]',
             '[FIRE_DETECTED]',
             '[TARGET_LOCKED]',
-            '[P2P_HANDOVER]',
-            '[DIJKSTRA_REPORT]',
-            '[OS_SYNC]',
-            '[OS_SCHED]',
-            '[MUTEX]',
-            '[TCP_ARQ]',
+            '[SWARM_HANDOVER]',
+            '[SAGSINS_REPORT]',
+            '[RF_GATEWAY]',
             '[CRC32_ERR]',
-            '[TTL_DROP]',
             '[CLIENT_NET]'
         ];
 
         function classifyLogEntry(matchedTag, capDo) {
-            if (matchedTag === '[OS_SYNC]' || matchedTag === '[OS_SCHED]' || matchedTag === '[MUTEX]') {
-                return { cat: 'OS', cls: 'OS' };
-            }
-            if (matchedTag === '[TCP_ARQ]' || matchedTag === '[CRC32_ERR]' || matchedTag === '[TTL_DROP]' || matchedTag === '[CLIENT_NET]') {
-                return { cat: 'NET', cls: (matchedTag === '[TCP_ARQ]' || matchedTag === '[CLIENT_NET]') ? 'NET' : 'WARN' };
+            if (matchedTag === '[CRC32_ERR]' || matchedTag === '[CLIENT_NET]' || matchedTag === '[RF_GATEWAY]') {
+                return { cat: 'NET', cls: matchedTag === '[CLIENT_NET]' ? 'NET' : 'WARN' };
             }
             let cls = capDo || 'INFO';
             if (matchedTag === '[HEATMAP_ANOMALY]') cls = 'ALERT';
-            else if (matchedTag === '[FIRE_DETECTED]' || matchedTag === '[P2P_HANDOVER]') cls = 'WARN';
+            else if (matchedTag === '[FIRE_DETECTED]' || matchedTag === '[SWARM_HANDOVER]') cls = 'WARN';
             else if (matchedTag === '[TARGET_LOCKED]') cls = 'WIN';
-            else if (matchedTag === '[DIJKSTRA_REPORT]') cls = 'ROUTE';
+            else if (matchedTag === '[SAGSINS_REPORT]') cls = 'ROUTE';
             return { cat: 'SWARM', cls };
         }
 

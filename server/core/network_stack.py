@@ -262,7 +262,7 @@ class RealSocketTransport:
 
         self._seq_counter = 100
         self._ext_udp_sniff_counter = 0
-        self.packet_sniffer: deque[dict[str, Any]] = deque(maxlen=40)
+        self.packet_sniffer: deque[dict[str, Any]] = deque(maxlen=50)
 
         self.tcp_sent = 0
         self.tcp_acked = 0
@@ -282,9 +282,6 @@ class RealSocketTransport:
         self.real_udp_crc_errors = 0
         self.rf_gateway_delivered = 0
         self.rf_gateway_drops = 0
-        self.sim_wireless_sent = 0
-        self.sim_wireless_acked = 0
-        self.sim_wireless_retrans = 0
 
     @staticmethod
     def _normalize_uav_id(raw_id: Any) -> str:
@@ -313,10 +310,15 @@ class RealSocketTransport:
                 tcp_srv.bind((self.bind_host, self.preferred_tcp_port))
             except OSError:
                 tcp_srv.bind((self.bind_host, 0))
-            tcp_srv.listen(32)
+            tcp_srv.listen(128)
             tcp_srv.settimeout(0.5)
 
             udp_srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                udp_srv.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 262144)
+                udp_srv.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 262144)
+            except OSError:
+                pass
             try:
                 udp_srv.bind((self.bind_host, self.preferred_udp_port))
             except OSError:
@@ -485,7 +487,15 @@ class RealSocketTransport:
                                 graceful_leave = True
                                 should_close = True
 
-                        self.record_sniffer(pkt, f"EXT_{cmd}", uav_id, "TRẠM_KIỂM_LÂM_SƠN_TRÀ", f"EXT_TCP_{cmd}")
+                        ch_tag = "TCP"
+                        raw_rf = str(reply_dict.get("rf_link") or "").upper()
+                        if raw_rf == "GROUND_LINK":
+                            ch_tag = "A2G"
+                        elif raw_rf == "LEO_SATELLITE":
+                            ch_tag = "LEO"
+                        elif raw_rf == "OUT_OF_RANGE":
+                            ch_tag = "OUT"
+                        self.record_sniffer(pkt, cmd, uav_id, "TRẠM_KIỂM_LÂM_SƠN_TRÀ", f"TCP_{cmd}", channel=ch_tag)
                         ack_payload = json.dumps(reply_dict, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                 elif not crc_ok:
                     with self._lock:
@@ -508,6 +518,8 @@ class RealSocketTransport:
                     conn.sendall(struct.pack("!I", len(ack_wire)) + ack_wire)
                 with self._lock:
                     self.real_tcp_tx += 1
+                    self.tcp_sent += 1
+                    self.tcp_acked += 1
                     self.tcp_bytes += len(ack_wire)
                 if should_close:
                     break
@@ -573,8 +585,8 @@ class RealSocketTransport:
             self.tcp_sent += 1
             self.real_tcp_tx += 1
             self.tcp_bytes += len(raw)
-        if act != "RF_STATUS":
-            self.record_sniffer(pkt, f"PUSH_{act}", "TRẠM_KIỂM_LÂM_SƠN_TRÀ", norm_id, "SERVER_PUSH")
+        if act not in ("RF_STATUS", "SWARM_ENV"):
+            self.record_sniffer(pkt, f"PUSH_{act}", "TRẠM_KIỂM_LÂM_SƠN_TRÀ", norm_id, "SERVER_PUSH", channel="TCP")
         return True
 
     def broadcast_command_to_external_clients(
@@ -606,6 +618,7 @@ class RealSocketTransport:
                 continue
             pkt, crc_ok, _ = NetworkPacket.decode_and_verify(data)
             with self._lock:
+                self.udp_sent += 1
                 self.udp_rx_packets += 1
                 self.real_udp_rx += 1
                 self.udp_bytes += len(data)
@@ -624,10 +637,11 @@ class RealSocketTransport:
                 )
                 self.record_sniffer(
                     err_pkt,
-                    "EXT_UDP",
-                    f"EXT_{addr[0]}:{addr[1]}",
+                    "TELEM_ERR",
+                    f"CLIENT_{addr[0]}:{addr[1]}",
                     "TRẠM_KIỂM_LÂM_SƠN_TRÀ",
-                    "EXT_UDP_CRC_ERR",
+                    "CRC32_ERR",
+                    channel="ERR",
                 )
                 continue
             if pkt.payload:
@@ -648,68 +662,24 @@ class RealSocketTransport:
                     if rf_status in ("RF_OUT_OF_RANGE_DROP", "RF_PER_DROP"):
                         with self._lock:
                             self.rf_gateway_drops += 1
-                        self.record_sniffer(pkt, "EXT_TELEM", uav_id, "TRẠM_KIỂM_LÂM_SƠN_TRÀ", rf_status)
+                        ch_drop = "OUT" if rf_status == "RF_OUT_OF_RANGE_DROP" else "PER"
+                        self.record_sniffer(pkt, "TELEM", uav_id, "TRẠM_KIỂM_LÂM_SƠN_TRÀ", rf_status, channel=ch_drop)
                     else:
                         with self._lock:
                             self.rf_gateway_delivered += 1
+                            self.udp_delivered += 1
                             self._ext_udp_sniff_counter += 1
-                            sample_sniff = (self._ext_udp_sniff_counter % 4 == 1)
+                            sample_sniff = (self._ext_udp_sniff_counter % 15 == 1)
                         if sample_sniff:
+                            ch_ok = "LEO" if "LEO" in str(rf_status or "").upper() else "A2G"
                             self.record_sniffer(
                                 pkt,
-                                "EXT_TELEM",
+                                "TELEM",
                                 uav_id,
                                 "TRẠM_KIỂM_LÂM_SƠN_TRÀ",
-                                rf_status or "EXT_UDP_OK",
+                                rf_status or "UDP_OK",
+                                channel=ch_ok,
                             )
-
-    def send_over_wire(
-        self,
-        packet: NetworkPacket,
-        inject_bit_error: bool = False
-    ) -> tuple[bool, bool, Optional[int]]:
-        """
-        Mô phỏng đóng gói khung nhị phân + kiểm chứng lỗi bit CRC32 trên kênh vô tuyến nội bộ (in-process).
-        KHÔNG đẩy vòng qua Socket loopback của cùng tiến trình để tránh trộn lẫn với lưu lượng Socket OS thật.
-        Trả về `(delivered_ok, crc_ok, ack_num)`.
-        """
-        raw = packet.encode()
-        wire_bytes = NetworkPacket.corrupt_wire_bytes(raw) if inject_bit_error else raw
-        wire_len = len(wire_bytes)
-
-        if packet.protocol == "TCP":
-            with self._lock:
-                self.tcp_sent += 1
-                self.sim_wireless_sent += 1
-                self.tcp_bytes += wire_len
-                if packet.flags & FLAG_RETRANS:
-                    self.tcp_retransmissions += 1
-                    self.sim_wireless_retrans += 1
-
-            pkt_chk, crc_ok, _ = NetworkPacket.decode_and_verify(wire_bytes)
-            if crc_ok and pkt_chk is not None:
-                with self._lock:
-                    self.tcp_acked += 1
-                    self.sim_wireless_acked += 1
-                return True, True, pkt_chk.seq_num
-            with self._lock:
-                self.crc_errors += 1
-            return False, False, None
-
-        # Kênh datagram không tin cậy (UDP mô phỏng): gửi 1 lần, hủy ngay nếu lỗi CRC32
-        with self._lock:
-            self.udp_sent += 1
-            self.sim_wireless_sent += 1
-            self.udp_bytes += wire_len
-
-        _, crc_ok, _ = NetworkPacket.decode_and_verify(wire_bytes)
-        if crc_ok:
-            with self._lock:
-                self.udp_delivered += 1
-            return True, True, None
-        with self._lock:
-            self.crc_errors += 1
-        return False, False, None
 
     def record_ttl_drop(self):
         with self._lock:
@@ -723,6 +693,7 @@ class RealSocketTransport:
         dst_node: str,
         status: str,
         retrans_count: int = 0,
+        channel: str = "",
     ):
         entry = {
             "time": time.strftime("%H:%M:%S"),
@@ -735,7 +706,7 @@ class RealSocketTransport:
             "dst": dst_node.replace("MÁY_BAY_", "").replace("TRẠM_KIỂM_LÂM_", "").replace("VỆ_TINH_", ""),
             "src_ip": packet.src_ip,
             "dst_ip": packet.dst_ip,
-            "ttl": packet.ttl,
+            "channel": channel or ("A2G" if "A2G" in status else ("LEO" if "LEO" in status else packet.protocol)),
             "crc32": f"0x{packet.crc32:08X}",
             "size_bytes": HEADER_SIZE + len(packet.payload),
             "retrans": retrans_count,
@@ -769,9 +740,6 @@ class RealSocketTransport:
                 "real_udp_crc_errors": self.real_udp_crc_errors,
                 "rf_gateway_delivered": self.rf_gateway_delivered,
                 "rf_gateway_drops": self.rf_gateway_drops,
-                "sim_wireless_sent": self.sim_wireless_sent,
-                "sim_wireless_acked": self.sim_wireless_acked,
-                "sim_wireless_retrans": self.sim_wireless_retrans,
                 "external_clients_count": len(self.external_clients),
                 "external_clients": list(self.external_clients.values()),
                 "sniffer": list(self.packet_sniffer),
